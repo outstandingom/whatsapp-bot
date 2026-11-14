@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import asyncio
 import logging
 import httpx
 from fastapi import FastAPI, Request, Response, Form, Query
@@ -24,6 +25,45 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("whatsapp_support_bot")
 
 app = FastAPI(title="WhatsApp Customer Support Hub & Dashboard")
+
+SERVER_START_TIME = time.time()
+
+@app.get("/api/health")
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Render, UptimeRobot, and cron services."""
+    return JSONResponse({
+        "status": "healthy",
+        "service": "whatsapp-ai-bot",
+        "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
+        "timestamp": int(time.time())
+    })
+
+async def keep_alive_worker():
+    """Background task that pings the public URL every 5 minutes so Render never sleeps."""
+    await asyncio.sleep(45)  # Initial grace period on boot
+    while True:
+        try:
+            base_url = (
+                os.getenv("RENDER_EXTERNAL_URL") or 
+                os.getenv("APP_URL") or 
+                "https://whatapp-51qf.onrender.com"
+            ).rstrip("/")
+
+            if "localhost" not in base_url and "127.0.0.1" not in base_url:
+                health_url = f"{base_url}/api/health"
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(health_url)
+                    logger.info(f"[Keep-Alive] Pinged {health_url} -> Status {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"[Keep-Alive] Warning: self-ping failed: {e}")
+        
+        # Ping every 5 minutes (300 seconds) - Render free tier sleeps after 15 mins of inactivity
+        await asyncio.sleep(300)
+
+@app.on_event("startup")
+async def startup_keep_alive():
+    asyncio.create_task(keep_alive_worker())
 
 def get_env_var(key: str, default: str = "") -> str:
     return os.getenv(key, default).strip()
