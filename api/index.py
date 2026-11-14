@@ -573,10 +573,10 @@ async def serve_dashboard():
         @keyframes pulseLive { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(1.15); } }
     </style>
 </head>
-<body class="text-slate-800 min-h-screen flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
+<body class="text-slate-800 h-screen overflow-hidden flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
 
     <!-- Top White Navigation Header -->
-    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 px-5 py-3 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+    <header class="bg-white border-b border-slate-200 flex-shrink-0 sticky top-0 z-30 px-4 md:px-5 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-sm">
         <!-- Logo & Branding -->
         <div class="flex items-center space-x-3.5">
             <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-md shadow-emerald-500/20 text-2xl font-bold">
@@ -634,69 +634,69 @@ async def serve_dashboard():
     </header>
 
     <!-- Main Container -->
-    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 flex flex-col space-y-4">
+    <main class="flex-1 min-h-0 max-w-7xl w-full mx-auto p-3 md:p-4 flex flex-col space-y-2.5 overflow-hidden">
 
-        <!-- 4 Top Analytics Summary Cards -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- 4 Top Analytics Summary Cards (Compact) -->
+        <div class="flex-shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-2.5">
             <!-- Card 1: Total Messages -->
-            <div class="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+            <div class="bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between shadow-xs">
                 <div>
-                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Messages</span>
-                    <h3 id="stat-total-messages" class="text-2xl font-extrabold text-slate-900 mt-1">0</h3>
-                    <div class="flex items-center space-x-2 mt-1 text-[11px] text-slate-500 font-medium font-mono">
-                        <span class="text-emerald-600"><i class="fas fa-arrow-down mr-0.5"></i><span id="stat-inbound">0</span> customer</span>
-                        <span class="text-teal-600"><i class="fas fa-arrow-up mr-0.5"></i><span id="stat-outbound">0</span> agent</span>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Messages</span>
+                    <h3 id="stat-total-messages" class="text-xl font-extrabold text-slate-900 mt-0.5">0</h3>
+                    <div class="flex items-center space-x-2 text-[10px] text-slate-500 font-mono">
+                        <span class="text-emerald-600"><i class="fas fa-arrow-down mr-0.5"></i><span id="stat-inbound">0</span> in</span>
+                        <span class="text-teal-600"><i class="fas fa-arrow-up mr-0.5"></i><span id="stat-outbound">0</span> out</span>
                     </div>
                 </div>
-                <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl font-bold">
+                <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg font-bold">
                     <i class="fas fa-comment-dots"></i>
                 </div>
             </div>
 
             <!-- Card 2: Customers -->
-            <div class="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+            <div class="bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between shadow-xs">
                 <div>
-                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Active Customers</span>
-                    <h3 id="stat-contacts" class="text-2xl font-extrabold text-slate-900 mt-1">0</h3>
-                    <p class="text-[11px] text-slate-500 mt-1">Conversations logged</p>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Customers</span>
+                    <h3 id="stat-contacts" class="text-xl font-extrabold text-slate-900 mt-0.5">0</h3>
+                    <p class="text-[10px] text-slate-500">Conversations</p>
                 </div>
-                <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl font-bold">
+                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-lg font-bold">
                     <i class="fas fa-users"></i>
                 </div>
             </div>
 
             <!-- Card 3: Bookings & Tasks -->
-            <div class="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-sm cursor-pointer hover:border-amber-400 transition" onclick="switchTab('bookings')">
+            <div class="bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between shadow-xs cursor-pointer hover:border-amber-400 transition" onclick="switchTab('bookings')">
                 <div>
-                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Bookings & Tasks</span>
-                    <h3 id="stat-bookings" class="text-2xl font-extrabold text-amber-600 mt-1">0</h3>
-                    <p class="text-[11px] text-slate-500 mt-1">Appointments requested</p>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bookings & Tasks</span>
+                    <h3 id="stat-bookings" class="text-xl font-extrabold text-amber-600 mt-0.5">0</h3>
+                    <p class="text-[10px] text-slate-500">Appointments</p>
                 </div>
-                <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl font-bold">
+                <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-lg font-bold">
                     <i class="fas fa-calendar-check"></i>
                 </div>
             </div>
 
             <!-- Card 4: Support Agent Mode -->
-            <div class="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-sm cursor-pointer hover:border-purple-400 transition" onclick="openSettingsModal()">
+            <div class="bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between shadow-xs cursor-pointer hover:border-purple-400 transition" onclick="openSettingsModal()">
                 <div>
-                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">AI Bot Status</span>
-                    <h3 id="stat-engine-badge" class="text-base font-extrabold text-purple-700 mt-1 truncate max-w-[150px]">Customer Support AI</h3>
-                    <p id="stat-key-status" class="text-[11px] text-emerald-600 mt-0.5 font-bold"><i class="fas fa-check-circle mr-1"></i>Ready to Reply</p>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Bot Status</span>
+                    <h3 id="stat-engine-badge" class="text-sm font-extrabold text-purple-700 mt-0.5 truncate max-w-[140px]">Customer Support AI</h3>
+                    <p id="stat-key-status" class="text-[10px] text-emerald-600 font-bold"><i class="fas fa-check-circle mr-1"></i>Ready to Reply</p>
                 </div>
-                <div class="w-12 h-12 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center text-xl font-bold">
+                <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-lg font-bold">
                     <i class="fas fa-headset"></i>
                 </div>
             </div>
         </div>
 
-        <!-- ================= TAB 1: LIVE CHATS VIEW (WHITE/LIGHT THEME) ================= -->
-        <div id="view-chats" class="flex-1 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm flex flex-col md:flex-row min-h-[600px] h-[660px]">
+        <!-- ================= TAB 1: LIVE CHATS VIEW (FIXED CHAT VIEWPORT) ================= -->
+        <div id="view-chats" class="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm flex flex-col md:flex-row">
             
             <!-- LEFT SIDEBAR: Conversation List -->
-            <div class="w-full md:w-80 lg:w-96 bg-slate-50/70 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col h-full">
+            <div class="w-full md:w-80 lg:w-96 bg-slate-50/70 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col h-full min-h-0 flex-shrink-0">
                 <!-- Search & Filters -->
-                <div class="p-3.5 bg-white border-b border-slate-200 space-y-2.5">
+                <div class="p-3 bg-white border-b border-slate-200 space-y-2 flex-shrink-0">
                     <div class="flex items-center justify-between">
                         <h2 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Customer Inbox (<span id="chat-count">0</span>)</h2>
                         <button onclick="clearAllData()" title="Clear all messages" class="text-xs text-slate-400 hover:text-red-500 p-1 transition">
@@ -704,130 +704,136 @@ async def serve_dashboard():
                         </button>
                     </div>
                     <div class="relative">
-                        <i class="fas fa-search absolute left-3.5 top-3 text-xs text-slate-400"></i>
+                        <i class="fas fa-search absolute left-3.5 top-2.5 text-xs text-slate-400"></i>
                         <input 
                             type="text" 
                             id="search-input" 
                             oninput="filterConversations()" 
                             placeholder="Search by customer name, phone, message..." 
-                            class="w-full bg-slate-50 text-xs text-slate-800 placeholder-slate-400 pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
+                            class="w-full bg-slate-50 text-xs text-slate-800 placeholder-slate-400 pl-9 pr-3.5 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
                         />
                     </div>
                 </div>
 
                 <!-- Conversation Items -->
-                <div id="conversations-container" class="flex-1 overflow-y-auto divide-y divide-slate-100">
+                <div id="conversations-container" class="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100">
                     <div class="p-8 text-center text-slate-400 text-xs">Loading customer chats...</div>
                 </div>
             </div>
 
             <!-- RIGHT PANEL: Active WhatsApp Chat Window -->
-            <div class="flex-1 flex flex-col h-full bg-slate-100">
+            <div class="flex-1 min-h-0 flex flex-col h-full bg-slate-100 relative">
                 
                 <!-- Chat Window Header -->
-                <div class="bg-white px-5 py-3 border-b border-slate-200 flex items-center justify-between shadow-sm">
-                    <div class="flex items-center space-x-3.5">
-                        <div id="active-avatar" class="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center text-white font-bold shadow-sm text-sm">
+                <div class="flex-shrink-0 bg-white px-4 py-2.5 border-b border-slate-200 flex items-center justify-between shadow-sm z-10">
+                    <div class="flex items-center space-x-3">
+                        <div id="active-avatar" class="w-9 h-9 rounded-full bg-emerald-600 flex items-center justify-center text-white font-bold shadow-sm text-xs">
                             <i class="fas fa-user"></i>
                         </div>
                         <div>
                             <div class="flex items-center space-x-2">
-                                <h2 id="active-name" class="text-sm font-extrabold text-slate-900">Select a Customer Chat</h2>
-                                <span id="active-channel-badge" class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-mono font-bold hidden">WhatsApp</span>
+                                <h2 id="active-name" class="text-sm font-extrabold text-slate-900 leading-tight">Select a Customer Chat</h2>
+                                <span id="active-channel-badge" class="text-[9px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-mono font-bold hidden">WhatsApp</span>
                             </div>
                             <p id="active-phone" class="text-xs text-emerald-600 font-mono font-medium">No active conversation</p>
                         </div>
                     </div>
 
                     <!-- Header Controls & Bot Auto-Reply Toggle -->
-                    <div class="flex items-center space-x-3">
-                        <button onclick="triggerAiReplyForCurrent()" title="Force AI to reply to latest message" class="px-3 py-1.5 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition font-bold flex items-center space-x-1">
+                    <div class="flex items-center space-x-2.5">
+                        <button onclick="triggerAiReplyForCurrent()" title="Force AI to reply to latest message" class="px-2.5 py-1 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition font-bold flex items-center space-x-1">
                             <i class="fas fa-wand-magic-sparkles text-emerald-600"></i>
-                            <span>AI Reply Now</span>
+                            <span>AI Reply</span>
                         </button>
 
-                        <div id="bot-toggle-container" class="hidden flex items-center bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold space-x-2">
+                        <div id="bot-toggle-container" class="hidden flex items-center bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-semibold space-x-1.5">
                             <span class="text-slate-600 flex items-center space-x-1">
                                 <i class="fas fa-robot text-emerald-600"></i>
-                                <span>Auto Bot:</span>
+                                <span>Bot:</span>
                             </span>
                             <label class="relative inline-flex items-center cursor-pointer">
                                 <input type="checkbox" id="contact-bot-checkbox" onchange="toggleContactBot(this.checked)" class="sr-only peer" checked>
-                                <div class="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                                <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
                             </label>
                         </div>
 
-                        <button id="book-lead-btn" onclick="openBookCurrentContactModal()" title="Convert to Booking" class="hidden px-3 py-1.5 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition font-bold">
+                        <button id="book-lead-btn" onclick="openBookCurrentContactModal()" title="Convert to Booking" class="hidden px-2.5 py-1 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition font-bold">
                             <i class="fas fa-calendar-plus mr-1"></i> Add Booking
                         </button>
-                        <button id="delete-chat-btn" onclick="deleteCurrentChat()" title="Delete Chat" class="hidden px-2.5 py-1.5 text-xs text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded-xl transition">
+                        <button id="delete-chat-btn" onclick="deleteCurrentChat()" title="Delete Chat" class="hidden px-2 py-1 text-xs text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded-lg transition">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
                 </div>
 
                 <!-- Messages Stream (WhatsApp Light Theme Wallpaper) -->
-                <div id="messages-container" class="flex-1 p-4 md:p-6 overflow-y-auto space-y-3.5 chat-light-bg">
+                <div id="messages-container" class="flex-1 min-h-0 p-4 md:p-5 overflow-y-auto space-y-3 chat-light-bg scroll-smooth">
                     <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
-                        <div class="w-16 h-16 rounded-2xl bg-white flex items-center justify-center text-emerald-500 text-3xl mb-3 shadow-sm border border-slate-200">
+                        <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center text-emerald-500 text-2xl mb-2.5 shadow-sm border border-slate-200">
                             <i class="fab fa-whatsapp"></i>
                         </div>
-                        <h3 class="text-base font-bold text-slate-700">Customer Support Inbox</h3>
+                        <h3 class="text-sm font-bold text-slate-700">Customer Support Inbox</h3>
                         <p class="text-xs text-slate-500 max-w-sm mt-1">Select a customer or type below to test chatting with the AI Support Bot.</p>
                     </div>
                 </div>
 
+                <!-- Floating Scroll to Bottom Button (WhatsApp Web Style) -->
+                <button id="scroll-bottom-btn" onclick="scrollChatToBottom(true)" title="Scroll to latest messages" class="hidden absolute right-5 bottom-28 w-9 h-9 rounded-full bg-white text-emerald-600 shadow-md border border-slate-200 items-center justify-center hover:bg-emerald-50 hover:text-emerald-700 transition z-20 group">
+                    <i class="fas fa-chevron-down text-xs group-hover:translate-y-0.5 transition-transform"></i>
+                    <span id="scroll-unread-badge" class="hidden absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></span>
+                </button>
+
                 <!-- Template Insertion Bar -->
-                <div class="px-4 py-2 bg-white border-t border-slate-200 flex items-center justify-between text-xs">
+                <div class="flex-shrink-0 px-3.5 py-1.5 bg-white border-t border-slate-200 flex items-center justify-between text-xs z-10">
                     <div class="flex items-center space-x-2 overflow-x-auto flex-1 mr-2 py-0.5">
-                        <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex-shrink-0"><i class="fas fa-bolt text-amber-500 mr-1"></i>Templates:</span>
+                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-shrink-0"><i class="fas fa-bolt text-amber-500 mr-1"></i>Templates:</span>
                         <div id="quick-templates-bar" class="flex items-center space-x-1.5">
                             <!-- Injected dynamically -->
                         </div>
                     </div>
-                    <button onclick="openTemplateSelectorModal()" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition flex-shrink-0">
-                        <i class="fas fa-ellipsis mr-1"></i> All Templates
+                    <button onclick="openTemplateSelectorModal()" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-semibold transition flex-shrink-0">
+                        <i class="fas fa-ellipsis mr-1"></i> All
                     </button>
                 </div>
 
                 <!-- Admin & Customer Multi-Role Reply Box -->
-                <div class="bg-white p-3.5 border-t border-slate-200 flex flex-col space-y-2.5">
+                <div class="flex-shrink-0 bg-white p-3 border-t border-slate-200 flex flex-col space-y-2 z-10">
                     <div class="flex items-center justify-between text-xs text-slate-500 px-1">
                         <div class="flex items-center space-x-4">
-                            <!-- 1. Send as Customer (Default: AI will automatically reply!) -->
+                            <!-- 1. Send as Customer -->
                             <label class="flex items-center space-x-1.5 cursor-pointer">
                                 <input type="radio" name="reply_role" id="role-customer" value="customer" checked class="text-emerald-600 focus:ring-0">
-                                <span class="text-emerald-700 font-extrabold flex items-center space-x-1">
+                                <span class="text-emerald-700 font-extrabold flex items-center space-x-1 text-xs">
                                     <i class="fas fa-user-tag text-emerald-600"></i>
-                                    <span>Chat as Customer (AI will reply!)</span>
+                                    <span>Chat as Customer (AI replies)</span>
                                 </span>
                             </label>
                             <!-- 2. Send as Agent -->
                             <label class="flex items-center space-x-1.5 cursor-pointer">
                                 <input type="radio" name="reply_role" id="role-agent" value="agent" class="text-emerald-600 focus:ring-0">
-                                <span class="text-slate-700 font-bold">Reply as Support Agent</span>
+                                <span class="text-slate-700 font-bold text-xs">Reply as Agent</span>
                             </label>
                         </div>
-                        <label class="flex items-center space-x-1.5 cursor-pointer text-slate-600 hover:text-slate-900 font-medium">
+                        <label class="flex items-center space-x-1.5 cursor-pointer text-slate-600 hover:text-slate-900 font-medium text-xs">
                             <input type="checkbox" id="send-meta-cloud" class="rounded text-emerald-600 focus:ring-0">
-                            <span>Forward to Meta Cloud API</span>
+                            <span>Forward to WhatsApp</span>
                         </label>
                     </div>
 
-                    <form id="reply-form" onsubmit="sendReply(event)" class="flex items-center space-x-2.5">
+                    <form id="reply-form" onsubmit="sendReply(event)" class="flex items-center space-x-2">
                         <input 
                             type="text" 
                             id="reply-input" 
                             placeholder="Type a message (e.g. 'What are your printing prices?' or 'I want to book an appointment')..." 
-                            class="flex-1 bg-slate-50 text-sm text-slate-900 placeholder-slate-400 px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
+                            class="flex-1 bg-slate-50 text-sm text-slate-900 placeholder-slate-400 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
                             autocomplete="off"
                         />
                         <button 
                             type="submit" 
                             id="send-reply-btn" 
-                            class="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center space-x-2 transition shadow-sm flex-shrink-0 disabled:opacity-50"
+                            class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center space-x-1.5 transition shadow-sm flex-shrink-0 disabled:opacity-50 text-sm"
                         >
-                            <span>Send & Reply</span>
+                            <span>Send</span>
                             <i class="fas fa-paper-plane text-xs"></i>
                         </button>
                     </form>
@@ -838,7 +844,7 @@ async def serve_dashboard():
         </div>
 
         <!-- ================= TAB 2: TEST AI LIVE SANDBOX ================= -->
-        <div id="view-testai" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 min-h-[600px]">
+        <div id="view-testai" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
             <div class="flex items-center justify-between pb-4 border-b border-slate-200">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
@@ -889,8 +895,10 @@ async def serve_dashboard():
         </div>
 
         <!-- ================= TAB 3: MESSAGE TEMPLATES VIEW ================= -->
-        <div id="view-templates" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 min-h-[600px]">
-            <div class="flex items-center justify-between pb-4 border-b border-slate-200">
+        <div id="view-templates" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
+
+            <!-- Templates Grid -->
+            <div class="flex items-center justify-between pb-4 border-b border-slate-200 flex-shrink-0">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
                         <i class="fas fa-layer-group text-blue-600"></i>
@@ -905,14 +913,15 @@ async def serve_dashboard():
             </div>
 
             <!-- Templates Grid -->
-            <div id="templates-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 overflow-y-auto">
+            <div id="templates-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 overflow-y-auto min-h-0">
                 <!-- Injected via JS -->
             </div>
         </div>
 
         <!-- ================= TAB 4: BOOKINGS & APPOINTMENTS VIEW ================= -->
-        <div id="view-bookings" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 min-h-[600px]">
-            <div class="flex items-center justify-between pb-4 border-b border-slate-200">
+        <div id="view-bookings" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
+
+            <div class="flex items-center justify-between pb-4 border-b border-slate-200 flex-shrink-0">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
                         <i class="fas fa-calendar-check text-amber-500"></i>
@@ -927,7 +936,7 @@ async def serve_dashboard():
             </div>
 
             <!-- Bookings Table -->
-            <div class="flex-1 overflow-x-auto">
+            <div class="flex-1 overflow-x-auto min-h-0">
                 <table class="w-full text-left text-xs text-slate-700">
                     <thead class="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
                         <tr>
@@ -948,7 +957,7 @@ async def serve_dashboard():
         </div>
 
         <!-- ================= TAB 5: WEBHOOK INSPECTOR VIEW ================= -->
-        <div id="view-webhooks" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 min-h-[600px]">
+        <div id="view-webhooks" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
             <div class="flex items-center justify-between pb-4 border-b border-slate-200">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
@@ -1343,12 +1352,61 @@ async def serve_dashboard():
             }
         }
 
+        let isUserScrolledUp = false;
+        let lastRenderedCount = 0;
+
+        function scrollChatToBottom(smooth = true) {
+            const container = document.getElementById('messages-container');
+            if (!container) return;
+            if (smooth) {
+                container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+            } else {
+                container.scrollTop = container.scrollHeight;
+            }
+            isUserScrolledUp = false;
+            const btn = document.getElementById('scroll-bottom-btn');
+            const unreadBadge = document.getElementById('scroll-unread-badge');
+            if (btn) {
+                btn.classList.add('hidden');
+                btn.classList.remove('flex');
+            }
+            if (unreadBadge) unreadBadge.classList.add('hidden');
+        }
+
+        function setupScrollListener() {
+            const container = document.getElementById('messages-container');
+            if (!container || container.dataset.scrollBound) return;
+            container.dataset.scrollBound = "true";
+            container.addEventListener('scroll', () => {
+                const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+                isUserScrolledUp = distanceFromBottom > 90;
+                const btn = document.getElementById('scroll-bottom-btn');
+                if (btn) {
+                    if (isUserScrolledUp && container.scrollHeight > container.clientHeight) {
+                        btn.classList.remove('hidden');
+                        btn.classList.add('flex');
+                    } else {
+                        btn.classList.add('hidden');
+                        btn.classList.remove('flex');
+                        const unreadBadge = document.getElementById('scroll-unread-badge');
+                        if (unreadBadge) unreadBadge.classList.add('hidden');
+                    }
+                }
+            });
+        }
+
         function renderMessages(messages, shouldScroll = true) {
             const container = document.getElementById('messages-container');
+            setupScrollListener();
             if (messages.length === 0) {
                 container.innerHTML = `<div class="h-full flex items-center justify-center text-slate-500 text-xs">No messages in this chat yet.</div>`;
+                lastRenderedCount = 0;
                 return;
             }
+
+            const countChanged = messages.length !== lastRenderedCount;
+            const wasScrolledUp = isUserScrolledUp;
+            lastRenderedCount = messages.length;
 
             container.innerHTML = messages.map(m => {
                 const isOutbound = m.direction === 'outbound';
@@ -1376,7 +1434,16 @@ async def serve_dashboard():
                 `;
             }).join('');
 
-            if (shouldScroll) container.scrollTop = container.scrollHeight;
+            // Smart scrolling:
+            // 1. If explicit scroll requested (shouldScroll == true, e.g. chat clicked or message sent): scroll to bottom
+            // 2. If already at bottom and new messages arrived: auto-scroll to bottom
+            // 3. If user scrolled up reading history: preserve their scroll position & show badge on down button
+            if (shouldScroll || (!wasScrolledUp && countChanged)) {
+                setTimeout(() => scrollChatToBottom(false), 20);
+            } else if (wasScrolledUp && countChanged) {
+                const unreadBadge = document.getElementById('scroll-unread-badge');
+                if (unreadBadge) unreadBadge.classList.remove('hidden');
+            }
         }
 
         async function triggerAiReplyForCurrent() {
