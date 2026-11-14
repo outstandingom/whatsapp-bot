@@ -159,6 +159,11 @@ async def handle_meta_webhook(request: Request):
                         # Check if automated bot is enabled for this customer
                         bot_active = db.is_bot_enabled_for_contact(sender_id)
 
+                        # If customer message asks for human agent, auto-pause bot for next messages
+                        is_handover_request = bool(user_text and any(w in user_text.lower() for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]))
+                        if is_handover_request:
+                            db.set_bot_enabled_for_contact(sender_id, False)
+
                         if user_text and bot_active:
                             groq_key = get_env_var("GROQ_API_KEY")
                             groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -179,6 +184,8 @@ async def handle_meta_webhook(request: Request):
                                 ai_model=engine_used,
                                 latency_ms=latency_ms
                             )
+                        elif user_text and not bot_active:
+                            logger.info(f"[Meta Webhook] AI bot is paused for {sender_id}. Message saved for human agent.")
     except Exception as err:
         logger.error(f"Error handling Meta WhatsApp webhook: {err}")
 
@@ -399,6 +406,8 @@ async def send_dashboard_reply(request: Request):
         latency_ms = 0.0
         engine_used = None
         sender_name = "printingtask Support"
+        # When an agent replies directly, automatically pause AI bot for this contact so the AI does not interrupt!
+        db.set_bot_enabled_for_contact(phone, False)
 
     status = "sent"
     meta_payload = {}
@@ -786,15 +795,14 @@ async def serve_dashboard():
                             <span>AI Reply</span>
                         </button>
 
-                        <div id="bot-toggle-container" class="hidden flex items-center bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-semibold space-x-1.5">
-                            <span class="text-slate-600 flex items-center space-x-1">
-                                <i class="fas fa-robot text-emerald-600"></i>
-                                <span>Bot:</span>
-                            </span>
-                            <label class="relative inline-flex items-center cursor-pointer">
+                        <div id="bot-toggle-container" class="hidden flex items-center bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-semibold space-x-2">
+                            <label class="relative inline-flex items-center cursor-pointer" title="Toggle AI Auto-Reply ON / OFF">
                                 <input type="checkbox" id="contact-bot-checkbox" onchange="toggleContactBot(this.checked)" class="sr-only peer" checked>
                                 <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
                             </label>
+                            <span id="bot-status-pill" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse"></span> AI Active
+                            </span>
                         </div>
 
                         <button id="book-lead-btn" onclick="openBookCurrentContactModal()" title="Convert to Booking" class="hidden px-2.5 py-1 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition font-bold">
@@ -839,24 +847,28 @@ async def serve_dashboard():
                 <!-- Admin & Customer Multi-Role Reply Box -->
                 <div class="flex-shrink-0 bg-white p-3 border-t border-slate-200 flex flex-col space-y-2 z-10">
                     <div class="flex items-center justify-between text-xs text-slate-500 px-1">
-                        <div class="flex items-center space-x-4">
-                            <!-- 1. Send as Customer -->
-                            <label class="flex items-center space-x-1.5 cursor-pointer">
-                                <input type="radio" name="reply_role" id="role-customer" value="customer" checked class="text-emerald-600 focus:ring-0">
-                                <span class="text-emerald-700 font-extrabold flex items-center space-x-1 text-xs">
-                                    <i class="fas fa-user-tag text-emerald-600"></i>
-                                    <span>Chat as Customer (AI replies)</span>
+                        <div class="flex items-center space-x-3">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Mode:</span>
+                            <!-- 1. Send as Agent -->
+                            <label class="flex items-center space-x-1.5 cursor-pointer" title="Direct human agent reply (automatically pauses AI for this customer)">
+                                <input type="radio" name="reply_role" id="role-agent" value="agent" checked onchange="handleRoleChange('agent')" class="text-emerald-600 focus:ring-0">
+                                <span class="text-slate-800 font-extrabold flex items-center space-x-1 text-xs">
+                                    <i class="fas fa-user-tie text-blue-600"></i>
+                                    <span>Reply as Agent (Pause AI)</span>
                                 </span>
                             </label>
-                            <!-- 2. Send as Agent -->
-                            <label class="flex items-center space-x-1.5 cursor-pointer">
-                                <input type="radio" name="reply_role" id="role-agent" value="agent" class="text-emerald-600 focus:ring-0">
-                                <span class="text-slate-700 font-bold text-xs">Reply as Agent</span>
+                            <!-- 2. Test as Customer -->
+                            <label class="flex items-center space-x-1.5 cursor-pointer" title="Simulate a customer inquiry to test AI auto-reply">
+                                <input type="radio" name="reply_role" id="role-customer" value="customer" onchange="handleRoleChange('customer')" class="text-emerald-600 focus:ring-0">
+                                <span class="text-slate-600 font-medium text-xs flex items-center space-x-1">
+                                    <i class="fas fa-vial text-slate-400"></i>
+                                    <span>Test Prompt (AI auto-replies)</span>
+                                </span>
                             </label>
                         </div>
-                        <label class="flex items-center space-x-1.5 cursor-pointer text-slate-600 hover:text-slate-900 font-medium text-xs">
-                            <input type="checkbox" id="send-meta-cloud" class="rounded text-emerald-600 focus:ring-0">
-                            <span>Forward to WhatsApp</span>
+                        <label class="flex items-center space-x-1.5 cursor-pointer text-slate-700 hover:text-slate-900 font-bold text-xs">
+                            <input type="checkbox" id="send-meta-cloud" checked class="rounded text-emerald-600 focus:ring-0">
+                            <span class="text-emerald-700 font-bold"><i class="fab fa-whatsapp mr-0.5"></i> Forward to WhatsApp</span>
                         </label>
                     </div>
 
@@ -1334,6 +1346,10 @@ async def serve_dashboard():
                 const isOutbound = c.last_direction === 'outbound';
                 const dirIcon = isOutbound ? '<i class="fas fa-check-double text-emerald-600 mr-1 text-[10px]"></i>' : '';
                 const avatarBg = getAvatarColor(c.phone_number);
+                const isBotActive = c.bot_enabled !== 0 && c.bot_enabled !== false;
+                const botBadge = isBotActive
+                    ? '<span class="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.2 rounded" title="AI Bot is auto-replying">AI</span>'
+                    : '<span class="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded" title="Human Agent (AI paused)">Agent</span>';
 
                 return `
                     <div onclick="selectChat('${c.phone_number}', '${escapeHtml(c.sender_name)}', '${c.last_channel}')" 
@@ -1343,7 +1359,10 @@ async def serve_dashboard():
                         </div>
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center justify-between">
-                                <h4 class="text-xs font-bold text-slate-900 truncate">${escapeHtml(c.sender_name || c.phone_number)}</h4>
+                                <div class="flex items-center space-x-1.5 truncate">
+                                    <h4 class="text-xs font-bold text-slate-900 truncate">${escapeHtml(c.sender_name || c.phone_number)}</h4>
+                                    ${botBadge}
+                                </div>
                                 <span class="text-[10px] text-slate-400 font-mono">${formatTime(c.last_time)}</span>
                             </div>
                             <div class="flex items-center justify-between mt-0.5">
@@ -1384,7 +1403,12 @@ async def serve_dashboard():
                 const res = await fetch(`/api/dashboard/messages?phone=${encodeURIComponent(currentPhone)}`);
                 if (res.ok) {
                     const data = await res.json();
-                    document.getElementById('contact-bot-checkbox').checked = data.bot_enabled !== false;
+                    const isBotActive = data.bot_enabled !== false;
+                    updateBotStatusPill(isBotActive);
+                    if (!isBotActive) {
+                        const agentRadio = document.getElementById('role-agent');
+                        if (agentRadio) agentRadio.checked = true;
+                    }
                     renderMessages(data.messages || [], shouldScroll);
                 }
             } catch (e) {
@@ -1509,13 +1533,54 @@ async def serve_dashboard():
             fetchData(true);
         }
 
-        async function toggleContactBot(enabled) {
+        async function handleRoleChange(role) {
             if (!currentPhone) return;
-            await fetch('/api/dashboard/contact/bot-toggle', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: currentPhone, enabled: enabled })
-            });
+            if (role === 'agent') {
+                // When agent mode is selected, pause AI bot immediately so customer responses aren't auto-answered by bot!
+                updateBotStatusPill(false);
+                await toggleContactBot(false, false);
+                document.getElementById('send-meta-cloud').checked = true;
+            } else if (role === 'customer') {
+                // Test customer mode: re-enable AI bot
+                updateBotStatusPill(true);
+                await toggleContactBot(true, false);
+            }
+        }
+
+        async function toggleContactBot(enabled, syncRadio = true) {
+            if (!currentPhone) return;
+            updateBotStatusPill(enabled);
+            if (syncRadio) {
+                const agentRadio = document.getElementById('role-agent');
+                const custRadio = document.getElementById('role-customer');
+                if (!enabled && agentRadio) agentRadio.checked = true;
+                if (enabled && custRadio) custRadio.checked = true;
+            }
+            try {
+                await fetch('/api/dashboard/contact/bot-toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: currentPhone, enabled: enabled })
+                });
+                await fetchData(false);
+            } catch (e) {
+                console.error("Failed to toggle bot:", e);
+            }
+        }
+
+        function updateBotStatusPill(enabled) {
+            const pill = document.getElementById('bot-status-pill');
+            const checkbox = document.getElementById('contact-bot-checkbox');
+            if (checkbox) checkbox.checked = !!enabled;
+            if (pill) {
+                if (enabled) {
+                    pill.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center";
+                    pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse"></span> AI Active`;
+                } else {
+                    pill.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 flex items-center";
+                    pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1"></span> AI Paused (Human Agent)`;
+                }
+            }
         }
 
         async function sendReply(e) {
@@ -1532,6 +1597,10 @@ async def serve_dashboard():
             const role = document.querySelector('input[name="reply_role"]:checked').value;
             const sendViaMeta = document.getElementById('send-meta-cloud').checked;
             const btn = document.getElementById('send-reply-btn');
+
+            if (role === 'agent') {
+                updateBotStatusPill(false);
+            }
 
             input.disabled = true;
             btn.disabled = true;

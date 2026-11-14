@@ -169,30 +169,49 @@ def detect_and_record_booking(cursor, phone_number: str, customer_name: str, mes
 
 def is_bot_enabled_for_contact(phone_number: str) -> bool:
     """Check if automated bot is enabled for this customer phone number."""
+    if not phone_number:
+        return True
     try:
         init_db()
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT bot_enabled FROM contact_settings WHERE phone_number = ?", (phone_number,))
+        clean = str(phone_number).replace("+", "").strip()
+        cursor.execute("""
+            SELECT bot_enabled FROM contact_settings 
+            WHERE phone_number = ? 
+               OR phone_number = ? 
+               OR REPLACE(phone_number, '+', '') = ?
+            LIMIT 1
+        """, (phone_number, f"+{clean}", clean))
         row = cursor.fetchone()
         conn.close()
         if row is not None:
             return bool(row["bot_enabled"])
         return True # Default enabled
-    except Exception:
+    except Exception as e:
+        print(f"[DB] Error checking bot enabled: {e}")
         return True
 
 def set_bot_enabled_for_contact(phone_number: str, enabled: bool):
     """Toggle automated bot for this customer."""
+    if not phone_number:
+        return False
     try:
         init_db()
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO contact_settings (phone_number, bot_enabled)
-            VALUES (?, ?)
-            ON CONFLICT(phone_number) DO UPDATE SET bot_enabled = excluded.bot_enabled
-        """, (phone_number, 1 if enabled else 0))
+        clean = str(phone_number).replace("+", "").strip()
+        val = 1 if enabled else 0
+        
+        # Save under raw, clean, and plus versions so lookup always hits
+        keys = set([str(phone_number).strip(), clean, f"+{clean}"])
+        for p in keys:
+            if p:
+                cursor.execute("""
+                    INSERT INTO contact_settings (phone_number, bot_enabled)
+                    VALUES (?, ?)
+                    ON CONFLICT(phone_number) DO UPDATE SET bot_enabled = excluded.bot_enabled
+                """, (p, val))
         conn.commit()
         conn.close()
         return True
