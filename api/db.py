@@ -93,14 +93,14 @@ def init_db():
         cursor.execute("SELECT COUNT(*) as count FROM templates")
         if cursor.fetchone()["count"] == 0:
             default_templates = [
-                ("👋 Welcome Greeting", "Greeting", "Hello {{name}}! 👋 Thank you for reaching out to Customer Support. How can we assist you today?", "/welcome"),
-                ("📅 Booking Confirmation", "Bookings", "Hi {{name}}, your appointment for {{service}} on {{date_time}} is confirmed! Please let us know if you need to reschedule.", "/confirm"),
-                ("🖨️ Printing Quote Details", "Quotes", "Hi {{name}}, here is our estimate for your printing task:\n• Standard B/W: $0.05/page\n• Full Color: $0.25/page\n• Custom Finishing: Available upon request\nWould you like us to proceed with printing?", "/quote"),
-                ("📦 Order Ready for Pickup", "Orders", "Great news {{name}}! 🎉 Your order is ready for pickup at our store or dispatched for delivery. Please show your Order ID at the counter.", "/ready"),
-                ("💳 Payment Request", "Billing", "Hi {{name}}, you can complete your payment securely using this link: https://pay.example.com/invoice/{{phone}} . Let us know once completed!", "/pay"),
-                ("⏳ Under Review by Specialist", "Support", "Hi {{name}}, your request has been escalated to our senior support specialist. We are reviewing your files and will update you shortly.", "/review"),
-                ("⭐ Feedback & CSAT Survey", "Feedback", "Hi {{name}}, how was your support experience with us today? Please rate us from 1 (Poor) to 5 (Excellent) ⭐. Thank you!", "/feedback"),
-                ("👤 Human Handover", "Handover", "A human customer support specialist has joined this chat. One moment please while I connect you with our agent.", "/agent")
+                ("👋 Welcome Greeting", "Greeting", "Hello {{name}}! 👋 Thank you for reaching out to printingtask Support. How can we assist you with your printing or orders today?", "/welcome"),
+                ("📅 Booking Confirmation", "Bookings", "Hi {{name}}, your appointment/booking for {{service}} on {{date_time}} with printingtask is confirmed! Please let us know if you need to make changes.", "/confirm"),
+                ("🖨️ Printing Quote Details", "Quotes", "Hi {{name}}, here is our estimate for your printingtask request:\n• Documents / Flyers / Banners / Visiting Cards\n• Custom finishing available\nWould you like us to proceed with printing?", "/quote"),
+                ("📦 Order Ready for Pickup", "Orders", "Great news {{name}}! 🎉 Your printingtask order is ready for pickup or dispatched for delivery. Please share your Order ID at the counter.", "/ready"),
+                ("💳 Payment Request", "Billing", "Hi {{name}}, you can complete your printingtask payment securely using this link: https://pay.example.com/invoice/{{phone}} . Let us know once completed!", "/pay"),
+                ("⏳ Under Review by Specialist", "Support", "Hi {{name}}, your request has been escalated to our senior printingtask specialist. We are reviewing your files and will update you shortly.", "/review"),
+                ("⭐ Feedback & CSAT Survey", "Feedback", "Hi {{name}}, how was your printingtask experience today? Please rate us from 1 (Poor) to 5 (Excellent) ⭐. Thank you!", "/feedback"),
+                ("👤 Human Handover", "Handover", "A human customer support specialist from printingtask has joined this chat. One moment please while I connect you.", "/agent")
             ]
             cursor.executemany("INSERT INTO templates (title, category, content, shortcut) VALUES (?, ?, ?, ?)", default_templates)
         

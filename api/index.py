@@ -24,7 +24,7 @@ db.init_db()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("whatsapp_support_bot")
 
-app = FastAPI(title="WhatsApp Customer Support Hub & Dashboard")
+app = FastAPI(title="printingtask • WhatsApp Support Hub & Dashboard")
 
 SERVER_START_TIME = time.time()
 
@@ -302,7 +302,7 @@ async def trigger_ai_reply(request: Request):
             prompt = inbounds[-1]["message"]
     
     if not prompt:
-        prompt = "Hello! How can customer support help me today?"
+        prompt = "Hello! How can printingtask customer support help me today?"
 
     groq_key = get_env_var("GROQ_API_KEY")
     groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -398,7 +398,7 @@ async def send_dashboard_reply(request: Request):
         reply_body = msg_input
         latency_ms = 0.0
         engine_used = None
-        sender_name = "Customer Support Agent"
+        sender_name = "printingtask Support"
 
     status = "sent"
     meta_payload = {}
@@ -589,7 +589,7 @@ async def serve_dashboard():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Customer Support Desk • WhatsApp Business CRM</title>
+    <title>printingtask • WhatsApp Business CRM</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome 6 -->
@@ -624,7 +624,7 @@ async def serve_dashboard():
             </div>
             <div>
                 <div class="flex items-center space-x-2.5">
-                    <h1 class="font-extrabold text-lg text-slate-900 tracking-tight">Customer Support Agent Desk</h1>
+                    <h1 class="font-extrabold text-lg text-slate-900 tracking-tight">printingtask Support Desk</h1>
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         <span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 live-dot"></span> AI Bot Active
                     </span>
@@ -721,7 +721,7 @@ async def serve_dashboard():
             <div class="bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between shadow-xs cursor-pointer hover:border-purple-400 transition" onclick="openSettingsModal()">
                 <div>
                     <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Bot Status</span>
-                    <h3 id="stat-engine-badge" class="text-sm font-extrabold text-purple-700 mt-0.5 truncate max-w-[140px]">Customer Support AI</h3>
+                    <h3 id="stat-engine-badge" class="text-sm font-extrabold text-purple-700 mt-0.5 truncate max-w-[140px]">printingtask AI</h3>
                     <p id="stat-key-status" class="text-[10px] text-emerald-600 font-bold"><i class="fas fa-check-circle mr-1"></i>Ready to Reply</p>
                 </div>
                 <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-lg font-bold">
@@ -812,7 +812,7 @@ async def serve_dashboard():
                         <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center text-emerald-500 text-2xl mb-2.5 shadow-sm border border-slate-200">
                             <i class="fab fa-whatsapp"></i>
                         </div>
-                        <h3 class="text-sm font-bold text-slate-700">Customer Support Inbox</h3>
+                        <h3 class="text-sm font-bold text-slate-700">printingtask Support Inbox</h3>
                         <p class="text-xs text-slate-500 max-w-sm mt-1">Select a customer or type below to test chatting with the AI Support Bot.</p>
                     </div>
                 </div>
@@ -891,7 +891,7 @@ async def serve_dashboard():
                         <i class="fas fa-wand-magic-sparkles text-emerald-600"></i>
                         <span>Live AI Response Sandbox</span>
                     </h2>
-                    <p class="text-xs text-slate-500 mt-0.5">Test how the Customer Support Bot replies to any customer prompt in real-time</p>
+                    <p class="text-xs text-slate-500 mt-0.5">Test how the printingtask AI Bot replies to any customer prompt in real-time</p>
                 </div>
             </div>
 
@@ -942,7 +942,7 @@ async def serve_dashboard():
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
                         <i class="fas fa-layer-group text-blue-600"></i>
-                        <span>Customer Support Message Templates</span>
+                        <span>printingtask Message Templates</span>
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">Reusable response templates with dynamic variables: <code class="text-emerald-600 font-mono">{{name}}</code>, <code class="text-emerald-600 font-mono">{{phone}}</code>, <code class="text-emerald-600 font-mono">{{service}}</code></p>
                 </div>
@@ -1284,7 +1284,7 @@ async def serve_dashboard():
                     document.getElementById('stat-contacts').innerText = stats.total_contacts || 0;
                     document.getElementById('stat-bookings').innerText = stats.total_bookings || 0;
                     document.getElementById('nav-bookings-count').innerText = stats.total_bookings || 0;
-                    document.getElementById('stat-engine-badge').innerText = stats.groq_configured ? stats.groq_model : 'Customer Support AI';
+                    document.getElementById('stat-engine-badge').innerText = stats.groq_configured ? stats.groq_model : 'printingtask AI';
                 }
 
                 // Conversations
