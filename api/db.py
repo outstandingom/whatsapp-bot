@@ -230,7 +230,7 @@ def get_conversations():
             SELECT 
                 m1.phone_number,
                 COALESCE(
-                    (SELECT m_in.sender_name FROM messages m_in WHERE m_in.phone_number = m1.phone_number AND m_in.direction = 'inbound' ORDER BY m_in.id DESC LIMIT 1),
+                    (SELECT m_in.sender_name FROM messages m_in WHERE REPLACE(m_in.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m_in.direction = 'inbound' ORDER BY m_in.id DESC LIMIT 1),
                     m1.sender_name,
                     'Customer'
                 ) as sender_name,
@@ -238,12 +238,12 @@ def get_conversations():
                 m1.direction as last_direction,
                 m1.channel as last_channel,
                 m1.created_at as last_time,
-                (SELECT COUNT(*) FROM messages m2 WHERE m2.phone_number = m1.phone_number) as total_messages,
-                (SELECT COUNT(*) FROM messages m3 WHERE m3.phone_number = m1.phone_number AND m3.direction = 'inbound') as inbound_count,
-                COALESCE((SELECT cs.bot_enabled FROM contact_settings cs WHERE cs.phone_number = m1.phone_number), 1) as bot_enabled
+                (SELECT COUNT(*) FROM messages m2 WHERE REPLACE(m2.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '')) as total_messages,
+                (SELECT COUNT(*) FROM messages m3 WHERE REPLACE(m3.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m3.direction = 'inbound') as inbound_count,
+                COALESCE((SELECT cs.bot_enabled FROM contact_settings cs WHERE REPLACE(cs.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') LIMIT 1), 1) as bot_enabled
             FROM messages m1
             WHERE m1.id IN (
-                SELECT MAX(id) FROM messages GROUP BY phone_number
+                SELECT MAX(id) FROM messages GROUP BY REPLACE(phone_number, '+', '')
             )
             ORDER BY m1.created_at DESC
         """
@@ -255,19 +255,22 @@ def get_conversations():
         print(f"[DB] Error getting conversations: {e}")
         return []
 
-def get_messages(phone_number: str = None, limit: int = 200):
+def get_messages(phone_number: str = None, limit: int = 500):
     try:
         init_db()
         conn = get_connection()
         cursor = conn.cursor()
         
         if phone_number:
+            clean = str(phone_number).replace("+", "").strip()
             cursor.execute("""
                 SELECT * FROM messages 
                 WHERE phone_number = ? 
+                   OR phone_number = ? 
+                   OR REPLACE(phone_number, '+', '') = ?
                 ORDER BY created_at ASC, id ASC 
                 LIMIT ?
-            """, (phone_number, limit))
+            """, (phone_number, f"+{clean}", clean, limit))
         else:
             cursor.execute("""
                 SELECT * FROM messages 
