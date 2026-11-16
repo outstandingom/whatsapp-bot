@@ -101,9 +101,13 @@ window.addEventListener('resize', () => {
             if (manual) refreshIcon.classList.add('fa-spin');
 
             try {
-                // Stats
-                const statsRes = await fetch('/api/dashboard/stats');
-                if (statsRes.ok) {
+                // Fetch stats and conversations in PARALLEL for ultra-fast loading
+                const [statsRes, convsRes] = await Promise.all([
+                    fetch('/api/dashboard/stats'),
+                    fetch('/api/dashboard/conversations')
+                ]);
+
+                if (statsRes && statsRes.ok) {
                     const stats = await statsRes.json();
                     document.getElementById('stat-total-messages').innerText = stats.total_messages || 0;
                     document.getElementById('stat-inbound').innerText = stats.inbound_messages || 0;
@@ -114,23 +118,24 @@ window.addEventListener('resize', () => {
                     document.getElementById('stat-engine-badge').innerText = stats.groq_configured ? stats.groq_model : 'printingtask AI';
                 }
 
-                // Conversations
-                const convsRes = await fetch('/api/dashboard/conversations');
-                if (convsRes.ok) {
+                if (convsRes && convsRes.ok) {
                     const data = await convsRes.json();
                     allConversations = data.conversations || [];
                     document.getElementById('chat-count').innerText = allConversations.length;
                     renderConversations(allConversations);
 
-                    if (!currentPhone && allConversations.length > 0) {
+                    // On desktop, auto-select first conversation. On mobile, let user see inbox first.
+                    if (!currentPhone && allConversations.length > 0 && window.innerWidth >= 768) {
                         selectChat(allConversations[0].phone_number, allConversations[0].sender_name, allConversations[0].last_channel);
                     } else if (currentPhone) {
                         await loadMessages(false);
                     }
                 }
 
-                // Load Templates
-                await fetchTemplates();
+                // Templates rarely change: fetch only once on boot or manual refresh
+                if (allTemplates.length === 0 || manual) {
+                    await fetchTemplates();
+                }
 
                 if (activeTab === 'bookings') fetchBookings();
                 if (activeTab === 'webhooks') fetchWebhooks();
@@ -217,6 +222,17 @@ window.addEventListener('resize', () => {
 
             renderConversations(allConversations);
             showMobileChat();
+            
+            // Show instant loading feedback in messages pane
+            const msgBox = document.getElementById('messages-container');
+            if (msgBox && msgBox.children.length === 0) {
+                msgBox.innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+                        <i class="fas fa-circle-notch fa-spin text-2xl text-emerald-500 mb-2"></i>
+                        <p class="text-xs">Loading conversation...</p>
+                    </div>
+                `;
+            }
             await loadMessages(true);
         }
 

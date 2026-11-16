@@ -11,13 +11,23 @@ if os.environ.get("VERCEL"):
 else:
     DB_PATH = os.path.join(os.path.dirname(DB_DIR), "whatsapp_messages.db")
 
+_DB_INITIALIZED = False
+
 def get_connection():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+    except Exception:
+        pass
     return conn
 
-def init_db():
+def init_db(force: bool = False):
     """Initialize database tables for messages, bookings, templates, and contact settings."""
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED and not force:
+        return
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -116,9 +126,11 @@ def init_db():
         
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone ON messages(phone_number)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON messages(created_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone_created ON messages(phone_number, created_at DESC)")
         
         conn.commit()
         conn.close()
+        _DB_INITIALIZED = True
     except Exception as e:
         print(f"[DB] Error initializing database: {e}")
 

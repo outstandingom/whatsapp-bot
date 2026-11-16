@@ -84,8 +84,8 @@ async def keep_alive_worker():
         except Exception as e:
             logger.warning(f"[Keep-Alive] Warning: self-ping failed: {e}")
         
-        # Ping every 5 minutes (300 seconds) - Render free tier sleeps after 15 mins of inactivity
-        await asyncio.sleep(300)
+        # Ping every 3 minutes (180 seconds) - keeps Render warm well before 15-min idle cutoff
+        await asyncio.sleep(180)
 
 @app.on_event("startup")
 async def startup_keep_alive():
