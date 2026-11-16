@@ -789,6 +789,16 @@ async def save_settings(request: Request):
 
     return JSONResponse({"success": True, "message": "Settings updated successfully!"})
 
+@app.delete("/api/dashboard/messages")
+async def delete_messages_endpoint(request: Request):
+    """Delete one or multiple selected messages."""
+    data = await request.json()
+    ids = data.get("ids", [])
+    if isinstance(ids, (int, str)):
+        ids = [ids]
+    success = db.delete_messages(ids)
+    return JSONResponse({"success": success, "deleted_count": len(ids)})
+
 @app.delete("/api/dashboard/conversation")
 async def delete_conv(phone: str = Query(...)):
     success = db.delete_contact(phone)
@@ -1020,7 +1030,20 @@ async def serve_dashboard():
                     </div>
 
                     <!-- Header Controls & Bot Auto-Reply Toggle -->
-                    <div class="flex items-center space-x-2.5">
+                    <div class="flex items-center space-x-2">
+                        <!-- Floating Selection Bar for Batch Deletion -->
+                        <div id="selection-bar" class="hidden flex items-center space-x-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl text-xs font-bold">
+                            <span id="selected-count-label" class="text-emerald-800 text-[11px]">0 selected</span>
+                            <button type="button" onclick="selectAllMessages()" class="text-emerald-700 hover:underline px-1 py-0.5 text-[11px]">Select All</button>
+                            <button type="button" id="delete-selected-btn" onclick="deleteSelectedMessages()" disabled class="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-2 py-0.5 rounded-lg flex items-center space-x-1 shadow-xs transition text-[11px]">
+                                <i class="fas fa-trash text-[10px]"></i>
+                                <span>Delete</span>
+                            </button>
+                            <button type="button" onclick="toggleSelectMode(false)" class="text-slate-400 hover:text-slate-600 px-1" title="Cancel Selection">
+                                <i class="fas fa-times text-xs"></i>
+                            </button>
+                        </div>
+
                         <button onclick="triggerAiReplyForCurrent()" title="Force AI to reply to latest message" class="px-2.5 py-1 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition font-bold flex items-center space-x-1">
                             <i class="fas fa-wand-magic-sparkles text-emerald-600"></i>
                             <span>AI Reply</span>
@@ -1036,11 +1059,17 @@ async def serve_dashboard():
                             </span>
                         </div>
 
+                        <button id="select-mode-btn" onclick="toggleSelectMode()" title="Select messages to delete" class="hidden px-2.5 py-1 text-xs text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition font-bold flex items-center space-x-1">
+                            <i class="fas fa-check-square text-slate-500"></i>
+                            <span>Select</span>
+                        </button>
+
                         <button id="book-lead-btn" onclick="openBookCurrentContactModal()" title="Convert to Booking" class="hidden px-2.5 py-1 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition font-bold">
                             <i class="fas fa-calendar-plus mr-1"></i> Add Booking
                         </button>
-                        <button id="delete-chat-btn" onclick="deleteCurrentChat()" title="Delete Chat" class="hidden px-2 py-1 text-xs text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded-lg transition">
-                            <i class="fas fa-trash"></i>
+                        <button id="delete-chat-btn" onclick="deleteCurrentChat()" title="Delete entire conversation" class="hidden px-2.5 py-1 text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition font-bold flex items-center space-x-1">
+                            <i class="fas fa-trash text-[10px]"></i>
+                            <span>Delete Chat</span>
                         </button>
                     </div>
                 </div>
@@ -1673,7 +1702,7 @@ async def serve_dashboard():
 
                 return `
                     <div onclick="selectChat('${c.phone_number}', '${escapeHtml(c.sender_name)}', '${c.last_channel}')" 
-                         class="p-3.5 cursor-pointer transition flex items-center space-x-3 ${activeClass}">
+                         class="group p-3.5 cursor-pointer transition flex items-center space-x-3 ${activeClass}">
                         <div class="w-10 h-10 rounded-full ${avatarBg} flex items-center justify-center text-white font-bold text-xs flex-shrink-0 shadow-sm">
                             ${getInitials(c.sender_name || c.phone_number)}
                         </div>
@@ -1686,10 +1715,15 @@ async def serve_dashboard():
                                 <span class="text-[10px] text-slate-400 font-mono">${formatTime(c.last_time)}</span>
                             </div>
                             <div class="flex items-center justify-between mt-0.5">
-                                <p class="text-xs text-slate-500 truncate max-w-[180px]">
+                                <p class="text-xs text-slate-500 truncate max-w-[170px]">
                                     ${dirIcon}${escapeHtml(c.last_message || '')}
                                 </p>
-                                <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-mono font-bold">${c.total_messages}</span>
+                                <div class="flex items-center space-x-1 flex-shrink-0">
+                                    <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-mono font-bold">${c.total_messages}</span>
+                                    <button onclick="event.stopPropagation(); deleteChatByPhone('${c.phone_number}', '${escapeHtml(c.sender_name || c.phone_number)}')" title="Delete conversation" class="opacity-0 group-hover:opacity-100 hover:text-red-600 p-0.5 rounded hover:bg-red-50 text-slate-400 transition ml-1">
+                                        <i class="fas fa-trash text-[11px]"></i>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1700,6 +1734,7 @@ async def serve_dashboard():
         async function selectChat(phone, name, channel) {
             currentPhone = phone;
             currentContactName = name || phone;
+            toggleSelectMode(false);
             document.getElementById('active-name').innerText = currentContactName;
             document.getElementById('active-phone').innerText = phone;
             document.getElementById('active-avatar').innerHTML = getInitials(name || phone);
@@ -1709,6 +1744,7 @@ async def serve_dashboard():
             badge.classList.remove('hidden');
             badge.innerText = (channel || 'WHATSAPP').toUpperCase().replace('_', ' ');
 
+            document.getElementById('select-mode-btn').classList.remove('hidden');
             document.getElementById('delete-chat-btn').classList.remove('hidden');
             document.getElementById('book-lead-btn').classList.remove('hidden');
             document.getElementById('bot-toggle-container').classList.remove('hidden');
@@ -1800,6 +1836,19 @@ async def serve_dashboard():
                 const engineTag = m.ai_model ? `<span class="text-[9px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold mr-1"><i class="fas fa-robot mr-1"></i>${escapeHtml(m.ai_model)}</span>` : '';
                 const triggerBtn = !isOutbound ? `<button onclick="triggerAiReplyForPrompt('${escapeHtml(m.message)}')" title="Generate AI Reply to this" class="ml-2 text-[10px] text-emerald-600 hover:text-emerald-800 font-bold underline"><i class="fas fa-wand-magic-sparkles mr-0.5"></i>AI Reply</button>` : '';
 
+                const isChecked = selectedMessageIds.has(m.id);
+                const selectCheckbox = isSelectMode ? `
+                    <div class="flex items-center self-center ${isOutbound ? 'order-2 pl-2.5' : 'order-1 pr-2.5'}">
+                        <input type="checkbox" class="msg-select-cb w-4 h-4 rounded text-emerald-600 focus:ring-0 cursor-pointer" data-id="${m.id}" ${isChecked ? 'checked' : ''} onchange="handleMessageSelectToggle(${m.id})">
+                    </div>
+                ` : '';
+
+                const singleDeleteBtn = !isSelectMode ? `
+                    <button onclick="deleteSingleMessage(${m.id})" title="Delete message" class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition text-[11px] ml-1.5 p-0.5">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                ` : '';
+
                 let mediaBlock = '';
                 if (m.media_type === 'image' && m.media_url) {
                     mediaBlock = `
@@ -1830,11 +1879,15 @@ async def serve_dashboard():
                 }
 
                 return `
-                    <div class="flex ${alignment}">
-                        <div class="${bubbleBg} text-xs px-3.5 py-2.5 rounded-2xl max-w-[85%] md:max-w-[75%] shadow-sm break-words space-y-1">
+                    <div class="flex items-center ${alignment} group">
+                        ${selectCheckbox}
+                        <div class="${bubbleBg} ${isOutbound && isSelectMode ? 'order-1' : ''} text-xs px-3.5 py-2.5 rounded-2xl max-w-[85%] md:max-w-[75%] shadow-sm break-words space-y-1 relative transition" ${isSelectMode ? `onclick="handleMessageSelectToggle(${m.id})" style="cursor: pointer"` : ''}>
                             <div class="flex items-center justify-between">
                                 <span class="text-[11px] font-extrabold ${isOutbound ? 'text-emerald-700' : 'text-slate-700'}">${senderLabel}</span>
-                                ${triggerBtn}
+                                <div class="flex items-center">
+                                    ${triggerBtn}
+                                    ${singleDeleteBtn}
+                                </div>
                             </div>
                             ${mediaBlock}
                             ${m.message ? `<div class="whitespace-pre-wrap leading-relaxed text-[13px]">${escapeHtml(m.message)}</div>` : ''}
@@ -2397,12 +2450,156 @@ async def serve_dashboard():
             }
         }
 
+        let isSelectMode = false;
+        let selectedMessageIds = new Set();
+
+        function toggleSelectMode(forceState) {
+            if (forceState !== undefined) {
+                isSelectMode = forceState;
+            } else {
+                isSelectMode = !isSelectMode;
+            }
+
+            selectedMessageIds.clear();
+            updateSelectionBar();
+
+            const selectBtn = document.getElementById('select-mode-btn');
+            const selectionBar = document.getElementById('selection-bar');
+
+            if (isSelectMode) {
+                if (selectionBar) selectionBar.classList.remove('hidden');
+                if (selectBtn) selectBtn.classList.add('bg-emerald-100', 'text-emerald-800', 'border-emerald-300');
+            } else {
+                if (selectionBar) selectionBar.classList.add('hidden');
+                if (selectBtn) selectBtn.classList.remove('bg-emerald-100', 'text-emerald-800', 'border-emerald-300');
+            }
+
+            loadMessages(false);
+        }
+
+        function handleMessageSelectToggle(msgId) {
+            msgId = parseInt(msgId);
+            if (selectedMessageIds.has(msgId)) {
+                selectedMessageIds.delete(msgId);
+            } else {
+                selectedMessageIds.add(msgId);
+            }
+            updateSelectionBar();
+            const cb = document.querySelector(`.msg-select-cb[data-id="${msgId}"]`);
+            if (cb) cb.checked = selectedMessageIds.has(msgId);
+        }
+
+        function selectAllMessages() {
+            const allCbs = document.querySelectorAll('.msg-select-cb');
+            if (selectedMessageIds.size === allCbs.length && allCbs.length > 0) {
+                selectedMessageIds.clear();
+                allCbs.forEach(cb => cb.checked = false);
+            } else {
+                allCbs.forEach(cb => {
+                    const id = parseInt(cb.dataset.id);
+                    selectedMessageIds.add(id);
+                    cb.checked = true;
+                });
+            }
+            updateSelectionBar();
+        }
+
+        function updateSelectionBar() {
+            const label = document.getElementById('selected-count-label');
+            const delBtn = document.getElementById('delete-selected-btn');
+            if (label) label.innerText = `${selectedMessageIds.size} selected`;
+            if (delBtn) delBtn.disabled = selectedMessageIds.size === 0;
+        }
+
+        async function deleteSelectedMessages() {
+            if (selectedMessageIds.size === 0) return;
+            const count = selectedMessageIds.size;
+            if (!confirm(`Delete ${count} selected message(s)? This cannot be undone.`)) return;
+
+            const ids = Array.from(selectedMessageIds);
+            const btn = document.getElementById('delete-selected-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin text-xs"></i> Deleting...`;
+            }
+
+            try {
+                const res = await fetch('/api/dashboard/messages', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids })
+                });
+
+                if (res.ok) {
+                    selectedMessageIds.clear();
+                    toggleSelectMode(false);
+                    await fetchData(true);
+                } else {
+                    alert("Failed to delete messages");
+                }
+            } catch (err) {
+                alert("Error deleting messages: " + err.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = `<i class="fas fa-trash text-[10px]"></i> <span>Delete</span>`;
+                }
+            }
+        }
+
+        async function deleteSingleMessage(msgId) {
+            if (!confirm("Delete this message?")) return;
+            try {
+                const res = await fetch('/api/dashboard/messages', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: [msgId] })
+                });
+                if (res.ok) {
+                    await fetchData(true);
+                } else {
+                    alert("Failed to delete message");
+                }
+            } catch (e) {
+                alert("Error: " + e.message);
+            }
+        }
+
         async function deleteCurrentChat() {
             if (!currentPhone) return;
-            if (!confirm(`Delete chat history for ${currentPhone}?`)) return;
-            await fetch(`/api/dashboard/conversation?phone=${encodeURIComponent(currentPhone)}`, { method: 'DELETE' });
-            currentPhone = null;
-            fetchData(true);
+            await deleteChatByPhone(currentPhone, currentContactName);
+        }
+
+        async function deleteChatByPhone(phone, name) {
+            if (!confirm(`Delete all messages and chat history for ${name || phone}? This cannot be undone.`)) return;
+            try {
+                const res = await fetch(`/api/dashboard/conversation?phone=${encodeURIComponent(phone)}`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    if (currentPhone === phone) {
+                        currentPhone = null;
+                        document.getElementById('messages-container').innerHTML = `
+                            <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+                                <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center text-emerald-500 text-2xl mb-2.5 shadow-sm border border-slate-200">
+                                    <i class="fab fa-whatsapp"></i>
+                                </div>
+                                <h3 class="text-sm font-bold text-slate-700">printingtask Support Inbox</h3>
+                                <p class="text-xs text-slate-500 max-w-sm mt-1">Select a customer or type below to test chatting with the AI Support Bot.</p>
+                            </div>
+                        `;
+                        document.getElementById('select-mode-btn').classList.add('hidden');
+                        document.getElementById('delete-chat-btn').classList.add('hidden');
+                        document.getElementById('book-lead-btn').classList.add('hidden');
+                        document.getElementById('bot-toggle-container').classList.add('hidden');
+                    }
+                    await fetchData(true);
+                } else {
+                    alert("Failed to delete conversation");
+                }
+            } catch (e) {
+                alert("Error: " + e.message);
+            }
         }
 
         async function clearAllData() {

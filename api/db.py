@@ -473,16 +473,53 @@ def clear_data():
     except Exception:
         return False
 
+def delete_messages(message_ids: list):
+    """Delete one or multiple messages by their IDs."""
+    if not message_ids:
+        return False
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        ids = [int(i) for i in message_ids if str(i).isdigit()]
+        if not ids:
+            return False
+        placeholders = ",".join("?" for _ in ids)
+        cursor.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB] Error deleting messages: {e}")
+        return False
+
 def delete_contact(phone_number: str):
     try:
         init_db()
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM messages WHERE phone_number = ?", (phone_number,))
-        cursor.execute("DELETE FROM bookings WHERE phone_number = ?", (phone_number,))
-        cursor.execute("DELETE FROM contact_settings WHERE phone_number = ?", (phone_number,))
+        clean = str(phone_number).replace("+", "").strip()
+        cursor.execute("""
+            DELETE FROM messages 
+            WHERE phone_number = ? 
+               OR phone_number = ? 
+               OR REPLACE(phone_number, '+', '') = ?
+        """, (phone_number, f"+{clean}", clean))
+        cursor.execute("""
+            DELETE FROM bookings 
+            WHERE phone_number = ? 
+               OR phone_number = ? 
+               OR REPLACE(phone_number, '+', '') = ?
+        """, (phone_number, f"+{clean}", clean))
+        cursor.execute("""
+            DELETE FROM contact_settings 
+            WHERE phone_number = ? 
+               OR phone_number = ? 
+               OR REPLACE(phone_number, '+', '') = ?
+        """, (phone_number, f"+{clean}", clean))
         conn.commit()
         conn.close()
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[DB] Error deleting contact: {e}")
         return False
