@@ -35,9 +35,19 @@ def init_db():
                 raw_payload TEXT,
                 ai_model TEXT,
                 latency_ms REAL DEFAULT 0,
+                media_type TEXT, -- 'image', 'document', 'audio', 'video'
+                media_url TEXT,
+                media_filename TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Safe schema migrations for media support
+        for col_def in ["media_type TEXT", "media_url TEXT", "media_filename TEXT"]:
+            try:
+                cursor.execute(f"ALTER TABLE messages ADD COLUMN {col_def}")
+            except Exception:
+                pass
         
         # Bookings & Support Requests Table
         cursor.execute("""
@@ -115,7 +125,8 @@ def init_db():
 def save_message(phone_number: str, message: str, direction: str = "inbound", 
                  sender_name: str = "User", channel: str = "meta_whatsapp", 
                  status: str = "received", raw_payload: dict = None, 
-                 ai_model: str = None, latency_ms: float = 0.0):
+                 ai_model: str = None, latency_ms: float = 0.0,
+                 media_type: str = None, media_url: str = None, media_filename: str = None):
     """Save an incoming or outgoing message to the database and track booking intent."""
     try:
         init_db()
@@ -125,14 +136,14 @@ def save_message(phone_number: str, message: str, direction: str = "inbound",
         payload_str = json.dumps(raw_payload) if isinstance(raw_payload, (dict, list)) else (raw_payload or "")
         
         cursor.execute("""
-            INSERT INTO messages (phone_number, sender_name, message, direction, channel, status, raw_payload, ai_model, latency_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (phone_number, sender_name, message, direction, channel, status, payload_str, ai_model, latency_ms))
+            INSERT INTO messages (phone_number, sender_name, message, direction, channel, status, raw_payload, ai_model, latency_ms, media_type, media_url, media_filename)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (phone_number, sender_name, message, direction, channel, status, payload_str, ai_model, latency_ms, media_type, media_url, media_filename))
         
         msg_id = cursor.lastrowid
 
         # Automatic Support / Booking Intent Detection for Inbound Messages
-        if direction == "inbound":
+        if direction == "inbound" and message:
             detect_and_record_booking(cursor, phone_number, sender_name, message)
 
         conn.commit()
@@ -234,7 +245,15 @@ def get_conversations():
                     m1.sender_name,
                     'Customer'
                 ) as sender_name,
-                m1.message as last_message,
+                COALESCE(
+                    NULLIF(m1.message, ''),
+                    CASE 
+                        WHEN m1.media_type = 'image' THEN '📷 Photo'
+                        WHEN m1.media_type = 'document' THEN '📄 ' || COALESCE(m1.media_filename, 'Document')
+                        ELSE 'Attachment'
+                    END
+                ) as last_message,
+                m1.media_type as last_media_type,
                 m1.direction as last_direction,
                 m1.channel as last_channel,
                 m1.created_at as last_time,

@@ -4,8 +4,9 @@ import time
 import asyncio
 import logging
 import httpx
-from fastapi import FastAPI, Request, Response, Form, Query
+from fastapi import FastAPI, Request, Response, Form, Query, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv, set_key
 
 # Import internal modules
@@ -25,6 +26,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("whatsapp_support_bot")
 
 app = FastAPI(title="printingtask • WhatsApp Support Hub & Dashboard")
+
+# Static directory for uploaded and received photos/documents
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 SERVER_START_TIME = time.time()
 
@@ -96,6 +102,102 @@ def send_meta_whatsapp_message(recipient_number: str, message_text: str):
     except Exception as e:
         return False, str(e)
 
+def upload_meta_media(file_bytes: bytes, filename: str, mime_type: str = "application/octet-stream") -> str:
+    """Uploads photo or document binary to Meta WhatsApp Media API and returns media_id."""
+    token = get_env_var("WHATSAPP_TOKEN")
+    phone_id = get_env_var("WHATSAPP_PHONE_NUMBER_ID")
+    if not token or not phone_id:
+        return None
+    url = f"https://graph.facebook.com/v21.0/{phone_id}/media"
+    headers = {"Authorization": f"Bearer {token}"}
+    files = {
+        "file": (filename, file_bytes, mime_type),
+    }
+    data = {"messaging_product": "whatsapp"}
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            res = client.post(url, headers=headers, files=files, data=data)
+            if res.status_code == 200:
+                return res.json().get("id")
+            logger.error(f"[Meta Media Upload] Failed {res.status_code}: {res.text}")
+            return None
+    except Exception as e:
+        logger.error(f"[Meta Media Upload] Exception: {e}")
+        return None
+
+def send_meta_whatsapp_media(recipient_number: str, media_type: str, media_id: str = None, media_link: str = None, caption: str = "", filename: str = ""):
+    """Send photo or document to user via Meta WhatsApp Cloud API."""
+    token = get_env_var("WHATSAPP_TOKEN")
+    phone_id = get_env_var("WHATSAPP_PHONE_NUMBER_ID")
+    if not token or not phone_id:
+        return False, "Meta WhatsApp Token or Phone Number ID is not configured."
+
+    url = f"https://graph.facebook.com/v21.0/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    media_payload = {}
+    if media_id:
+        media_payload["id"] = media_id
+    elif media_link:
+        media_payload["link"] = media_link
+
+    if caption:
+        media_payload["caption"] = caption
+    if media_type == "document" and filename:
+        media_payload["filename"] = filename
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient_number,
+        "type": media_type,
+        media_type: media_payload
+    }
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            res = client.post(url, headers=headers, json=payload)
+            return res.status_code == 200, res.text
+    except Exception as e:
+        return False, str(e)
+
+def download_meta_media(media_id: str, default_ext: str = ".bin") -> tuple:
+    """Downloads incoming media from Meta WhatsApp Cloud API and saves locally to /uploads. Returns (url, filename, mime_type)."""
+    token = get_env_var("WHATSAPP_TOKEN")
+    if not token or not media_id:
+        return None, None, None
+    try:
+        meta_url = f"https://graph.facebook.com/v21.0/{media_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+        with httpx.Client(timeout=20.0) as client:
+            res1 = client.get(meta_url, headers=headers)
+            if res1.status_code != 200:
+                logger.error(f"[Meta Media Download] Metadata failed for {media_id}: {res1.text}")
+                return None, None, None
+            data = res1.json()
+            download_url = data.get("url")
+            mime_type = data.get("mime_type", "application/octet-stream")
+
+            res2 = client.get(download_url, headers={"Authorization": f"Bearer {token}", "User-Agent": "WhatsAppBot/1.0"})
+            if res2.status_code == 200:
+                ext = default_ext
+                if "jpeg" in mime_type or "jpg" in mime_type: ext = ".jpg"
+                elif "png" in mime_type: ext = ".png"
+                elif "pdf" in mime_type: ext = ".pdf"
+                elif "webp" in mime_type: ext = ".webp"
+
+                fname = f"wa_{media_id}{ext}"
+                local_path = os.path.join(UPLOAD_DIR, fname)
+                with open(local_path, "wb") as f:
+                    f.write(res2.content)
+                return f"/uploads/{fname}", fname, mime_type
+    except Exception as e:
+        logger.error(f"[Meta Media Download] Error: {e}")
+    return None, None, None
+
 # ====================================================================
 # 1. WEBHOOKS (META CLOUD API & TWILIO)
 # ====================================================================
@@ -142,10 +244,41 @@ async def handle_meta_webhook(request: Request):
                 sender_name = contacts[0].get("profile", {}).get("name", "Customer") if contacts else "Customer"
                 
                 for msg in val.get("messages", []):
-                    if msg.get("type") == "text":
+                    msg_type = msg.get("type")
+                    if msg_type in ["text", "image", "document"]:
                         sender_id = msg.get("from")
-                        user_text = msg.get("text", {}).get("body", "").strip()
-                        
+                        if not sender_id:
+                            continue
+
+                        user_text = ""
+                        media_type = None
+                        media_url = None
+                        media_filename = None
+
+                        if msg_type == "text":
+                            user_text = msg.get("text", {}).get("body", "").strip()
+                        elif msg_type == "image":
+                            media_type = "image"
+                            img_data = msg.get("image", {})
+                            user_text = img_data.get("caption", "").strip()
+                            media_id = img_data.get("id")
+                            if media_id:
+                                media_url, media_filename, _ = download_meta_media(media_id, ".jpg")
+                            if not user_text:
+                                user_text = "📷 [Photo Received]"
+                        elif msg_type == "document":
+                            media_type = "document"
+                            doc_data = msg.get("document", {})
+                            user_text = doc_data.get("caption", "").strip()
+                            media_id = doc_data.get("id")
+                            orig_fname = doc_data.get("filename", "")
+                            if media_id:
+                                media_url, media_filename, _ = download_meta_media(media_id, ".pdf")
+                            if orig_fname:
+                                media_filename = orig_fname
+                            if not user_text:
+                                user_text = f"📄 [Document: {media_filename or 'File'}]"
+
                         # 1. Save Inbound Message
                         db.save_message(
                             phone_number=sender_id,
@@ -153,7 +286,10 @@ async def handle_meta_webhook(request: Request):
                             message=user_text,
                             direction="inbound",
                             channel="meta_whatsapp",
-                            raw_payload=msg
+                            raw_payload=msg,
+                            media_type=media_type,
+                            media_url=media_url,
+                            media_filename=media_filename
                         )
 
                         # Check if automated bot is enabled for this customer
@@ -164,10 +300,21 @@ async def handle_meta_webhook(request: Request):
                         if is_handover_request:
                             db.set_bot_enabled_for_contact(sender_id, False)
 
-                        if user_text and bot_active:
+                        if bot_active:
                             groq_key = get_env_var("GROQ_API_KEY")
                             groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-                            reply, latency_ms, engine_used = generate_ai_reply(user_text, groq_key, groq_model)
+
+                            if media_type:
+                                reply = (
+                                    f"Thank you for sharing your {media_type}! 📄\n\n"
+                                    "We have received your file at **printingtask**. "
+                                    "Our team is reviewing the document quality and printing requirements. "
+                                    "If you have specific instructions (quantity, paper type, color or B&W, binding), please reply with the details here!"
+                                )
+                                latency_ms = 0.0
+                                engine_used = "printingtask Assistant"
+                            else:
+                                reply, latency_ms, engine_used = generate_ai_reply(user_text, groq_key, groq_model)
 
                             # Send to WhatsApp
                             success, send_res = send_meta_whatsapp_message(sender_id, reply)
@@ -184,8 +331,8 @@ async def handle_meta_webhook(request: Request):
                                 ai_model=engine_used,
                                 latency_ms=latency_ms
                             )
-                        elif user_text and not bot_active:
-                            logger.info(f"[Meta Webhook] AI bot is paused for {sender_id}. Message saved for human agent.")
+                        elif not bot_active:
+                            logger.info(f"[Meta Webhook] AI bot is paused for {sender_id}. {msg_type} saved for human agent.")
     except Exception as err:
         logger.error(f"Error handling Meta WhatsApp webhook: {err}")
 
@@ -436,6 +583,90 @@ async def send_dashboard_reply(request: Request):
         "engine": engine_used,
         "status": status,
         "latency_ms": latency_ms
+    })
+
+@app.post("/api/dashboard/send-media")
+async def send_dashboard_media(
+    phone: str = Form(...),
+    caption: str = Form(""),
+    media_type: str = Form("image"),
+    send_via_meta: bool = Form(True),
+    file: UploadFile = File(None),
+    media_url: str = Form(None)
+):
+    """Send photo or document to customer from dashboard, forward to WhatsApp, and pause bot."""
+    phone = (phone or "").strip()
+    caption = (caption or "").strip()
+    if not phone:
+        return JSONResponse({"error": "Phone number is required"}, status_code=400)
+
+    filename = ""
+    saved_url = media_url or ""
+    mime_type = "application/octet-stream"
+    meta_id = None
+    meta_payload = {}
+    status = "sent"
+
+    # Handle file upload if provided
+    if file and file.filename:
+        filename = file.filename
+        mime_type = file.content_type or ("image/jpeg" if media_type == "image" else "application/pdf")
+        contents = await file.read()
+
+        # Save locally in uploads folder
+        clean_fname = f"{int(time.time())}_{filename.replace(' ', '_')}"
+        local_path = os.path.join(UPLOAD_DIR, clean_fname)
+        with open(local_path, "wb") as f:
+            f.write(contents)
+        saved_url = f"/uploads/{clean_fname}"
+
+        # Upload directly to Meta WhatsApp Media API
+        if send_via_meta:
+            meta_id = upload_meta_media(contents, filename, mime_type)
+
+    if not saved_url and not meta_id:
+        return JSONResponse({"error": "Please provide a file or media URL"}, status_code=400)
+
+    # Send via Meta WhatsApp Cloud API
+    if send_via_meta:
+        success, meta_res = send_meta_whatsapp_media(
+            recipient_number=phone,
+            media_type=media_type,
+            media_id=meta_id,
+            media_link=saved_url if not meta_id and saved_url.startswith("http") else None,
+            caption=caption,
+            filename=filename or ("document.pdf" if media_type == "document" else "image.jpg")
+        )
+        status = "sent" if success else "failed"
+        meta_payload = {"meta_api_response": meta_res}
+
+    # Save to database
+    display_msg = caption if caption else (f"📷 Photo" if media_type == "image" else f"📄 Document: {filename or 'File'}")
+    msg_id = db.save_message(
+        phone_number=phone,
+        sender_name="printingtask Support",
+        message=display_msg,
+        direction="outbound",
+        channel="manual_admin",
+        status=status,
+        raw_payload=meta_payload,
+        media_type=media_type,
+        media_url=saved_url,
+        media_filename=filename
+    )
+
+    # Automatically pause bot since human agent sent media
+    db.set_bot_enabled_for_contact(phone, False)
+
+    return JSONResponse({
+        "success": True,
+        "message_id": msg_id,
+        "phone": phone,
+        "media_type": media_type,
+        "media_url": saved_url,
+        "media_filename": filename,
+        "caption": caption,
+        "status": status
     })
 
 @app.post("/api/dashboard/simulate-inbound")
@@ -873,6 +1104,14 @@ async def serve_dashboard():
                     </div>
 
                     <form id="reply-form" onsubmit="sendReply(event)" class="flex items-center space-x-2">
+                        <button 
+                            type="button" 
+                            onclick="openMediaModal()" 
+                            title="Send Photo or Document" 
+                            class="px-3.5 py-2.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl border border-slate-200 transition flex items-center justify-center flex-shrink-0"
+                        >
+                            <i class="fas fa-paperclip text-sm"></i>
+                        </button>
                         <input 
                             type="text" 
                             id="reply-input" 
@@ -1039,6 +1278,87 @@ async def serve_dashboard():
         </div>
 
     </main>
+
+    <!-- ================= MODAL: SEND PHOTO OR DOCUMENT ================= -->
+    <div id="media-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl overflow-hidden">
+            <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base">
+                        <i class="fas fa-paperclip"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-extrabold text-slate-900 text-base">Send Photo or Document</h3>
+                        <p class="text-[11px] text-slate-400">Attach and send directly to customer's WhatsApp</p>
+                    </div>
+                </div>
+                <button onclick="closeMediaModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
+            </div>
+
+            <form id="media-upload-form" onsubmit="submitMediaUpload(event)" class="space-y-4 mt-4 text-xs">
+                <!-- Media Type Selection -->
+                <div>
+                    <label class="block text-slate-700 font-bold mb-1.5">Attachment Type</label>
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <label class="flex items-center space-x-2.5 p-3 rounded-xl border border-slate-200 cursor-pointer hover:border-emerald-500 transition has-[:checked]:border-emerald-600 has-[:checked]:bg-emerald-50/60">
+                            <input type="radio" name="modal_media_type" value="image" checked onchange="updateMediaFileInput()" class="text-emerald-600 focus:ring-0">
+                            <div>
+                                <span class="font-bold text-slate-800 block text-xs"><i class="fas fa-image text-emerald-600 mr-1"></i> Photo / Image</span>
+                                <span class="text-[10px] text-slate-400">JPG, PNG, WEBP</span>
+                            </div>
+                        </label>
+                        <label class="flex items-center space-x-2.5 p-3 rounded-xl border border-slate-200 cursor-pointer hover:border-emerald-500 transition has-[:checked]:border-emerald-600 has-[:checked]:bg-emerald-50/60">
+                            <input type="radio" name="modal_media_type" value="document" onchange="updateMediaFileInput()" class="text-emerald-600 focus:ring-0">
+                            <div>
+                                <span class="font-bold text-slate-800 block text-xs"><i class="fas fa-file-pdf text-red-500 mr-1"></i> Document</span>
+                                <span class="text-[10px] text-slate-400">PDF, DOCX, TXT</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- File Picker -->
+                <div>
+                    <label class="block text-slate-700 font-bold mb-1">Choose File</label>
+                    <input 
+                        type="file" 
+                        id="media-file-input" 
+                        accept="image/jpeg,image/png,image/webp" 
+                        required 
+                        class="block w-full text-xs text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 border border-slate-200 rounded-xl p-1 bg-slate-50 cursor-pointer"
+                    />
+                </div>
+
+                <!-- Caption / Message -->
+                <div>
+                    <label class="block text-slate-700 font-bold mb-1">Caption / Message (Optional)</label>
+                    <input 
+                        type="text" 
+                        id="media-caption-input" 
+                        placeholder="e.g. Here is your sample print preview..." 
+                        class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 text-xs"
+                    />
+                </div>
+
+                <!-- Forward to WhatsApp checkbox -->
+                <div class="flex items-center justify-between pt-1">
+                    <label class="flex items-center space-x-1.5 cursor-pointer text-xs font-bold text-slate-700">
+                        <input type="checkbox" id="media-send-meta" checked class="rounded text-emerald-600 focus:ring-0">
+                        <span class="text-emerald-700"><i class="fab fa-whatsapp mr-1"></i> Send to WhatsApp Customer</span>
+                    </label>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex items-center justify-end space-x-2.5 pt-3.5 border-t border-slate-100">
+                    <button type="button" onclick="closeMediaModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Cancel</button>
+                    <button type="submit" id="media-submit-btn" class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center space-x-2 shadow-sm transition disabled:opacity-50">
+                        <i class="fas fa-paper-plane text-xs"></i>
+                        <span>Send Attachment</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- ================= MODAL: SIMULATE CUSTOMER MESSAGE ================= -->
     <div id="simulate-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
@@ -1480,6 +1800,35 @@ async def serve_dashboard():
                 const engineTag = m.ai_model ? `<span class="text-[9px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold mr-1"><i class="fas fa-robot mr-1"></i>${escapeHtml(m.ai_model)}</span>` : '';
                 const triggerBtn = !isOutbound ? `<button onclick="triggerAiReplyForPrompt('${escapeHtml(m.message)}')" title="Generate AI Reply to this" class="ml-2 text-[10px] text-emerald-600 hover:text-emerald-800 font-bold underline"><i class="fas fa-wand-magic-sparkles mr-0.5"></i>AI Reply</button>` : '';
 
+                let mediaBlock = '';
+                if (m.media_type === 'image' && m.media_url) {
+                    mediaBlock = `
+                        <div class="mb-1.5 overflow-hidden rounded-xl border border-slate-200/60 max-w-[280px]">
+                            <a href="${m.media_url}" target="_blank" title="Click to view full image">
+                                <img src="${m.media_url}" class="w-full h-auto max-h-64 object-cover hover:opacity-95 transition rounded-xl" loading="lazy" />
+                            </a>
+                        </div>
+                    `;
+                } else if (m.media_type === 'document' && m.media_url) {
+                    const docName = escapeHtml(m.media_filename || 'Document.pdf');
+                    mediaBlock = `
+                        <div class="mb-1.5 p-2.5 bg-white/95 rounded-xl border border-slate-200/80 flex items-center justify-between space-x-3 max-w-[280px] shadow-xs">
+                            <div class="flex items-center space-x-2.5 min-w-0">
+                                <div class="w-9 h-9 rounded-lg bg-red-50 text-red-600 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-red-100">
+                                    <i class="fas fa-file-pdf"></i>
+                                </div>
+                                <div class="min-w-0">
+                                    <p class="text-xs font-bold text-slate-800 truncate">${docName}</p>
+                                    <span class="text-[10px] text-slate-400 font-medium">Document attachment</span>
+                                </div>
+                            </div>
+                            <a href="${m.media_url}" target="_blank" download="${docName}" class="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-slate-100 rounded-lg transition" title="Download Document">
+                                <i class="fas fa-download text-xs"></i>
+                            </a>
+                        </div>
+                    `;
+                }
+
                 return `
                     <div class="flex ${alignment}">
                         <div class="${bubbleBg} text-xs px-3.5 py-2.5 rounded-2xl max-w-[85%] md:max-w-[75%] shadow-sm break-words space-y-1">
@@ -1487,7 +1836,8 @@ async def serve_dashboard():
                                 <span class="text-[11px] font-extrabold ${isOutbound ? 'text-emerald-700' : 'text-slate-700'}">${senderLabel}</span>
                                 ${triggerBtn}
                             </div>
-                            <div class="whitespace-pre-wrap leading-relaxed text-[13px]">${escapeHtml(m.message)}</div>
+                            ${mediaBlock}
+                            ${m.message ? `<div class="whitespace-pre-wrap leading-relaxed text-[13px]">${escapeHtml(m.message)}</div>` : ''}
                             <div class="flex items-center justify-end space-x-1.5 pt-0.5 text-[10px] text-slate-500">
                                 ${engineTag}
                                 <span>${formatTime(m.created_at)}</span>
@@ -1882,6 +2232,78 @@ async def serve_dashboard():
                 }
             } catch (e) {
                 console.error("Webhook logs error:", e);
+            }
+        }
+
+        // Media Attachment Modal
+        function openMediaModal() {
+            if (!currentPhone) {
+                alert("Please select a conversation first.");
+                return;
+            }
+            document.getElementById('media-modal').classList.remove('hidden');
+        }
+
+        function closeMediaModal() {
+            document.getElementById('media-modal').classList.add('hidden');
+            document.getElementById('media-upload-form').reset();
+            updateMediaFileInput();
+        }
+
+        function updateMediaFileInput() {
+            const mediaType = document.querySelector('input[name="modal_media_type"]:checked').value;
+            const fileInput = document.getElementById('media-file-input');
+            if (mediaType === 'image') {
+                fileInput.accept = "image/jpeg,image/png,image/webp";
+            } else {
+                fileInput.accept = "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain";
+            }
+        }
+
+        async function submitMediaUpload(e) {
+            e.preventDefault();
+            if (!currentPhone) return;
+
+            const fileInput = document.getElementById('media-file-input');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert("Please select a file to send.");
+                return;
+            }
+
+            const mediaType = document.querySelector('input[name="modal_media_type"]:checked').value;
+            const caption = document.getElementById('media-caption-input').value.trim();
+            const sendViaMeta = document.getElementById('media-send-meta').checked;
+            const btn = document.getElementById('media-submit-btn');
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Uploading & Sending...`;
+
+            try {
+                const formData = new FormData();
+                formData.append('phone', currentPhone);
+                formData.append('caption', caption);
+                formData.append('media_type', mediaType);
+                formData.append('send_via_meta', sendViaMeta);
+                formData.append('file', file);
+
+                const res = await fetch('/api/dashboard/send-media', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res.ok) {
+                    closeMediaModal();
+                    await fetchData(true);
+                } else {
+                    const err = await res.json();
+                    alert("Failed to send attachment: " + (err.error || 'Server error'));
+                }
+            } catch (err) {
+                alert("Upload error: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-paper-plane text-xs"></i> <span>Send Attachment</span>`;
             }
         }
 
