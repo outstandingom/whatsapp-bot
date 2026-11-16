@@ -1134,4 +1134,3 @@ window.addEventListener('resize', () => {
         // Initialize & Auto Poll every 3 seconds
         fetchData();
         setInterval(() => fetchData(false), 3000);
-    </script>
