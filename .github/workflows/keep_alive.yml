@@ -1,0 +1,23 @@
+name: 24-7 Render Keep-Alive Ping
+
+on:
+  schedule:
+    # Runs every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Render Health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping https://whatapp-51qf.onrender.com/api/health
+        run: |
+          echo "=== Keep-Alive Ping at $(date -u) ==="
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 https://whatapp-51qf.onrender.com/api/health || echo "FAILED")
+          echo "Render Health API Response: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "Retrying via root endpoint..."
+            curl -s -o /dev/null -w "%{http_code}" --max-time 25 https://whatapp-51qf.onrender.com/ || true
+          fi
+          echo "Keep-alive ping completed successfully."
