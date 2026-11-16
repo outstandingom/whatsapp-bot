@@ -1,0 +1,1121 @@
+
+// ====================================================================
+// MOBILE RESPONSIVENESS HELPERS
+// ====================================================================
+function showMobileChat() {
+    if (window.innerWidth < 768) {
+        const paneList = document.getElementById('pane-conversations');
+        const paneChat = document.getElementById('pane-chat');
+        const analyticsCards = document.getElementById('analytics-cards');
+        if (paneList) {
+            paneList.classList.add('hidden');
+            paneList.classList.remove('flex');
+        }
+        if (paneChat) {
+            paneChat.classList.remove('hidden');
+            paneChat.classList.add('flex');
+        }
+        if (analyticsCards) {
+            analyticsCards.classList.add('hidden');
+        }
+    }
+}
+
+function showMobileList() {
+    if (window.innerWidth < 768) {
+        const paneList = document.getElementById('pane-conversations');
+        const paneChat = document.getElementById('pane-chat');
+        const analyticsCards = document.getElementById('analytics-cards');
+        if (paneList) {
+            paneList.classList.remove('hidden');
+            paneList.classList.add('flex');
+        }
+        if (paneChat) {
+            paneChat.classList.add('hidden');
+            paneChat.classList.remove('flex');
+        }
+        if (analyticsCards) {
+            analyticsCards.classList.remove('hidden');
+        }
+    }
+}
+
+window.addEventListener('resize', () => {
+    const paneList = document.getElementById('pane-conversations');
+    const paneChat = document.getElementById('pane-chat');
+    const analyticsCards = document.getElementById('analytics-cards');
+    if (window.innerWidth >= 768) {
+        if (paneList) {
+            paneList.classList.remove('hidden');
+            paneList.classList.add('flex');
+        }
+        if (paneChat) {
+            paneChat.classList.remove('hidden');
+            paneChat.classList.add('flex');
+        }
+        if (analyticsCards) {
+            analyticsCards.classList.remove('hidden');
+        }
+    } else {
+        if (currentPhone) {
+            if (paneList) { paneList.classList.add('hidden'); paneList.classList.remove('flex'); }
+            if (paneChat) { paneChat.classList.remove('hidden'); paneChat.classList.add('flex'); }
+            if (analyticsCards) { analyticsCards.classList.add('hidden'); }
+        } else {
+            if (paneList) { paneList.classList.remove('hidden'); paneList.classList.add('flex'); }
+            if (paneChat) { paneChat.classList.add('hidden'); paneChat.classList.remove('flex'); }
+            if (analyticsCards) { analyticsCards.classList.remove('hidden'); }
+        }
+    }
+});
+
+        let currentPhone = null;
+        let currentContactName = 'Customer';
+        let allConversations = [];
+        let allTemplates = [];
+        let activeTab = 'chats';
+
+        document.getElementById('webhook-full-url').innerText = window.location.origin + '/api/webhook';
+
+        function switchTab(tab) {
+            activeTab = tab;
+            ['chats', 'testai', 'templates', 'bookings', 'webhooks'].forEach(t => {
+                const view = document.getElementById('view-' + t);
+                const btn = document.getElementById('tab-btn-' + t);
+                if (t === tab) {
+                    view.classList.remove('hidden');
+                    btn.className = 'px-3.5 py-2 rounded-lg bg-white text-emerald-700 font-bold shadow-sm transition flex items-center space-x-1.5';
+                } else {
+                    view.classList.add('hidden');
+                    btn.className = 'px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5';
+                }
+            });
+
+            if (tab === 'templates') fetchTemplates();
+            if (tab === 'bookings') fetchBookings();
+            if (tab === 'webhooks') fetchWebhooks();
+        }
+
+        async function fetchData(manual = false) {
+            const refreshIcon = document.getElementById('refresh-icon');
+            if (manual) refreshIcon.classList.add('fa-spin');
+
+            try {
+                // Stats
+                const statsRes = await fetch('/api/dashboard/stats');
+                if (statsRes.ok) {
+                    const stats = await statsRes.json();
+                    document.getElementById('stat-total-messages').innerText = stats.total_messages || 0;
+                    document.getElementById('stat-inbound').innerText = stats.inbound_messages || 0;
+                    document.getElementById('stat-outbound').innerText = stats.outbound_messages || 0;
+                    document.getElementById('stat-contacts').innerText = stats.total_contacts || 0;
+                    document.getElementById('stat-bookings').innerText = stats.total_bookings || 0;
+                    document.getElementById('nav-bookings-count').innerText = stats.total_bookings || 0;
+                    document.getElementById('stat-engine-badge').innerText = stats.groq_configured ? stats.groq_model : 'printingtask AI';
+                }
+
+                // Conversations
+                const convsRes = await fetch('/api/dashboard/conversations');
+                if (convsRes.ok) {
+                    const data = await convsRes.json();
+                    allConversations = data.conversations || [];
+                    document.getElementById('chat-count').innerText = allConversations.length;
+                    renderConversations(allConversations);
+
+                    if (!currentPhone && allConversations.length > 0) {
+                        selectChat(allConversations[0].phone_number, allConversations[0].sender_name, allConversations[0].last_channel);
+                    } else if (currentPhone) {
+                        await loadMessages(false);
+                    }
+                }
+
+                // Load Templates
+                await fetchTemplates();
+
+                if (activeTab === 'bookings') fetchBookings();
+                if (activeTab === 'webhooks') fetchWebhooks();
+
+            } catch (err) {
+                console.error("Fetch error:", err);
+            } finally {
+                if (manual) setTimeout(() => refreshIcon.classList.remove('fa-spin'), 400);
+            }
+        }
+
+        function renderConversations(list) {
+            const container = document.getElementById('conversations-container');
+            if (!list || list.length === 0) {
+                container.innerHTML = `
+                    <div class="p-8 text-center text-slate-400 text-xs">
+                        <i class="far fa-comments text-2xl mb-2 text-slate-300 block"></i>
+                        No conversations yet.<br/>
+                        <button onclick="openSimulateModal()" class="mt-2 text-emerald-600 font-bold hover:underline">Simulate customer message</button>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = list.map(c => {
+                const isActive = c.phone_number === currentPhone;
+                const activeClass = isActive ? 'bg-emerald-50/80 border-l-4 border-emerald-600' : 'hover:bg-slate-100/70';
+                const isOutbound = c.last_direction === 'outbound';
+                const dirIcon = isOutbound ? '<i class="fas fa-check-double text-emerald-600 mr-1 text-[10px]"></i>' : '';
+                const avatarBg = getAvatarColor(c.phone_number);
+                const isBotActive = c.bot_enabled !== 0 && c.bot_enabled !== false;
+                const botBadge = isBotActive
+                    ? '<span class="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.2 rounded" title="AI Bot is auto-replying">AI</span>'
+                    : '<span class="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded" title="Human Agent (AI paused)">Agent</span>';
+
+                return `
+                    <div onclick="selectChat('${c.phone_number}', '${escapeHtml(c.sender_name)}', '${c.last_channel}')" 
+                         class="group p-3.5 cursor-pointer transition flex items-center space-x-3 ${activeClass}">
+                        <div class="w-10 h-10 rounded-full ${avatarBg} flex items-center justify-center text-white font-bold text-xs flex-shrink-0 shadow-sm">
+                            ${getInitials(c.sender_name || c.phone_number)}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-1.5 truncate">
+                                    <h4 class="text-xs font-bold text-slate-900 truncate">${escapeHtml(c.sender_name || c.phone_number)}</h4>
+                                    ${botBadge}
+                                </div>
+                                <span class="text-[10px] text-slate-400 font-mono">${formatTime(c.last_time)}</span>
+                            </div>
+                            <div class="flex items-center justify-between mt-0.5">
+                                <p class="text-xs text-slate-500 truncate max-w-[170px]">
+                                    ${dirIcon}${escapeHtml(c.last_message || '')}
+                                </p>
+                                <div class="flex items-center space-x-1 flex-shrink-0">
+                                    <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-mono font-bold">${c.total_messages}</span>
+                                    <button onclick="event.stopPropagation(); deleteChatByPhone('${c.phone_number}', '${escapeHtml(c.sender_name || c.phone_number)}')" title="Delete conversation" class="opacity-0 group-hover:opacity-100 hover:text-red-600 p-0.5 rounded hover:bg-red-50 text-slate-400 transition ml-1">
+                                        <i class="fas fa-trash text-[11px]"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function selectChat(phone, name, channel) {
+            currentPhone = phone;
+            currentContactName = name || phone;
+            toggleSelectMode(false);
+            document.getElementById('active-name').innerText = currentContactName;
+            document.getElementById('active-phone').innerText = phone;
+            document.getElementById('active-avatar').innerHTML = getInitials(name || phone);
+            document.getElementById('active-avatar').className = `w-10 h-10 rounded-full ${getAvatarColor(phone)} flex items-center justify-center text-white font-bold shadow-sm text-sm`;
+            
+            const badge = document.getElementById('active-channel-badge');
+            badge.classList.remove('hidden');
+            badge.innerText = (channel || 'WHATSAPP').toUpperCase().replace('_', ' ');
+
+            document.getElementById('select-mode-btn').classList.remove('hidden');
+            document.getElementById('delete-chat-btn').classList.remove('hidden');
+            document.getElementById('book-lead-btn').classList.remove('hidden');
+            document.getElementById('bot-toggle-container').classList.remove('hidden');
+
+            renderConversations(allConversations);
+            showMobileChat();
+            await loadMessages(true);
+        }
+
+        async function loadMessages(shouldScroll = true) {
+            if (!currentPhone) return;
+            try {
+                const res = await fetch(`/api/dashboard/messages?phone=${encodeURIComponent(currentPhone)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const isBotActive = data.bot_enabled !== false;
+                    updateBotStatusPill(isBotActive);
+                    if (!isBotActive) {
+                        const agentRadio = document.getElementById('role-agent');
+                        if (agentRadio) agentRadio.checked = true;
+                    }
+                    renderMessages(data.messages || [], shouldScroll);
+                }
+            } catch (e) {
+                console.error("Message load error:", e);
+            }
+        }
+
+        let isUserScrolledUp = false;
+        let lastRenderedCount = 0;
+
+        function scrollChatToBottom(smooth = true) {
+            const container = document.getElementById('messages-container');
+            if (!container) return;
+            if (smooth) {
+                container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+            } else {
+                container.scrollTop = container.scrollHeight;
+            }
+            isUserScrolledUp = false;
+            const btn = document.getElementById('scroll-bottom-btn');
+            const unreadBadge = document.getElementById('scroll-unread-badge');
+            if (btn) {
+                btn.classList.add('hidden');
+                btn.classList.remove('flex');
+            }
+            if (unreadBadge) unreadBadge.classList.add('hidden');
+        }
+
+        function setupScrollListener() {
+            const container = document.getElementById('messages-container');
+            if (!container || container.dataset.scrollBound) return;
+            container.dataset.scrollBound = "true";
+            container.addEventListener('scroll', () => {
+                const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+                isUserScrolledUp = distanceFromBottom > 90;
+                const btn = document.getElementById('scroll-bottom-btn');
+                if (btn) {
+                    if (isUserScrolledUp && container.scrollHeight > container.clientHeight) {
+                        btn.classList.remove('hidden');
+                        btn.classList.add('flex');
+                    } else {
+                        btn.classList.add('hidden');
+                        btn.classList.remove('flex');
+                        const unreadBadge = document.getElementById('scroll-unread-badge');
+                        if (unreadBadge) unreadBadge.classList.add('hidden');
+                    }
+                }
+            });
+        }
+
+        function renderMessages(messages, shouldScroll = true) {
+            const container = document.getElementById('messages-container');
+            setupScrollListener();
+            if (messages.length === 0) {
+                container.innerHTML = `<div class="h-full flex items-center justify-center text-slate-500 text-xs">No messages in this chat yet.</div>`;
+                lastRenderedCount = 0;
+                return;
+            }
+
+            const countChanged = messages.length !== lastRenderedCount;
+            const wasScrolledUp = isUserScrolledUp;
+            lastRenderedCount = messages.length;
+
+            container.innerHTML = messages.map(m => {
+                const isOutbound = m.direction === 'outbound';
+                const alignment = isOutbound ? 'justify-end' : 'justify-start';
+                const bubbleBg = isOutbound ? 'bg-[#d9fdd3] text-slate-900 border border-emerald-200/50 rounded-tr-sm' : 'bg-white text-slate-900 border border-slate-200/80 rounded-tl-sm';
+                const senderLabel = isOutbound ? (m.sender_name || 'Support Agent') : escapeHtml(m.sender_name || 'Customer');
+                const engineTag = m.ai_model ? `<span class="text-[9px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold mr-1"><i class="fas fa-robot mr-1"></i>${escapeHtml(m.ai_model)}</span>` : '';
+                const triggerBtn = !isOutbound ? `<button onclick="triggerAiReplyForPrompt('${escapeHtml(m.message)}')" title="Generate AI Reply to this" class="ml-2 text-[10px] text-emerald-600 hover:text-emerald-800 font-bold underline"><i class="fas fa-wand-magic-sparkles mr-0.5"></i>AI Reply</button>` : '';
+
+                const isChecked = selectedMessageIds.has(m.id);
+                const selectCheckbox = isSelectMode ? `
+                    <div class="flex items-center self-center ${isOutbound ? 'order-2 pl-2.5' : 'order-1 pr-2.5'}">
+                        <input type="checkbox" class="msg-select-cb w-4 h-4 rounded text-emerald-600 focus:ring-0 cursor-pointer" data-id="${m.id}" ${isChecked ? 'checked' : ''} onchange="handleMessageSelectToggle(${m.id})">
+                    </div>
+                ` : '';
+
+                const singleDeleteBtn = !isSelectMode ? `
+                    <button onclick="deleteSingleMessage(${m.id})" title="Delete message" class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition text-[11px] ml-1.5 p-0.5">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                ` : '';
+
+                let mediaBlock = '';
+                if (m.media_type === 'image' && m.media_url) {
+                    mediaBlock = `
+                        <div class="mb-1.5 overflow-hidden rounded-xl border border-slate-200/60 max-w-[280px]">
+                            <a href="${m.media_url}" target="_blank" title="Click to view full image">
+                                <img src="${m.media_url}" class="w-full h-auto max-h-64 object-cover hover:opacity-95 transition rounded-xl" loading="lazy" />
+                            </a>
+                        </div>
+                    `;
+                } else if (m.media_type === 'document' && m.media_url) {
+                    const docName = escapeHtml(m.media_filename || 'Document.pdf');
+                    mediaBlock = `
+                        <div class="mb-1.5 p-2.5 bg-white/95 rounded-xl border border-slate-200/80 flex items-center justify-between space-x-3 max-w-[280px] shadow-xs">
+                            <div class="flex items-center space-x-2.5 min-w-0">
+                                <div class="w-9 h-9 rounded-lg bg-red-50 text-red-600 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-red-100">
+                                    <i class="fas fa-file-pdf"></i>
+                                </div>
+                                <div class="min-w-0">
+                                    <p class="text-xs font-bold text-slate-800 truncate">${docName}</p>
+                                    <span class="text-[10px] text-slate-400 font-medium">Document attachment</span>
+                                </div>
+                            </div>
+                            <a href="${m.media_url}" target="_blank" download="${docName}" class="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-slate-100 rounded-lg transition" title="Download Document">
+                                <i class="fas fa-download text-xs"></i>
+                            </a>
+                        </div>
+                    `;
+                }
+
+                return `
+                    <div class="flex items-center ${alignment} group">
+                        ${selectCheckbox}
+                        <div class="${bubbleBg} ${isOutbound && isSelectMode ? 'order-1' : ''} text-xs px-3.5 py-2.5 rounded-2xl max-w-[85%] md:max-w-[75%] shadow-sm break-words space-y-1 relative transition" ${isSelectMode ? `onclick="handleMessageSelectToggle(${m.id})" style="cursor: pointer"` : ''}>
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-extrabold ${isOutbound ? 'text-emerald-700' : 'text-slate-700'}">${senderLabel}</span>
+                                <div class="flex items-center">
+                                    ${triggerBtn}
+                                    ${singleDeleteBtn}
+                                </div>
+                            </div>
+                            ${mediaBlock}
+                            ${m.message ? `<div class="whitespace-pre-wrap leading-relaxed text-[13px]">${escapeHtml(m.message)}</div>` : ''}
+                            <div class="flex items-center justify-end space-x-1.5 pt-0.5 text-[10px] text-slate-500">
+                                ${engineTag}
+                                <span>${formatTime(m.created_at)}</span>
+                                ${isOutbound ? '<i class="fas fa-check-double text-emerald-600 text-[10px]"></i>' : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Smart scrolling:
+            // 1. If explicit scroll requested (shouldScroll == true, e.g. chat clicked or message sent): scroll to bottom
+            // 2. If already at bottom and new messages arrived: auto-scroll to bottom
+            // 3. If user scrolled up reading history: preserve their scroll position & show badge on down button
+            if (shouldScroll || (!wasScrolledUp && countChanged)) {
+                setTimeout(() => scrollChatToBottom(false), 20);
+            } else if (wasScrolledUp && countChanged) {
+                const unreadBadge = document.getElementById('scroll-unread-badge');
+                if (unreadBadge) unreadBadge.classList.remove('hidden');
+            }
+        }
+
+        async function triggerAiReplyForCurrent() {
+            if (!currentPhone) {
+                alert("Please select a conversation first.");
+                return;
+            }
+            await fetch('/api/dashboard/trigger-ai-reply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: currentPhone })
+            });
+            fetchData(true);
+        }
+
+        async function triggerAiReplyForPrompt(prompt) {
+            if (!currentPhone) return;
+            await fetch('/api/dashboard/trigger-ai-reply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: currentPhone, prompt: prompt })
+            });
+            fetchData(true);
+        }
+
+        async function handleRoleChange(role) {
+            if (!currentPhone) return;
+            if (role === 'agent') {
+                // When agent mode is selected, pause AI bot immediately so customer responses aren't auto-answered by bot!
+                updateBotStatusPill(false);
+                await toggleContactBot(false, false);
+                document.getElementById('send-meta-cloud').checked = true;
+            } else if (role === 'customer') {
+                // Test customer mode: re-enable AI bot
+                updateBotStatusPill(true);
+                await toggleContactBot(true, false);
+            }
+        }
+
+        async function toggleContactBot(enabled, syncRadio = true) {
+            if (!currentPhone) return;
+            updateBotStatusPill(enabled);
+            if (syncRadio) {
+                const agentRadio = document.getElementById('role-agent');
+                const custRadio = document.getElementById('role-customer');
+                if (!enabled && agentRadio) agentRadio.checked = true;
+                if (enabled && custRadio) custRadio.checked = true;
+            }
+            try {
+                await fetch('/api/dashboard/contact/bot-toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: currentPhone, enabled: enabled })
+                });
+                await fetchData(false);
+            } catch (e) {
+                console.error("Failed to toggle bot:", e);
+            }
+        }
+
+        function updateBotStatusPill(enabled) {
+            const pill = document.getElementById('bot-status-pill');
+            const checkbox = document.getElementById('contact-bot-checkbox');
+            if (checkbox) checkbox.checked = !!enabled;
+            if (pill) {
+                if (enabled) {
+                    pill.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center";
+                    pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse"></span> AI Active`;
+                } else {
+                    pill.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 flex items-center";
+                    pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1"></span> AI Paused (Human Agent)`;
+                }
+            }
+        }
+
+        async function sendReply(e) {
+            e.preventDefault();
+            if (!currentPhone) {
+                alert("Please select a conversation or simulate a message first.");
+                return;
+            }
+
+            const input = document.getElementById('reply-input');
+            const msg = input.value.trim();
+            if (!msg) return;
+
+            const role = document.querySelector('input[name="reply_role"]:checked').value;
+            const sendViaMeta = document.getElementById('send-meta-cloud').checked;
+            const btn = document.getElementById('send-reply-btn');
+
+            if (role === 'agent') {
+                updateBotStatusPill(false);
+            }
+
+            input.disabled = true;
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/dashboard/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone: currentPhone,
+                        name: currentContactName,
+                        message: msg,
+                        role: role,
+                        send_via_meta: sendViaMeta
+                    })
+                });
+
+                if (res.ok) {
+                    input.value = '';
+                    await fetchData(true);
+                } else {
+                    const err = await res.json();
+                    alert("Error: " + (err.error || 'Failed to send message'));
+                }
+            } catch (err) {
+                alert("Network error: " + err.message);
+            } finally {
+                input.disabled = false;
+                btn.disabled = false;
+                input.focus();
+            }
+        }
+
+        // AI Sandbox Testing
+        async function runAiSandboxTest(promptText) {
+            if (!promptText) return;
+            document.getElementById('sandbox-prompt').value = promptText;
+            const output = document.getElementById('sandbox-output');
+            const meta = document.getElementById('sandbox-meta');
+            const btn = document.getElementById('sandbox-btn');
+
+            btn.disabled = true;
+            output.innerHTML = `<span class="text-slate-400 italic"><i class="fas fa-spinner fa-spin mr-1"></i> Generating AI Bot reply...</span>`;
+            meta.innerText = "Engine: Generating...";
+
+            try {
+                const res = await fetch('/api/dashboard/test-ai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: promptText })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    output.innerText = data.reply;
+                    meta.innerHTML = `<span class="text-emerald-600 font-bold">${data.engine}</span> • <span class="text-slate-500">${data.latency_ms} ms</span>`;
+                } else {
+                    output.innerText = "Error generating AI response.";
+                }
+            } catch (err) {
+                output.innerText = "Network Error: " + err.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // Templates System
+        async function fetchTemplates() {
+            try {
+                const res = await fetch('/api/dashboard/templates');
+                if (res.ok) {
+                    const data = await res.json();
+                    allTemplates = data.templates || [];
+                    renderQuickTemplates();
+                    renderTemplatesGrid();
+                    renderTemplatePicker();
+                }
+            } catch (e) {
+                console.error("Templates fetch error:", e);
+            }
+        }
+
+        function renderQuickTemplates() {
+            const bar = document.getElementById('quick-templates-bar');
+            bar.innerHTML = allTemplates.slice(0, 4).map(t => `
+                <button onclick="applyTemplate('${escapeHtml(t.content)}')" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-medium border border-slate-200 flex-shrink-0 transition truncate max-w-[160px]">
+                    ${escapeHtml(t.title)}
+                </button>
+            `).join('');
+        }
+
+        function renderTemplatesGrid() {
+            const grid = document.getElementById('templates-grid');
+            if (!allTemplates.length) {
+                grid.innerHTML = `<div class="p-8 text-center text-slate-400 col-span-3">No templates created yet.</div>`;
+                return;
+            }
+            grid.innerHTML = allTemplates.map(t => `
+                <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col justify-between space-y-3 hover:shadow-sm transition">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <h4 class="font-bold text-slate-900 text-sm">${escapeHtml(t.title)}</h4>
+                            <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold">${escapeHtml(t.category)}</span>
+                        </div>
+                        <p class="text-xs text-slate-600 whitespace-pre-wrap mt-2.5 leading-relaxed bg-white p-3 rounded-xl border border-slate-200">${escapeHtml(t.content)}</p>
+                    </div>
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-200/80">
+                        <button onclick="applyTemplate('${escapeHtml(t.content)}'); switchTab('chats');" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition">
+                            <i class="fas fa-paper-plane mr-1"></i> Use Template
+                        </button>
+                        <button onclick="deleteTemplate(${t.id})" class="text-slate-400 hover:text-red-500 p-1 transition"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderTemplatePicker() {
+            const list = document.getElementById('template-picker-list');
+            list.innerHTML = allTemplates.map(t => `
+                <div onclick="applyTemplate('${escapeHtml(t.content)}'); closeTemplateSelectorModal();" class="p-3.5 bg-slate-50 hover:bg-emerald-50 rounded-2xl border border-slate-200 cursor-pointer transition">
+                    <div class="flex items-center justify-between">
+                        <h4 class="font-bold text-slate-900">${escapeHtml(t.title)}</h4>
+                        <span class="text-[10px] font-bold text-slate-500">${escapeHtml(t.category)}</span>
+                    </div>
+                    <p class="text-xs text-slate-600 mt-1.5 truncate">${escapeHtml(t.content)}</p>
+                </div>
+            `).join('');
+        }
+
+        function applyTemplate(rawContent) {
+            let replaced = rawContent
+                .replace(/\{\{name\}\}/g, currentContactName || 'Customer')
+                .replace(/\{\{phone\}\}/g, currentPhone || '')
+                .replace(/\{\{date_time\}\}/g, 'Tomorrow at 2:00 PM')
+                .replace(/\{\{service\}\}/g, 'Printing & Task Service');
+            
+            document.getElementById('role-agent').checked = true;
+            document.getElementById('reply-input').value = replaced;
+            document.getElementById('reply-input').focus();
+        }
+
+        function openCreateTemplateModal() { document.getElementById('template-create-modal').classList.remove('hidden'); }
+        function closeCreateTemplateModal() { document.getElementById('template-create-modal').classList.add('hidden'); }
+
+        async function handleCreateTemplateSubmit(e) {
+            e.preventDefault();
+            const title = document.getElementById('tpl-title').value.trim();
+            const category = document.getElementById('tpl-category').value;
+            const content = document.getElementById('tpl-content').value.trim();
+
+            await fetch('/api/dashboard/templates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, category, content })
+            });
+
+            closeCreateTemplateModal();
+            fetchTemplates();
+        }
+
+        async function deleteTemplate(id) {
+            if (!confirm("Delete this template?")) return;
+            await fetch(`/api/dashboard/templates?id=${id}`, { method: 'DELETE' });
+            fetchTemplates();
+        }
+
+        function openTemplateSelectorModal() { document.getElementById('template-picker-modal').classList.remove('hidden'); }
+        function closeTemplateSelectorModal() { document.getElementById('template-picker-modal').classList.add('hidden'); }
+
+        // Bookings
+        async function fetchBookings() {
+            try {
+                const res = await fetch('/api/dashboard/bookings');
+                if (res.ok) {
+                    const data = await res.json();
+                    const list = data.bookings || [];
+                    const tbody = document.getElementById('bookings-tbody');
+                    if (list.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-slate-400">No bookings recorded yet. Inbound customer booking messages appear here automatically!</td></tr>`;
+                        return;
+                    }
+
+                    tbody.innerHTML = list.map(b => {
+                        const statusColors = {
+                            confirmed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                            pending: 'bg-amber-50 text-amber-700 border-amber-200',
+                            completed: 'bg-blue-50 text-blue-700 border-blue-200',
+                            cancelled: 'bg-red-50 text-red-700 border-red-200'
+                        };
+                        const badgeClass = statusColors[b.status] || statusColors.pending;
+
+                        return `
+                            <tr class="hover:bg-slate-50 transition">
+                                <td class="p-3.5 font-bold text-slate-900">${escapeHtml(b.customer_name)}</td>
+                                <td class="p-3.5 font-mono font-medium text-emerald-700">${b.phone_number}</td>
+                                <td class="p-3.5 text-slate-800 font-medium">${escapeHtml(b.service_requested)}</td>
+                                <td class="p-3.5 text-slate-600">${escapeHtml(b.booking_date_time)}</td>
+                                <td class="p-3.5">
+                                    <select onchange="updateBookingStatus(${b.id}, this.value)" class="px-2.5 py-1 rounded-lg text-xs font-bold border ${badgeClass} bg-white focus:outline-none">
+                                        <option value="confirmed" ${b.status === 'confirmed' ? 'selected' : ''}>Confirmed</option>
+                                        <option value="pending" ${b.status === 'pending' ? 'selected' : ''}>Pending</option>
+                                        <option value="completed" ${b.status === 'completed' ? 'selected' : ''}>Completed</option>
+                                        <option value="cancelled" ${b.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+                                    </select>
+                                </td>
+                                <td class="p-3.5 text-slate-500 truncate max-w-xs">${escapeHtml(b.notes || '')}</td>
+                                <td class="p-3.5 text-right">
+                                    <button onclick="selectChat('${b.phone_number}', '${escapeHtml(b.customer_name)}'); switchTab('chats');" class="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold hover:bg-emerald-600 hover:text-white transition">
+                                        <i class="fas fa-comment mr-1"></i> Chat
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error("Bookings error:", e);
+            }
+        }
+
+        async function updateBookingStatus(id, status) {
+            await fetch('/api/dashboard/bookings/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, status })
+            });
+            fetchData();
+        }
+
+        function openAddBookingModal() {
+            document.getElementById('book-phone').value = currentPhone || '+14155550199';
+            document.getElementById('book-name').value = currentContactName || 'Customer';
+            document.getElementById('booking-modal').classList.remove('hidden');
+        }
+        function openBookCurrentContactModal() { openAddBookingModal(); }
+        function closeBookingModal() { document.getElementById('booking-modal').classList.add('hidden'); }
+
+        async function handleAddBookingSubmit(e) {
+            e.preventDefault();
+            const phone = document.getElementById('book-phone').value.trim();
+            const name = document.getElementById('book-name').value.trim();
+            const service = document.getElementById('book-service').value.trim();
+            const dateTime = document.getElementById('book-time').value.trim();
+            const status = document.getElementById('book-status').value;
+
+            await fetch('/api/dashboard/bookings/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone, name, service, date_time: dateTime, status })
+            });
+
+            closeBookingModal();
+            fetchData(true);
+        }
+
+        // Webhooks
+        async function fetchWebhooks() {
+            try {
+                const res = await fetch('/api/dashboard/webhooks');
+                if (res.ok) {
+                    const data = await res.json();
+                    const container = document.getElementById('webhook-logs-container');
+                    const logs = data.logs || [];
+                    if (logs.length === 0) {
+                        container.innerHTML = `<div class="p-8 text-center text-slate-400">No webhook logs yet. Send a message to /api/webhook to test.</div>`;
+                        return;
+                    }
+                    container.innerHTML = logs.map(l => `
+                        <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-1.5">
+                            <div class="flex items-center justify-between font-mono text-xs">
+                                <div class="flex items-center space-x-2">
+                                    <span class="px-2 py-0.5 rounded-lg ${l.method === 'POST' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'} font-bold">${l.method}</span>
+                                    <span class="text-slate-800 font-bold">${l.endpoint}</span>
+                                </div>
+                                <span class="text-slate-400 text-[11px]">${l.created_at}</span>
+                            </div>
+                            <pre class="bg-white p-3 rounded-xl border border-slate-200 text-xs text-slate-700 overflow-x-auto font-mono max-h-36">${escapeHtml(l.payload || '')}</pre>
+                        </div>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error("Webhook logs error:", e);
+            }
+        }
+
+        // Media Attachment Modal
+        function openMediaModal() {
+            if (!currentPhone) {
+                alert("Please select a conversation first.");
+                return;
+            }
+            document.getElementById('media-modal').classList.remove('hidden');
+        }
+
+        function closeMediaModal() {
+            document.getElementById('media-modal').classList.add('hidden');
+            document.getElementById('media-upload-form').reset();
+            updateMediaFileInput();
+        }
+
+        function updateMediaFileInput() {
+            const mediaType = document.querySelector('input[name="modal_media_type"]:checked').value;
+            const fileInput = document.getElementById('media-file-input');
+            if (mediaType === 'image') {
+                fileInput.accept = "image/jpeg,image/png,image/webp";
+            } else {
+                fileInput.accept = "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain";
+            }
+        }
+
+        async function submitMediaUpload(e) {
+            e.preventDefault();
+            if (!currentPhone) return;
+
+            const fileInput = document.getElementById('media-file-input');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert("Please select a file to send.");
+                return;
+            }
+
+            const mediaType = document.querySelector('input[name="modal_media_type"]:checked').value;
+            const caption = document.getElementById('media-caption-input').value.trim();
+            const sendViaMeta = document.getElementById('media-send-meta').checked;
+            const btn = document.getElementById('media-submit-btn');
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Uploading & Sending...`;
+
+            try {
+                const formData = new FormData();
+                formData.append('phone', currentPhone);
+                formData.append('caption', caption);
+                formData.append('media_type', mediaType);
+                formData.append('send_via_meta', sendViaMeta);
+                formData.append('file', file);
+
+                const res = await fetch('/api/dashboard/send-media', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res.ok) {
+                    closeMediaModal();
+                    await fetchData(true);
+                } else {
+                    const err = await res.json();
+                    alert("Failed to send attachment: " + (err.error || 'Server error'));
+                }
+            } catch (err) {
+                alert("Upload error: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-paper-plane text-xs"></i> <span>Send Attachment</span>`;
+            }
+        }
+
+        // Simulate Modal
+        function openSimulateModal() { document.getElementById('simulate-modal').classList.remove('hidden'); }
+        function closeSimulateModal() { document.getElementById('simulate-modal').classList.add('hidden'); }
+
+        async function handleSimulateSubmit(e) {
+            e.preventDefault();
+            const phone = document.getElementById('sim-phone').value.trim();
+            const name = document.getElementById('sim-name').value.trim();
+            const msg = document.getElementById('sim-message').value.trim();
+            const autoReply = document.getElementById('sim-auto-reply').checked;
+            const btn = document.getElementById('sim-submit-btn');
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Sending...`;
+
+            try {
+                const res = await fetch('/api/dashboard/simulate-inbound', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, name, message: msg, auto_reply: autoReply })
+                });
+
+                if (res.ok) {
+                    closeSimulateModal();
+                    currentPhone = phone;
+                    currentContactName = name;
+                    await fetchData(true);
+                }
+            } catch (err) {
+                alert("Simulation error: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-paper-plane"></i> <span>Send & Reply</span>`;
+            }
+        }
+
+        // Settings Modal
+        async function openSettingsModal() {
+            document.getElementById('settings-modal').classList.remove('hidden');
+            const res = await fetch('/api/dashboard/settings');
+            if (res.ok) {
+                const s = await res.json();
+                if (s.groq_api_key_set) document.getElementById('set-groq-key').placeholder = `Configured: ${s.groq_api_key_masked}`;
+                document.getElementById('set-groq-model').value = s.groq_model || 'llama-3.3-70b-versatile';
+                if (s.whatsapp_token_set) document.getElementById('set-meta-token').placeholder = `Configured: ${s.whatsapp_token_masked}`;
+                document.getElementById('set-meta-phone-id').value = s.whatsapp_phone_number_id || '';
+                document.getElementById('set-meta-verify-token').value = s.whatsapp_verify_token || 'whatsapp_groq_bot_secret_123';
+                document.getElementById('webhook-token-label').innerText = s.whatsapp_verify_token || 'whatsapp_groq_bot_secret_123';
+            }
+        }
+
+        function closeSettingsModal() { document.getElementById('settings-modal').classList.add('hidden'); }
+
+        async function handleSettingsSubmit(e) {
+            e.preventDefault();
+            const groqKey = document.getElementById('set-groq-key').value.trim();
+            const groqModel = document.getElementById('set-groq-model').value;
+            const metaToken = document.getElementById('set-meta-token').value.trim();
+            const phoneId = document.getElementById('set-meta-phone-id').value.trim();
+            const verifyToken = document.getElementById('set-meta-verify-token').value.trim();
+            const btn = document.getElementById('save-settings-btn');
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`;
+
+            try {
+                const res = await fetch('/api/dashboard/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        groq_api_key: groqKey,
+                        groq_model: groqModel,
+                        whatsapp_token: metaToken,
+                        whatsapp_phone_number_id: phoneId,
+                        whatsapp_verify_token: verifyToken
+                    })
+                });
+                if (res.ok) {
+                    closeSettingsModal();
+                    alert("Settings saved successfully!");
+                    fetchData(true);
+                }
+            } catch (err) {
+                alert("Error saving settings: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-save"></i> <span>Save Settings</span>`;
+            }
+        }
+
+        let isSelectMode = false;
+        let selectedMessageIds = new Set();
+
+        function toggleSelectMode(forceState) {
+            if (forceState !== undefined) {
+                isSelectMode = forceState;
+            } else {
+                isSelectMode = !isSelectMode;
+            }
+
+            selectedMessageIds.clear();
+            updateSelectionBar();
+
+            const selectBtn = document.getElementById('select-mode-btn');
+            const selectionBar = document.getElementById('selection-bar');
+
+            if (isSelectMode) {
+                if (selectionBar) selectionBar.classList.remove('hidden');
+                if (selectBtn) selectBtn.classList.add('bg-emerald-100', 'text-emerald-800', 'border-emerald-300');
+            } else {
+                if (selectionBar) selectionBar.classList.add('hidden');
+                if (selectBtn) selectBtn.classList.remove('bg-emerald-100', 'text-emerald-800', 'border-emerald-300');
+            }
+
+            loadMessages(false);
+        }
+
+        function handleMessageSelectToggle(msgId) {
+            msgId = parseInt(msgId);
+            if (selectedMessageIds.has(msgId)) {
+                selectedMessageIds.delete(msgId);
+            } else {
+                selectedMessageIds.add(msgId);
+            }
+            updateSelectionBar();
+            const cb = document.querySelector(`.msg-select-cb[data-id="${msgId}"]`);
+            if (cb) cb.checked = selectedMessageIds.has(msgId);
+        }
+
+        function selectAllMessages() {
+            const allCbs = document.querySelectorAll('.msg-select-cb');
+            if (selectedMessageIds.size === allCbs.length && allCbs.length > 0) {
+                selectedMessageIds.clear();
+                allCbs.forEach(cb => cb.checked = false);
+            } else {
+                allCbs.forEach(cb => {
+                    const id = parseInt(cb.dataset.id);
+                    selectedMessageIds.add(id);
+                    cb.checked = true;
+                });
+            }
+            updateSelectionBar();
+        }
+
+        function updateSelectionBar() {
+            const label = document.getElementById('selected-count-label');
+            const delBtn = document.getElementById('delete-selected-btn');
+            if (label) label.innerText = `${selectedMessageIds.size} selected`;
+            if (delBtn) delBtn.disabled = selectedMessageIds.size === 0;
+        }
+
+        async function deleteSelectedMessages() {
+            if (selectedMessageIds.size === 0) return;
+            const count = selectedMessageIds.size;
+            if (!confirm(`Delete ${count} selected message(s)? This cannot be undone.`)) return;
+
+            const ids = Array.from(selectedMessageIds);
+            const btn = document.getElementById('delete-selected-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin text-xs"></i> Deleting...`;
+            }
+
+            try {
+                const res = await fetch('/api/dashboard/messages', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids })
+                });
+
+                if (res.ok) {
+                    selectedMessageIds.clear();
+                    toggleSelectMode(false);
+                    await fetchData(true);
+                } else {
+                    alert("Failed to delete messages");
+                }
+            } catch (err) {
+                alert("Error deleting messages: " + err.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = `<i class="fas fa-trash text-[10px]"></i> <span>Delete</span>`;
+                }
+            }
+        }
+
+        async function deleteSingleMessage(msgId) {
+            if (!confirm("Delete this message?")) return;
+            try {
+                const res = await fetch('/api/dashboard/messages', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: [msgId] })
+                });
+                if (res.ok) {
+                    await fetchData(true);
+                } else {
+                    alert("Failed to delete message");
+                }
+            } catch (e) {
+                alert("Error: " + e.message);
+            }
+        }
+
+        async function deleteCurrentChat() {
+            if (!currentPhone) return;
+            await deleteChatByPhone(currentPhone, currentContactName);
+        }
+
+        async function deleteChatByPhone(phone, name) {
+            if (!confirm(`Delete all messages and chat history for ${name || phone}? This cannot be undone.`)) return;
+            try {
+                const res = await fetch(`/api/dashboard/conversation?phone=${encodeURIComponent(phone)}`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    if (currentPhone === phone) {
+                        currentPhone = null;
+                        document.getElementById('messages-container').innerHTML = `
+                            <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+                                <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center text-emerald-500 text-2xl mb-2.5 shadow-sm border border-slate-200">
+                                    <i class="fab fa-whatsapp"></i>
+                                </div>
+                                <h3 class="text-sm font-bold text-slate-700">printingtask Support Inbox</h3>
+                                <p class="text-xs text-slate-500 max-w-sm mt-1">Select a customer or type below to test chatting with the AI Support Bot.</p>
+                            </div>
+                        `;
+                        document.getElementById('select-mode-btn').classList.add('hidden');
+                        document.getElementById('delete-chat-btn').classList.add('hidden');
+                        document.getElementById('book-lead-btn').classList.add('hidden');
+                        document.getElementById('bot-toggle-container').classList.add('hidden');
+                        showMobileList();
+                    }
+                    await fetchData(true);
+                } else {
+                    alert("Failed to delete conversation");
+                }
+            } catch (e) {
+                alert("Error: " + e.message);
+            }
+        }
+
+        async function clearAllData() {
+            if (!confirm("Clear ALL chat history and logs?")) return;
+            await fetch('/api/dashboard/clear', { method: 'DELETE' });
+            currentPhone = null;
+            fetchData(true);
+        }
+
+        function filterConversations() {
+            const q = document.getElementById('search-input').value.toLowerCase();
+            const filtered = allConversations.filter(c => 
+                (c.phone_number && c.phone_number.toLowerCase().includes(q)) ||
+                (c.sender_name && c.sender_name.toLowerCase().includes(q)) ||
+                (c.last_message && c.last_message.toLowerCase().includes(q))
+            );
+            renderConversations(filtered);
+        }
+
+        function formatTime(isoStr) {
+            if (!isoStr) return '';
+            try {
+                const d = new Date(isoStr.replace(' ', 'T') + 'Z');
+                return isNaN(d.getTime()) ? isoStr : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } catch { return isoStr; }
+        }
+
+        function getInitials(name) {
+            if (!name) return 'WA';
+            const parts = name.trim().split(/[\s+]+/);
+            if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+            return name.slice(0, 2).toUpperCase();
+        }
+
+        const colors = ['bg-emerald-600', 'bg-blue-600', 'bg-indigo-600', 'bg-purple-600', 'bg-teal-600', 'bg-amber-600', 'bg-rose-600'];
+        function getAvatarColor(str) {
+            if (!str) return colors[0];
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            return colors[Math.abs(hash) % colors.length];
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+
+        // Initialize & Auto Poll every 3 seconds
+        fetchData();
+        setInterval(() => fetchData(false), 3000);
+    </script>
