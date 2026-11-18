@@ -17,3 +17,5 @@ services:
         sync: false
       - key: WHATSAPP_VERIFY_TOKEN
         value: whatsapp_groq_bot_secret_123
+      - key: APP_URL
+        value: https://whatapp-v59g.onrender.com

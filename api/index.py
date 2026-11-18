@@ -80,26 +80,29 @@ async def health_check():
     })
 
 async def keep_alive_worker():
-    """Background task that pings the public URL every 5 minutes so Render never sleeps."""
-    await asyncio.sleep(45)  # Initial grace period on boot
+    """Background task that pings the public URL every 3-5 minutes so Render never sleeps."""
+    await asyncio.sleep(30)  # Initial grace period on boot
     while True:
         try:
+            render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
             base_url = (
+                (f"https://{render_hostname}" if render_hostname else None) or
                 os.getenv("RENDER_EXTERNAL_URL") or 
                 os.getenv("APP_URL") or 
-                "https://whatapp-51qf.onrender.com"
+                "https://whatapp-v59g.onrender.com"
             ).rstrip("/")
 
             if "localhost" not in base_url and "127.0.0.1" not in base_url:
                 health_url = f"{base_url}/api/health"
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     resp = await client.get(health_url)
-                    logger.info(f"[Keep-Alive] Pinged {health_url} -> Status {resp.status_code}")
+                    logger.info(f"[Keep-Alive] 5-min heartbeat ping to {health_url} -> Status {resp.status_code}")
+                    print(f"[Keep-Alive] Keep-alive ping sent to {health_url} (HTTP {resp.status_code})")
         except Exception as e:
             logger.warning(f"[Keep-Alive] Warning: self-ping failed: {e}")
         
-        # Ping every 3 minutes (180 seconds) - keeps Render warm well before 15-min idle cutoff
-        await asyncio.sleep(180)
+        # Ping every 4 minutes (240 seconds) to ensure Render's 15-minute inactivity timer never triggers
+        await asyncio.sleep(240)
 
 @app.on_event("startup")
 async def startup_keep_alive():
