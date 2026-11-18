@@ -750,8 +750,8 @@ async def direct_chat(request: Request):
 # 3. DASHBOARD USER INTERFACE (MODULAR TEMPLATE & STATIC JS)
 # ====================================================================
 
-@app.get("/dashboard", response_class=HTMLResponse)
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/dashboard", methods=["GET", "HEAD"], response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_dashboard():
     """Serves the modular responsive printingtask CRM dashboard HTML."""
     index_path = os.path.join(TEMPLATES_DIR, "index.html")
@@ -760,8 +760,8 @@ async def serve_dashboard():
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>printingtask Support Hub</h1><p>Dashboard template not found.</p>")
 
-@app.get("/privacy", response_class=HTMLResponse)
-@app.get("/privacy-policy", response_class=HTMLResponse)
+@app.api_route("/privacy", methods=["GET", "HEAD"], response_class=HTMLResponse)
+@app.api_route("/privacy-policy", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_privacy():
     return HTMLResponse("""
     <!DOCTYPE html>
@@ -787,8 +787,8 @@ async def serve_privacy():
     </html>
     """)
 
-@app.get("/terms", response_class=HTMLResponse)
-@app.get("/terms-of-service", response_class=HTMLResponse)
+@app.api_route("/terms", methods=["GET", "HEAD"], response_class=HTMLResponse)
+@app.api_route("/terms-of-service", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_terms():
     return HTMLResponse("""
     <!DOCTYPE html>
@@ -813,8 +813,8 @@ async def serve_terms():
     </html>
     """)
 
-@app.get("/data-deletion", response_class=HTMLResponse)
-@app.get("/user-data-deletion", response_class=HTMLResponse)
+@app.api_route("/data-deletion", methods=["GET", "HEAD"], response_class=HTMLResponse)
+@app.api_route("/user-data-deletion", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_data_deletion():
     return HTMLResponse("""
     <!DOCTYPE html>
