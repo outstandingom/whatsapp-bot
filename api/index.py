@@ -759,3 +759,81 @@ async def serve_dashboard():
         with open(index_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>printingtask Support Hub</h1><p>Dashboard template not found.</p>")
+
+@app.get("/privacy", response_class=HTMLResponse)
+@app.get("/privacy-policy", response_class=HTMLResponse)
+async def serve_privacy():
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Privacy Policy - Growhaz WhatsApp Bot</title>
+        <style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6;color:#333;}</style>
+    </head>
+    <body>
+        <h1>Privacy Policy</h1>
+        <p><strong>Effective Date:</strong> November 18, 2026</p>
+        <p>This Privacy Policy describes how Growhaz ("we", "our") collects, uses, and safeguards information when you interact with our WhatsApp automation service.</p>
+        <h2>1. Information We Collect</h2>
+        <p>We receive incoming WhatsApp messages, sender phone numbers, and message timestamps through the official Meta WhatsApp Cloud API to provide automated customer support and booking assistance.</p>
+        <h2>2. How We Use Information</h2>
+        <p>Your messages are processed strictly to answer customer inquiries, manage service appointments, and generate relevant support responses via AI and automated workflows.</p>
+        <h2>3. Data Protection</h2>
+        <p>We do not sell, rent, or trade your personal information. Data transmitted is encrypted using standard HTTPS/TLS protocols.</p>
+        <h2>4. Contact & Data Deletion</h2>
+        <p>If you wish to request deletion of your contact records, email us at <a href="mailto:info.growhaz@gmail.com">info.growhaz@gmail.com</a>.</p>
+    </body>
+    </html>
+    """)
+
+@app.get("/terms", response_class=HTMLResponse)
+@app.get("/terms-of-service", response_class=HTMLResponse)
+async def serve_terms():
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Terms of Service - Growhaz WhatsApp Bot</title>
+        <style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6;color:#333;}</style>
+    </head>
+    <body>
+        <h1>Terms of Service</h1>
+        <p><strong>Effective Date:</strong> November 18, 2026</p>
+        <h2>1. Acceptance of Terms</h2>
+        <p>By interacting with the Growhaz WhatsApp bot, you agree to these Terms of Service.</p>
+        <h2>2. Service Description</h2>
+        <p>Growhaz provides automated messaging and customer support services via WhatsApp Business Platform.</p>
+        <h2>3. User Conduct</h2>
+        <p>Users agree not to transmit spam, abusive language, or prohibited content through the messaging interface.</p>
+        <h2>4. Contact</h2>
+        <p>For questions or support, contact <a href="mailto:info.growhaz@gmail.com">info.growhaz@gmail.com</a>.</p>
+    </body>
+    </html>
+    """)
+
+@app.get("/data-deletion", response_class=HTMLResponse)
+@app.get("/user-data-deletion", response_class=HTMLResponse)
+async def serve_data_deletion():
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>User Data Deletion Instructions - Growhaz</title>
+        <style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6;color:#333;}</style>
+    </head>
+    <body>
+        <h1>User Data Deletion Instructions</h1>
+        <p>In accordance with Meta Platform policies, users have the right to request deletion of their data collected via our WhatsApp application.</p>
+        <h2>How to Request Data Deletion:</h2>
+        <ol>
+            <li>Send an email to <strong>info.growhaz@gmail.com</strong> with the subject <em>"Data Deletion Request"</em>.</li>
+            <li>Include your WhatsApp phone number (with country code).</li>
+            <li>We will delete all associated chat logs, contact information, and booking records from our database within 48 hours.</li>
+            <li>You will receive a confirmation email once your data has been completely erased.</li>
+        </ol>
+    </body>
+    </html>
+    """)
