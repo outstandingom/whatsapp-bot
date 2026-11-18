@@ -75,6 +75,30 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
             "📧 *Direct Email:* info.growhaz@gmail.com"
         )
 
+    # All Services / What do you offer / List of solutions
+    if any(w in p for w in ["service", "services", "provide", "providing", "offer", "offering", "solution", "solutions", "what do you do", "what can you do", "list"]):
+        return (
+            "🚀 *Growhaz Official Services & Solutions*\n\n"
+            "We provide cutting-edge cybersecurity, trust infrastructure, and secure development:\n\n"
+            "1️⃣ 🛡️ *Website Security Vulnerability Scanning*\n"
+            "• Automated Alpha G1/G5/G3 scanners discovering SQLi, XSS, IDOR, API vulnerabilities in under 5 minutes.\n"
+            "🔗 https://www.growhaz.in/security-tools\n\n"
+            "2️⃣ 📱 *Appify Your Website (Mobile App Conversion)*\n"
+            "• Convert any web app or site into native Android & iOS mobile apps with Push Notifications & Offline Support.\n"
+            "🔗 https://www.growhaz.in/development\n\n"
+            "3️⃣ 💻 *Secure Web & Full-Stack Development*\n"
+            "• High-speed static websites (100% Lighthouse SEO) & dynamic CRUD/CRM/E-commerce web apps.\n"
+            "🔗 https://www.growhaz.in/development\n\n"
+            "4️⃣ 🔗 *Blockchain Document Verification*\n"
+            "• Tamper-proof on-chain verification for degrees, certificates, and legal contracts.\n"
+            "🔗 https://www.growhaz.in/verify\n\n"
+            "5️⃣ 📈 *SEO & Automation*\n"
+            "• Core Web Vitals optimization and automated business workflows.\n"
+            "🔗 https://www.growhaz.in/seo\n\n"
+            "💰 *Check all pricing:* https://www.growhaz.in/pricing\n"
+            "Reply with any service or option number to get started!"
+        )
+
     # Security Scans (Alpha G1, G5, Penetration Testing)
     if any(w in p for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "audit", "firewall"]):
         return (
@@ -123,7 +147,7 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
         )
 
     # Pricing & Quotes
-    if any(w in p for w in ["price", "cost", "rate", "quote", "how much", "charges", "estimate"]):
+    if any(w in p for w in ["price", "cost", "rate", "quote", "how much", "charges", "estimate", "pricing"]):
         return (
             "💰 *Growhaz Transparent Pricing*\n\n"
             "• *Security Scans:* AlphaG1 (₹1,999) | AlphaG5 (₹4,999) | AlphaG3 (₹9,999)\n"
@@ -155,13 +179,16 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
             "Simply reply with your question or option number!"
         )
 
-    # General Helpful Support Response
+    # Comprehensive Default Response (Never generic)
     return (
         f"Thank you for contacting Growhaz! 😊\n\n"
-        f"I received your message: \"{user_prompt}\"\n\n"
-        f"You can explore all our cybersecurity and development solutions at our official website:\n"
-        f"👉 https://www.growhaz.in/\n\n"
-        f"How else may I assist you today?"
+        f"You can explore our key solutions and get instant answers here:\n\n"
+        f"• 🛡️ *Website Security Scans (Alpha G1/G5):* https://www.growhaz.in/security-tools\n"
+        f"• 📱 *Appify Website to Mobile App:* https://www.growhaz.in/development\n"
+        f"• 🔗 *Blockchain Document Verification:* https://www.growhaz.in/verify\n"
+        f"• 💰 *Pricing & Plans:* https://www.growhaz.in/pricing\n"
+        f"• 🌐 *Official Website:* https://www.growhaz.in/\n\n"
+        f"Feel free to reply with what you need, or ask any question!"
     )
 
 def generate_ai_reply(
@@ -197,7 +224,7 @@ def generate_ai_reply(
                 "temperature": 0.7,
                 "max_tokens": 1024
             }
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=25.0) as client:
                 res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()
@@ -209,26 +236,34 @@ def generate_ai_reply(
         except Exception as e:
             logger.warning(f"DeepSeek call failed ({e}). Falling back...")
 
-    # 2. Try Groq AI Fallback
+    # 2. Try Groq AI Fallback (using direct HTTP call for maximum reliability)
     if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
         try:
-            client = Groq(api_key=groq_api_key.strip())
-            model_to_use = groq_model if groq_model else "llama-3.3-70b-versatile"
-            
-            completion = client.chat.completions.create(
-                model=model_to_use,
-                messages=[
+            model_to_use = groq_model.strip() if groq_model and groq_model.strip() else "llama-3.3-70b-versatile"
+            headers = {
+                "Authorization": f"Bearer {groq_api_key.strip()}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model_to_use,
+                "messages": [
                     {"role": "system", "content": CUSTOMER_SUPPORT_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.7,
-                max_completion_tokens=1024
-            )
-            latency = round((time.time() - start) * 1000, 2)
-            reply = completion.choices[0].message.content or "No response generated."
-            return reply, latency, f"Groq ({model_to_use})"
+                "temperature": 0.7,
+                "max_tokens": 1024
+            }
+            with httpx.Client(timeout=25.0) as client:
+                res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    reply = data["choices"][0]["message"]["content"] or "No response generated."
+                    latency = round((time.time() - start) * 1000, 2)
+                    return reply, latency, f"Groq ({model_to_use})"
+                else:
+                    logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back...")
         except Exception as e:
-            logger.warning(f"Groq API error ({e}), using support agent fallback.")
+            logger.warning(f"Groq API call failed ({e}). Falling back...")
 
     # 3. Smart rule-based fallback
     latency = round((time.time() - start) * 1000, 2)

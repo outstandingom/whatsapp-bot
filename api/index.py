@@ -630,13 +630,16 @@ async def simulate_inbound(request: Request):
 async def test_ai_endpoint(request: Request):
     """Test AI bot reply to any text prompt directly."""
     data = await request.json()
-    prompt = data.get("prompt", "Hello, what are your printing services and prices?")
+    prompt = data.get("prompt", "Hello, what services does Growhaz provide?")
     reply, latency_ms, engine_used = get_ai_reply(prompt)
+    groq_key = get_env_var("GROQ_API_KEY")
+    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
     return JSONResponse({
         "prompt": prompt,
         "reply": reply,
         "engine": engine_used,
         "latency_ms": latency_ms,
+        "deepseek_configured": bool(deepseek_key and not deepseek_key.startswith("sk_your")),
         "groq_configured": bool(groq_key and not groq_key.startswith("gsk_your"))
     })
 
