@@ -13,7 +13,6 @@
     <style>
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; }
         code, pre, .font-mono { font-family: 'JetBrains Mono', monospace; }
-        /* WhatsApp Light wallpaper pattern */
         .chat-light-bg {
             background-color: #efeae2;
             background-image: radial-gradient(#d1c7b7 1.2px, transparent 1.2px);
@@ -29,7 +28,6 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-        /* ---- Critical layout fixes: guarantee chat pane shows on desktop ---- */
         @media (min-width: 768px) {
             #pane-chat { display: flex !important; flex-direction: column; }
             #pane-conversations { width: 320px; flex-shrink: 0; }
@@ -38,69 +36,39 @@
             #pane-conversations { width: 384px; }
         }
 
-        /* ================= MOBILE CHAT PANE FIX =================
-           Guarantees the chat window (and therefore the message box)
-           always fills the viewport on phones. */
+        /* ================= MOBILE CHAT PANE FIX ================= */
         @media (max-width: 767px) {
-            #view-chats {
-                position: relative;
-                overflow: hidden;
-            }
-
-            /* Conversation list fills the viewport by default */
+            #view-chats { position: relative; overflow: hidden; }
             #pane-conversations {
-                width: 100%;
-                flex: 1 1 auto;
-                min-height: 0;
-                height: auto;
-                max-height: 100%;
+                width: 100%; flex: 1 1 auto; min-height: 0; height: auto; max-height: 100%;
             }
-
-            /* Newer browsers — no JS needed */
             @supports selector(:has(*)) {
                 #view-chats:has(#pane-chat:not(.hidden)) #pane-chat {
-                    display: flex !important;
-                    flex-direction: column;
-                    flex: 1 1 auto;
-                    width: 100%;
-                    min-height: 0;
-                    height: auto;
-                    max-height: 100%;
-                    overflow: hidden;
+                    display: flex !important; flex-direction: column; flex: 1 1 auto;
+                    width: 100%; min-height: 0; height: auto; max-height: 100%; overflow: hidden;
                 }
-                #view-chats:has(#pane-chat:not(.hidden)) #pane-conversations {
-                    display: none !important;
-                }
+                #view-chats:has(#pane-chat:not(.hidden)) #pane-conversations { display: none !important; }
             }
-
-            /* JS fallback class — takes over when :has() isn't available
-               OR when the app shows the chat via inline styles */
             #view-chats.mobile-chat-open #pane-chat {
-                display: flex !important;
-                flex-direction: column;
-                flex: 1 1 auto;
-                width: 100%;
-                min-height: 0;
-                height: auto;
-                max-height: 100%;
-                overflow: hidden;
+                display: flex !important; flex-direction: column; flex: 1 1 auto;
+                width: 100%; min-height: 0; height: auto; max-height: 100%; overflow: hidden;
             }
-            #view-chats.mobile-chat-open #pane-conversations {
-                display: none !important;
-            }
+            #view-chats.mobile-chat-open #pane-conversations { display: none !important; }
 
-            /* Messages scroll; composer stays pinned to the bottom */
             #pane-chat #messages-container {
-                flex: 1 1 auto;
-                min-height: 0;
-                overflow-y: auto;
-                -webkit-overflow-scrolling: touch;
-                overscroll-behavior: contain;
+                flex: 1 1 auto; min-height: 0; overflow-y: auto;
+                -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
             }
             #pane-chat .chat-composer {
                 flex-shrink: 0;
                 padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)) !important;
             }
+        }
+
+        /* Mode segmented control active state (JS-driven fallback for :has) */
+        .mode-btn { transition: all 0.15s ease; }
+        .mode-btn.is-active {
+            background-color: #ecfdf5; border-color: #10b981; color: #047857;
         }
     </style>
 </head>
@@ -109,74 +77,47 @@
     <!-- Top White Navigation Header -->
     <header class="bg-white border-b border-slate-200 flex-shrink-0 sticky top-0 z-30 px-2.5 sm:px-4 md:px-5 py-2 md:py-2.5 flex items-center justify-between gap-2 shadow-sm">
 
-        <!-- ================= LEFT: MOBILE MENU + BRANDING ================= -->
+        <!-- LEFT: MOBILE MENU + BRANDING -->
         <div class="flex items-center gap-2 md:gap-3.5 min-w-0">
-
-            <!-- Mobile hamburger + dropdown navigation -->
             <div class="relative md:hidden flex-shrink-0">
-                <button
-                    type="button"
-                    id="mobile-nav-btn"
-                    onclick="toggleMobileNav(event)"
-                    title="Open menu"
-                    aria-label="Open menu"
-                    class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 border border-slate-200 transition"
-                >
+                <button type="button" id="mobile-nav-btn" onclick="toggleMobileNav(event)" title="Open menu" aria-label="Open menu"
+                        class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 border border-slate-200 transition">
                     <i class="fas fa-bars text-sm"></i>
                 </button>
-
-                <!-- Dropdown -->
                 <div id="mobile-nav-dropdown"
                      class="hidden absolute left-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
                     <div class="px-3.5 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Navigation</div>
-
-                    <button type="button" onclick="mobileNavGo('chats')" data-mnav="chats"
-                            class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <button type="button" onclick="mobileNavGo('chats')" data-mnav="chats" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-comments text-emerald-600 w-4 text-center"></i><span>Live Chats</span>
                     </button>
-
-                    <button type="button" onclick="mobileNavGo('analytics')" data-mnav="analytics"
-                            class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <button type="button" onclick="mobileNavGo('analytics')" data-mnav="analytics" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-chart-pie text-emerald-600 w-4 text-center"></i><span>Analytics</span>
                     </button>
-
-                    <button type="button" onclick="mobileNavGo('templates')" data-mnav="templates"
-                            class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <button type="button" onclick="mobileNavGo('templates')" data-mnav="templates" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-layer-group text-blue-500 w-4 text-center"></i><span>Templates</span>
                     </button>
-
-                    <button type="button" onclick="mobileNavGo('bookings')" data-mnav="bookings"
-                            class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <button type="button" onclick="mobileNavGo('bookings')" data-mnav="bookings" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-calendar-check text-amber-500 w-4 text-center"></i>
                         <span>Bookings</span>
                         <span id="nav-bookings-count-mobile" class="ml-auto text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded-full">0</span>
                     </button>
-
-                    <button type="button" onclick="mobileNavGo('testai')" data-mnav="testai"
-                            class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <button type="button" onclick="mobileNavGo('testai')" data-mnav="testai" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-wand-magic-sparkles text-emerald-600 w-4 text-center"></i><span>Test AI Live</span>
                     </button>
-
-                    <button type="button" onclick="mobileNavGo('webhooks')" data-mnav="webhooks"
-                            class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <button type="button" onclick="mobileNavGo('webhooks')" data-mnav="webhooks" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-network-wired text-purple-500 w-4 text-center"></i><span>Webhooks</span>
                     </button>
-
                     <div class="border-t border-slate-100 my-1"></div>
-
-                    <button type="button" onclick="mobileNavSettings()"
-                            class="w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <button type="button" onclick="mobileNavSettings()" class="w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-gear text-slate-500 w-4 text-center"></i><span>Settings &amp; API Keys</span>
                     </button>
                 </div>
             </div>
 
-            <!-- Logo -->
             <div class="w-9 h-9 md:w-11 md:h-11 rounded-xl md:rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-md shadow-emerald-500/20 text-lg md:text-2xl font-bold flex-shrink-0">
                 <i class="fab fa-whatsapp"></i>
             </div>
 
-            <!-- Title (subtitle removed) -->
             <div class="min-w-0">
                 <div class="flex items-center space-x-2">
                     <h1 class="font-extrabold text-[13px] sm:text-base md:text-lg text-slate-900 tracking-tight truncate">printingtask Support Desk</h1>
@@ -189,47 +130,38 @@
             </div>
         </div>
 
-        <!-- ================= CENTER: DESKTOP NAVIGATION TABS ================= -->
+        <!-- CENTER: DESKTOP NAVIGATION TABS -->
         <nav class="hidden md:flex items-center space-x-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200 text-xs font-semibold overflow-x-auto no-scrollbar max-w-full">
             <button onclick="switchTab('chats')" id="tab-btn-chats" class="px-3.5 py-2 rounded-lg bg-white text-emerald-700 font-bold shadow-sm transition flex items-center space-x-1.5 flex-shrink-0">
-                <i class="fas fa-comments text-emerald-600"></i>
-                <span>Live Chats</span>
+                <i class="fas fa-comments text-emerald-600"></i><span>Live Chats</span>
             </button>
             <button onclick="switchTab('analytics')" id="tab-btn-analytics" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
-                <i class="fas fa-chart-pie text-emerald-600"></i>
-                <span>Analytics</span>
+                <i class="fas fa-chart-pie text-emerald-600"></i><span>Analytics</span>
             </button>
             <button onclick="switchTab('templates')" id="tab-btn-templates" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
-                <i class="fas fa-layer-group text-blue-500"></i>
-                <span>Templates</span>
+                <i class="fas fa-layer-group text-blue-500"></i><span>Templates</span>
             </button>
             <button onclick="switchTab('bookings')" id="tab-btn-bookings" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
                 <i class="fas fa-calendar-check text-amber-500"></i>
                 <span>Bookings (<span id="nav-bookings-count">0</span>)</span>
             </button>
             <button onclick="switchTab('testai')" id="tab-btn-testai" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
-                <i class="fas fa-wand-magic-sparkles text-emerald-600"></i>
-                <span>Test AI Live</span>
+                <i class="fas fa-wand-magic-sparkles text-emerald-600"></i><span>Test AI Live</span>
             </button>
             <button onclick="switchTab('webhooks')" id="tab-btn-webhooks" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
-                <i class="fas fa-network-wired text-purple-500"></i>
-                <span>Webhooks</span>
+                <i class="fas fa-network-wired text-purple-500"></i><span>Webhooks</span>
             </button>
             <button onclick="openSettingsModal()" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
-                <i class="fas fa-gear text-slate-500"></i>
-                <span>Settings</span>
+                <i class="fas fa-gear text-slate-500"></i><span>Settings</span>
             </button>
         </nav>
 
-        <!-- ================= RIGHT: QUICK ACTIONS ================= -->
+        <!-- RIGHT: QUICK ACTIONS -->
         <div class="flex items-center space-x-2 flex-shrink-0">
-            <button onclick="openSimulateModal()" title="New Customer Simulator"
-                    class="flex items-center space-x-2 px-2.5 sm:px-4 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition">
-                <i class="fas fa-plus"></i>
-                <span class="hidden sm:inline">New Customer Simulator</span>
+            <button onclick="openSimulateModal()" title="New Customer Simulator" class="flex items-center space-x-2 px-2.5 sm:px-4 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition">
+                <i class="fas fa-plus"></i><span class="hidden sm:inline">New Customer Simulator</span>
             </button>
-            <button onclick="fetchData(true)" title="Refresh"
-                    class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition">
+            <button onclick="fetchData(true)" title="Refresh" class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition">
                 <i class="fas fa-rotate-right text-xs" id="refresh-icon"></i>
             </button>
         </div>
@@ -238,12 +170,11 @@
     <!-- Main Container -->
     <main class="flex-1 min-h-0 max-w-7xl w-full mx-auto p-2 sm:p-3 md:p-4 flex flex-col space-y-2.5 overflow-hidden">
 
-        <!-- ================= TAB 1: LIVE CHATS VIEW (FULL-HEIGHT CHAT VIEWPORT) ================= -->
+        <!-- ================= TAB 1: LIVE CHATS VIEW ================= -->
         <div id="view-chats" class="flex-1 min-h-0 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm flex flex-col md:flex-row">
 
             <!-- LEFT SIDEBAR: Conversation List -->
             <div id="pane-conversations" class="w-full md:w-80 lg:w-96 bg-slate-50/70 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col h-full min-h-0 flex-shrink-0">
-                <!-- Search & Filters -->
                 <div class="p-3 bg-white border-b border-slate-200 space-y-2 flex-shrink-0">
                     <div class="flex items-center justify-between">
                         <h2 class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Customer Inbox (<span id="chat-count">0</span>)</h2>
@@ -253,17 +184,10 @@
                     </div>
                     <div class="relative">
                         <i class="fas fa-search absolute left-3.5 top-2.5 text-xs text-slate-400"></i>
-                        <input
-                            type="text"
-                            id="search-input"
-                            oninput="filterConversations()"
-                            placeholder="Search by customer name, phone, message..."
-                            class="w-full bg-slate-50 text-xs text-slate-800 placeholder-slate-400 pl-9 pr-3.5 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition"
-                        />
+                        <input type="text" id="search-input" oninput="filterConversations()" placeholder="Search by customer name, phone, message..."
+                               class="w-full bg-slate-50 text-xs text-slate-800 placeholder-slate-400 pl-9 pr-3.5 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition" />
                     </div>
                 </div>
-
-                <!-- Conversation Items -->
                 <div id="conversations-container" class="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100">
                     <div class="p-8 text-center text-slate-400 text-xs">Loading customer chats...</div>
                 </div>
@@ -275,7 +199,6 @@
                 <!-- Chat Window Header -->
                 <div class="flex-shrink-0 bg-white px-3 md:px-4 py-2 md:py-2.5 border-b border-slate-200 flex items-center justify-between shadow-sm z-10">
                     <div class="flex items-center space-x-2 md:space-x-3 min-w-0">
-                        <!-- Mobile Back to List Button -->
                         <button id="mobile-back-btn" type="button" onclick="showMobileList()" class="md:hidden p-1.5 -ml-1 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition" title="Back to conversations">
                             <i class="fas fa-arrow-left text-base"></i>
                         </button>
@@ -291,28 +214,25 @@
                         </div>
                     </div>
 
-                    <!-- Header Controls & Bot Auto-Reply Toggle -->
+                    <!-- Header Controls -->
                     <div class="flex items-center space-x-1.5 md:space-x-2 flex-shrink-0">
-                        <!-- Floating Selection Bar for Batch Deletion -->
+                        <!-- Selection Bar -->
                         <div id="selection-bar" class="hidden flex items-center space-x-1.5 md:space-x-2 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-xl text-xs font-bold">
                             <span id="selected-count-label" class="text-emerald-800 text-[11px] whitespace-nowrap">0 selected</span>
                             <button type="button" onclick="selectAllMessages()" class="text-emerald-700 hover:underline px-1 py-0.5 text-[11px] whitespace-nowrap">Select All</button>
                             <button type="button" id="delete-selected-btn" onclick="deleteSelectedMessages()" disabled class="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-2 py-0.5 rounded-lg flex items-center space-x-1 shadow-xs transition text-[11px] whitespace-nowrap">
-                                <i class="fas fa-trash text-[10px]"></i>
-                                <span>Delete</span>
+                                <i class="fas fa-trash text-[10px]"></i><span>Delete</span>
                             </button>
                             <button type="button" onclick="toggleSelectMode(false)" class="text-slate-400 hover:text-slate-600 px-1" title="Cancel Selection">
                                 <i class="fas fa-times text-xs"></i>
                             </button>
                         </div>
 
-                        <!-- DESKTOP Controls (hidden on mobile, visible on md:flex) -->
+                        <!-- DESKTOP Controls -->
                         <div class="hidden md:flex items-center space-x-2">
                             <button id="ai-reply-btn" onclick="triggerAiReplyForCurrent()" title="Force AI to reply to latest message" class="hidden flex px-2.5 py-1 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition font-bold items-center space-x-1">
-                                <i class="fas fa-wand-magic-sparkles text-emerald-600"></i>
-                                <span>AI Reply</span>
+                                <i class="fas fa-wand-magic-sparkles text-emerald-600"></i><span>AI Reply</span>
                             </button>
-
                             <div id="bot-toggle-container" class="hidden flex items-center bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-semibold space-x-2">
                                 <label class="relative inline-flex items-center cursor-pointer" title="Toggle AI Auto-Reply ON / OFF">
                                     <input type="checkbox" id="contact-bot-checkbox" onchange="toggleContactBot(this.checked)" class="sr-only peer" checked>
@@ -322,39 +242,66 @@
                                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse"></span> AI Active
                                 </span>
                             </div>
-
                             <button id="select-mode-btn" onclick="toggleSelectMode()" title="Select messages to delete" class="hidden flex px-2.5 py-1 text-xs text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition font-bold items-center space-x-1">
-                                <i class="fas fa-check-square text-slate-500"></i>
-                                <span>Select</span>
+                                <i class="fas fa-check-square text-slate-500"></i><span>Select</span>
                             </button>
-
                             <button id="book-lead-btn" onclick="openBookCurrentContactModal()" title="Convert to Booking" class="hidden flex px-2.5 py-1 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition font-bold items-center space-x-1">
                                 <i class="fas fa-calendar-plus mr-1"></i> Add Booking
                             </button>
                             <button id="delete-chat-btn" onclick="deleteCurrentChat()" title="Delete entire conversation" class="hidden flex px-2.5 py-1 text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition font-bold items-center space-x-1">
-                                <i class="fas fa-trash text-[10px]"></i>
-                                <span>Delete Chat</span>
+                                <i class="fas fa-trash text-[10px]"></i><span>Delete Chat</span>
                             </button>
                         </div>
 
-                        <!-- 3-DOTS ACTION DROPDOWN MENU (For Mobile & Compact View) -->
+                        <!-- 3-DOTS ACTION DROPDOWN (now available on all screen sizes) -->
                         <div class="relative" id="chat-menu-wrapper">
-                            <button
-                                id="chat-actions-menu-btn"
-                                type="button"
-                                onclick="toggleChatActionsMenu(event)"
-                                title="Chat Options & Actions"
-                                class="hidden flex md:hidden p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition items-center justify-center flex-shrink-0"
-                            >
+                            <button id="chat-actions-menu-btn" type="button" onclick="toggleChatActionsMenu(event)" title="Chat Options & Actions"
+                                    class="flex p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition items-center justify-center flex-shrink-0">
                                 <i class="fas fa-ellipsis-vertical text-base"></i>
                             </button>
 
-                            <!-- Dropdown Box -->
-                            <div
-                                id="chat-actions-dropdown"
-                                class="hidden absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100"
-                            >
-                                <!-- Option 1: AI Auto-Reply Switch -->
+                            <!-- Dropdown Box (scrollable, longer now) -->
+                            <div id="chat-actions-dropdown"
+                                 class="hidden absolute right-0 top-full mt-2 w-72 max-h-[75vh] overflow-y-auto bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+
+                                <!-- Hidden radios preserved for app.js compatibility -->
+                                <input type="radio" name="reply_role" id="role-agent" value="agent" checked onchange="handleRoleChange('agent')" class="hidden">
+                                <input type="radio" name="reply_role" id="role-customer" value="customer" onchange="handleRoleChange('customer')" class="hidden">
+
+                                <!-- Reply Mode (moved from bottom composer) -->
+                                <div class="px-3.5 py-2.5 border-b border-slate-100">
+                                    <span class="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-1.5">
+                                        <i class="fas fa-user-gear mr-1 text-slate-400"></i>Reply Mode
+                                    </span>
+                                    <div class="grid grid-cols-2 gap-1.5">
+                                        <button type="button" id="mode-btn-agent" onclick="setReplyMode('agent')"
+                                                class="mode-btn is-active flex items-center justify-center space-x-1 px-2 py-1.5 rounded-lg border border-slate-200 font-bold text-[11px] text-slate-600 hover:border-emerald-400">
+                                            <i class="fas fa-user-tie"></i><span>Agent</span>
+                                        </button>
+                                        <button type="button" id="mode-btn-customer" onclick="setReplyMode('customer')"
+                                                class="mode-btn flex items-center justify-center space-x-1 px-2 py-1.5 rounded-lg border border-slate-200 font-bold text-[11px] text-slate-600 hover:border-emerald-400">
+                                            <i class="fas fa-vial"></i><span>Customer</span>
+                                        </button>
+                                    </div>
+                                    <p class="text-[10px] text-slate-400 mt-1.5 leading-snug">Agent pauses AI for this chat. Customer simulates a prompt and triggers AI reply.</p>
+                                </div>
+
+                                <!-- Forward to WhatsApp (moved from bottom composer) -->
+                                <div class="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+                                    <div class="flex items-center space-x-2">
+                                        <i class="fab fa-whatsapp text-emerald-600 text-sm"></i>
+                                        <div>
+                                            <span class="font-bold text-slate-800 block text-xs leading-tight">Forward to WhatsApp</span>
+                                            <span class="text-[10px] text-slate-500">Send via Meta Cloud API</span>
+                                        </div>
+                                    </div>
+                                    <label class="relative inline-flex items-center cursor-pointer" title="Forward to WhatsApp">
+                                        <input type="checkbox" id="send-meta-cloud" checked class="sr-only peer">
+                                        <div class="w-8 h-4 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+                                    </label>
+                                </div>
+
+                                <!-- AI Auto-Reply toggle -->
                                 <div class="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
                                     <div class="flex items-center space-x-2">
                                         <i class="fas fa-robot text-emerald-600 text-sm"></i>
@@ -369,46 +316,20 @@
                                     </label>
                                 </div>
 
-                                <!-- Option 2: Force AI Reply -->
-                                <button
-                                    type="button"
-                                    onclick="triggerAiReplyFromMenu()"
-                                    class="w-full text-left px-3.5 py-2.5 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 flex items-center space-x-2.5 transition font-semibold"
-                                >
-                                    <i class="fas fa-wand-magic-sparkles text-emerald-600 text-sm w-4 text-center"></i>
-                                    <span>Force AI Reply</span>
+                                <button type="button" onclick="triggerAiReplyFromMenu()" class="w-full text-left px-3.5 py-2.5 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 flex items-center space-x-2.5 transition font-semibold">
+                                    <i class="fas fa-wand-magic-sparkles text-emerald-600 text-sm w-4 text-center"></i><span>Force AI Reply</span>
                                 </button>
-
-                                <!-- Option 3: Select Multiple Messages -->
-                                <button
-                                    type="button"
-                                    onclick="toggleSelectModeFromMenu()"
-                                    class="w-full text-left px-3.5 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center space-x-2.5 transition font-semibold"
-                                >
-                                    <i class="fas fa-check-square text-blue-500 text-sm w-4 text-center"></i>
-                                    <span>Select Messages (Multi-delete)</span>
+                                <button type="button" onclick="toggleSelectModeFromMenu()" class="w-full text-left px-3.5 py-2.5 hover:bg-slate-50 text-slate-700 flex items-center space-x-2.5 transition font-semibold">
+                                    <i class="fas fa-check-square text-blue-500 text-sm w-4 text-center"></i><span>Select Messages (Multi-delete)</span>
                                 </button>
-
-                                <!-- Option 4: Add Booking -->
-                                <button
-                                    type="button"
-                                    onclick="openBookingFromMenu()"
-                                    class="w-full text-left px-3.5 py-2.5 hover:bg-amber-50 text-slate-700 hover:text-amber-700 flex items-center space-x-2.5 transition font-semibold"
-                                >
-                                    <i class="fas fa-calendar-plus text-amber-500 text-sm w-4 text-center"></i>
-                                    <span>Convert to Booking</span>
+                                <button type="button" onclick="openBookingFromMenu()" class="w-full text-left px-3.5 py-2.5 hover:bg-amber-50 text-slate-700 hover:text-amber-700 flex items-center space-x-2.5 transition font-semibold">
+                                    <i class="fas fa-calendar-plus text-amber-500 text-sm w-4 text-center"></i><span>Convert to Booking</span>
                                 </button>
 
                                 <div class="border-t border-slate-100 my-1"></div>
 
-                                <!-- Option 5: Delete Entire Conversation -->
-                                <button
-                                    type="button"
-                                    onclick="deleteChatFromMenu()"
-                                    class="w-full text-left px-3.5 py-2.5 hover:bg-red-50 text-red-600 flex items-center space-x-2.5 transition font-semibold"
-                                >
-                                    <i class="fas fa-trash text-red-500 text-sm w-4 text-center"></i>
-                                    <span>Delete Entire Chat</span>
+                                <button type="button" onclick="deleteChatFromMenu()" class="w-full text-left px-3.5 py-2.5 hover:bg-red-50 text-red-600 flex items-center space-x-2.5 transition font-semibold">
+                                    <i class="fas fa-trash text-red-500 text-sm w-4 text-center"></i><span>Delete Entire Chat</span>
                                 </button>
                             </div>
                         </div>
@@ -416,7 +337,7 @@
 
                 </div>
 
-                <!-- Messages Stream (WhatsApp Light Theme Wallpaper) -->
+                <!-- Messages Stream -->
                 <div id="messages-container" class="flex-1 min-h-0 p-4 md:p-5 overflow-y-auto space-y-3 chat-light-bg scroll-smooth">
                     <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
                         <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center text-emerald-500 text-2xl mb-2.5 shadow-sm border border-slate-200">
@@ -427,7 +348,7 @@
                     </div>
                 </div>
 
-                <!-- Floating Scroll to Bottom Button (WhatsApp Web Style) -->
+                <!-- Scroll to bottom -->
                 <button id="scroll-bottom-btn" onclick="scrollChatToBottom(true)" title="Scroll to latest messages" class="hidden absolute right-5 bottom-28 w-9 h-9 rounded-full bg-white text-emerald-600 shadow-md border border-slate-200 items-center justify-center hover:bg-emerald-50 hover:text-emerald-700 transition z-20 group">
                     <i class="fas fa-chevron-down text-xs group-hover:translate-y-0.5 transition-transform"></i>
                     <span id="scroll-unread-badge" class="hidden absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></span>
@@ -437,64 +358,25 @@
                 <div class="flex-shrink-0 px-3.5 py-1.5 bg-white border-t border-slate-200 flex items-center justify-between text-xs z-10">
                     <div class="flex items-center space-x-2 overflow-x-auto flex-1 mr-2 py-0.5">
                         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex-shrink-0"><i class="fas fa-bolt text-amber-500 mr-1"></i>Templates:</span>
-                        <div id="quick-templates-bar" class="flex items-center space-x-1.5">
-                            <!-- Injected dynamically -->
-                        </div>
+                        <div id="quick-templates-bar" class="flex items-center space-x-1.5"></div>
                     </div>
                     <button onclick="openTemplateSelectorModal()" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-semibold transition flex-shrink-0">
                         <i class="fas fa-ellipsis mr-1"></i> All
                     </button>
                 </div>
 
-                <!-- Admin & Customer Multi-Role Reply Box -->
-                <div class="chat-composer flex-shrink-0 bg-white p-3 border-t border-slate-200 flex flex-col space-y-2 z-10">
-                    <div class="flex items-center justify-between text-xs text-slate-500 px-1">
-                        <div class="flex items-center space-x-3">
-                            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Mode:</span>
-                            <!-- 1. Send as Agent -->
-                            <label class="flex items-center space-x-1.5 cursor-pointer" title="Direct human agent reply (automatically pauses AI for this customer)">
-                                <input type="radio" name="reply_role" id="role-agent" value="agent" checked onchange="handleRoleChange('agent')" class="text-emerald-600 focus:ring-0">
-                                <span class="text-slate-800 font-extrabold flex items-center space-x-1 text-xs">
-                                    <i class="fas fa-user-tie text-blue-600"></i>
-                                    <span>Reply as Agent (Pause AI)</span>
-                                </span>
-                            </label>
-                            <!-- 2. Test as Customer -->
-                            <label class="flex items-center space-x-1.5 cursor-pointer" title="Simulate a customer inquiry to test AI auto-reply">
-                                <input type="radio" name="reply_role" id="role-customer" value="customer" onchange="handleRoleChange('customer')" class="text-emerald-600 focus:ring-0">
-                                <span class="text-slate-600 font-medium text-xs flex items-center space-x-1">
-                                    <i class="fas fa-vial text-slate-400"></i>
-                                    <span>Test Prompt (AI auto-replies)</span>
-                                </span>
-                            </label>
-                        </div>
-                        <label class="flex items-center space-x-1.5 cursor-pointer text-slate-700 hover:text-slate-900 font-bold text-xs">
-                            <input type="checkbox" id="send-meta-cloud" checked class="rounded text-emerald-600 focus:ring-0">
-                            <span class="text-emerald-700 font-bold"><i class="fab fa-whatsapp mr-0.5"></i> Forward to WhatsApp</span>
-                        </label>
-                    </div>
-
+                <!-- Reply Box (mode row removed → more vertical space on mobile) -->
+                <div class="chat-composer flex-shrink-0 bg-white p-3 border-t border-slate-200 z-10">
                     <form id="reply-form" onsubmit="sendReply(event)" class="flex items-center space-x-2">
-                        <button
-                            type="button"
-                            onclick="openMediaModal()"
-                            title="Send Photo or Document"
-                            class="px-3.5 py-2.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl border border-slate-200 transition flex items-center justify-center flex-shrink-0"
-                        >
+                        <button type="button" onclick="openMediaModal()" title="Send Photo or Document"
+                                class="px-3.5 py-2.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl border border-slate-200 transition flex items-center justify-center flex-shrink-0">
                             <i class="fas fa-paperclip text-sm"></i>
                         </button>
-                        <input
-                            type="text"
-                            id="reply-input"
-                            placeholder="Type a message..."
-                            class="flex-1 bg-slate-50 text-sm text-slate-900 placeholder-slate-400 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition min-w-0"
-                            autocomplete="off"
-                        />
-                        <button
-                            type="submit"
-                            id="send-reply-btn"
-                            class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center space-x-1.5 transition shadow-sm flex-shrink-0 disabled:opacity-50 text-sm"
-                        >
+                        <input type="text" id="reply-input" placeholder="Type a message..."
+                               class="flex-1 bg-slate-50 text-sm text-slate-900 placeholder-slate-400 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 focus:bg-white transition min-w-0"
+                               autocomplete="off" />
+                        <button type="submit" id="send-reply-btn"
+                                class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center space-x-1.5 transition shadow-sm flex-shrink-0 disabled:opacity-50 text-sm">
                             <span>Send</span>
                             <i class="fas fa-paper-plane text-xs"></i>
                         </button>
@@ -505,14 +387,12 @@
 
         </div>
 
-        <!-- ================= TAB: DEDICATED ANALYTICS & CRM STATS VIEW ================= -->
+        <!-- ================= ANALYTICS VIEW ================= -->
         <div id="view-analytics" class="hidden bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-sm flex flex-col space-y-6 flex-1 min-h-0 overflow-y-auto">
-            <!-- Header -->
             <div class="flex flex-wrap items-center justify-between pb-4 border-b border-slate-200 gap-3 flex-shrink-0">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                        <i class="fas fa-chart-pie text-emerald-600"></i>
-                        <span>Business Analytics & Bot Performance</span>
+                        <i class="fas fa-chart-pie text-emerald-600"></i><span>Business Analytics & Bot Performance</span>
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">Real-time metrics, customer engagement, appointments, and AI response status</p>
                 </div>
@@ -521,15 +401,12 @@
                         <span class="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 live-dot"></span> Auto-Sync
                     </span>
                     <button onclick="switchTab('chats')" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-sm">
-                        <i class="fas fa-comments"></i>
-                        <span>Go to Live Chats</span>
+                        <i class="fas fa-comments"></i><span>Go to Live Chats</span>
                     </button>
                 </div>
             </div>
 
-            <!-- 4 Top Analytics Summary Cards -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 flex-shrink-0">
-                <!-- Card 1: Total Messages -->
                 <div class="bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                     <div>
                         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Messages</span>
@@ -543,8 +420,6 @@
                         <i class="fas fa-comment-dots"></i>
                     </div>
                 </div>
-
-                <!-- Card 2: Customers -->
                 <div class="bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                     <div>
                         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Customers</span>
@@ -555,8 +430,6 @@
                         <i class="fas fa-users"></i>
                     </div>
                 </div>
-
-                <!-- Card 3: Bookings & Tasks -->
                 <div class="bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs cursor-pointer hover:border-amber-400 transition" onclick="switchTab('bookings')">
                     <div>
                         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bookings & Tasks</span>
@@ -567,8 +440,6 @@
                         <i class="fas fa-calendar-check"></i>
                     </div>
                 </div>
-
-                <!-- Card 4: Support Agent Mode -->
                 <div class="bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs cursor-pointer hover:border-purple-400 transition" onclick="openSettingsModal()">
                     <div>
                         <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Bot Status</span>
@@ -583,90 +454,72 @@
                 </div>
             </div>
 
-            <!-- Detailed Metrics & System Status Grid -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-h-0">
-                <!-- Box 1: Traffic Breakdown -->
                 <div class="p-5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-4">
                     <div>
                         <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center space-x-2">
-                            <i class="fas fa-chart-line text-emerald-600"></i>
-                            <span>Message Traffic Balance</span>
+                            <i class="fas fa-chart-line text-emerald-600"></i><span>Message Traffic Balance</span>
                         </h3>
                         <p class="text-xs text-slate-500 mt-1">Ratio of incoming inquiries vs automated & agent replies</p>
                     </div>
-
-                    <!-- Progress Bar -->
                     <div class="space-y-2">
                         <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden flex">
-                            <div id="stat-bar-inbound" class="bg-emerald-500 h-full transition-all duration-500" style="width: 50%" title="Inbound Messages"></div>
-                            <div id="stat-bar-outbound" class="bg-teal-500 h-full transition-all duration-500" style="width: 50%" title="Outbound Messages"></div>
+                            <div id="stat-bar-inbound" class="bg-emerald-500 h-full transition-all duration-500" style="width: 50%"></div>
+                            <div id="stat-bar-outbound" class="bg-teal-500 h-full transition-all duration-500" style="width: 50%"></div>
                         </div>
                         <div class="flex items-center justify-between text-xs font-mono">
                             <span class="text-emerald-700 font-bold flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-1.5 inline-block"></span> Inbound (<span id="stat-pct-inbound">50%</span>)</span>
                             <span class="text-teal-700 font-bold flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-teal-500 mr-1.5 inline-block"></span> Outbound (<span id="stat-pct-outbound">50%</span>)</span>
                         </div>
                     </div>
-
                     <div class="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs text-slate-500">
                         <span>Automated Keep-Alive Ping:</span>
                         <span class="font-bold text-emerald-600 font-mono">Active (24/7)</span>
                     </div>
                 </div>
-
-                <!-- Box 2: Quick System Status -->
                 <div class="p-5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-4">
                     <div>
                         <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center space-x-2">
-                            <i class="fas fa-server text-purple-600"></i>
-                            <span>Integration Health & Channels</span>
+                            <i class="fas fa-server text-purple-600"></i><span>Integration Health & Channels</span>
                         </h3>
                         <p class="text-xs text-slate-500 mt-1">Connected WhatsApp Cloud API and webhook listeners</p>
                     </div>
-
                     <div class="space-y-2.5 text-xs">
                         <div class="flex items-center justify-between p-2.5 rounded-xl bg-white border border-slate-200/80">
                             <div class="flex items-center space-x-2 font-medium text-slate-800">
-                                <i class="fab fa-whatsapp text-emerald-600 text-sm"></i>
-                                <span>Meta WhatsApp Cloud API</span>
+                                <i class="fab fa-whatsapp text-emerald-600 text-sm"></i><span>Meta WhatsApp Cloud API</span>
                             </div>
                             <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">Connected</span>
                         </div>
                         <div class="flex items-center justify-between p-2.5 rounded-xl bg-white border border-slate-200/80">
                             <div class="flex items-center space-x-2 font-medium text-slate-800">
-                                <i class="fas fa-brain text-purple-600 text-sm"></i>
-                                <span>Groq AI Llama 3.3 Engine</span>
+                                <i class="fas fa-brain text-purple-600 text-sm"></i><span>Groq AI Llama 3.3 Engine</span>
                             </div>
                             <span class="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">~800ms Latency</span>
                         </div>
                     </div>
-
                     <div class="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs">
                         <button onclick="switchTab('testai')" class="text-emerald-700 font-bold hover:underline flex items-center space-x-1">
-                            <i class="fas fa-play text-[10px]"></i>
-                            <span>Run AI Test Sandbox</span>
+                            <i class="fas fa-play text-[10px]"></i><span>Run AI Test Sandbox</span>
                         </button>
                         <button onclick="openSettingsModal()" class="text-slate-600 font-bold hover:underline flex items-center space-x-1">
-                            <i class="fas fa-gear text-[10px]"></i>
-                            <span>Configure Keys</span>
+                            <i class="fas fa-gear text-[10px]"></i><span>Configure Keys</span>
                         </button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- ================= TAB 2: TEST AI LIVE SANDBOX ================= -->
+        <!-- ================= TEST AI VIEW ================= -->
         <div id="view-testai" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
             <div class="flex items-center justify-between pb-4 border-b border-slate-200">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                        <i class="fas fa-wand-magic-sparkles text-emerald-600"></i>
-                        <span>Live AI Response Sandbox</span>
+                        <i class="fas fa-wand-magic-sparkles text-emerald-600"></i><span>Live AI Response Sandbox</span>
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">Test how the printingtask AI Bot replies to any customer prompt in real-time</p>
                 </div>
             </div>
-
-            <!-- Quick Test Prompt Buttons -->
             <div class="space-y-2">
                 <span class="text-xs font-bold text-slate-600 uppercase tracking-wider">Try Sample Inquiries:</span>
                 <div class="flex flex-wrap gap-2">
@@ -677,25 +530,19 @@
                     <button onclick="runAiSandboxTest('Where is my order? Order ID is #48291')" class="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl text-xs font-semibold border border-slate-200 transition">📦 Order Tracking</button>
                 </div>
             </div>
-
-            <!-- Sandbox Interactive Form -->
             <div class="space-y-3 pt-2">
                 <label class="block text-xs font-bold text-slate-700">Customer Prompt:</label>
                 <div class="flex space-x-2">
                     <input type="text" id="sandbox-prompt" value="Hi! What are your printing charges and how can I place an order?" class="flex-1 bg-slate-50 text-slate-900 px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-medium text-sm"/>
                     <button onclick="runAiSandboxTest(document.getElementById('sandbox-prompt').value)" id="sandbox-btn" class="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center space-x-2 shadow-sm">
-                        <i class="fas fa-play text-xs"></i>
-                        <span>Test AI Reply</span>
+                        <i class="fas fa-play text-xs"></i><span>Test AI Reply</span>
                     </button>
                 </div>
             </div>
-
-            <!-- Output Box -->
             <div class="bg-slate-50 rounded-2xl border border-slate-200 p-5 space-y-3 flex-1">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center space-x-1.5">
-                        <i class="fas fa-robot text-emerald-600"></i>
-                        <span>AI Bot Response Output</span>
+                        <i class="fas fa-robot text-emerald-600"></i><span>AI Bot Response Output</span>
                     </span>
                     <span id="sandbox-meta" class="text-xs text-slate-500 font-mono font-bold bg-white px-2.5 py-1 rounded-lg border border-slate-200">Engine: Ready</span>
                 </div>
@@ -705,48 +552,35 @@
             </div>
         </div>
 
-        <!-- ================= TAB 3: MESSAGE TEMPLATES VIEW ================= -->
+        <!-- ================= TEMPLATES VIEW ================= -->
         <div id="view-templates" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
-
-            <!-- Templates Grid -->
             <div class="flex items-center justify-between pb-4 border-b border-slate-200 flex-shrink-0">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                        <i class="fas fa-layer-group text-blue-600"></i>
-                        <span>printingtask Message Templates</span>
+                        <i class="fas fa-layer-group text-blue-600"></i><span>printingtask Message Templates</span>
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">Reusable response templates with dynamic variables: <code class="text-emerald-600 font-mono">{{name}}</code>, <code class="text-emerald-600 font-mono">{{phone}}</code>, <code class="text-emerald-600 font-mono">{{service}}</code></p>
                 </div>
                 <button onclick="openCreateTemplateModal()" class="px-4 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center space-x-1.5 shadow-sm transition">
-                    <i class="fas fa-plus"></i>
-                    <span>Create Template</span>
+                    <i class="fas fa-plus"></i><span>Create Template</span>
                 </button>
             </div>
-
-            <!-- Templates Grid -->
-            <div id="templates-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 overflow-y-auto min-h-0">
-                <!-- Injected via JS -->
-            </div>
+            <div id="templates-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 overflow-y-auto min-h-0"></div>
         </div>
 
-        <!-- ================= TAB 4: BOOKINGS & APPOINTMENTS VIEW ================= -->
+        <!-- ================= BOOKINGS VIEW ================= -->
         <div id="view-bookings" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
-
             <div class="flex items-center justify-between pb-4 border-b border-slate-200 flex-shrink-0">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                        <i class="fas fa-calendar-check text-amber-500"></i>
-                        <span>Customer Appointments & Task Bookings</span>
+                        <i class="fas fa-calendar-check text-amber-500"></i><span>Customer Appointments & Task Bookings</span>
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">Automated bookings captured from WhatsApp conversations</p>
                 </div>
                 <button onclick="openAddBookingModal()" class="px-4 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white flex items-center space-x-1.5 shadow-sm transition">
-                    <i class="fas fa-plus"></i>
-                    <span>New Booking</span>
+                    <i class="fas fa-plus"></i><span>New Booking</span>
                 </button>
             </div>
-
-            <!-- Bookings Table -->
             <div class="flex-1 overflow-x-auto min-h-0">
                 <table class="w-full text-left text-xs text-slate-700">
                     <thead class="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
@@ -767,19 +601,16 @@
             </div>
         </div>
 
-        <!-- ================= TAB 5: WEBHOOK INSPECTOR VIEW ================= -->
+        <!-- ================= WEBHOOKS VIEW ================= -->
         <div id="view-webhooks" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-4 flex-1 min-h-0 overflow-y-auto">
             <div class="flex items-center justify-between pb-4 border-b border-slate-200">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                        <i class="fas fa-network-wired text-purple-600"></i>
-                        <span>Meta & Twilio Webhook Events</span>
+                        <i class="fas fa-network-wired text-purple-600"></i><span>Meta & Twilio Webhook Events</span>
                     </h2>
                     <p class="text-xs text-slate-500 mt-0.5">Inspect incoming HTTP webhook deliveries and tokens</p>
                 </div>
             </div>
-
-            <!-- Webhook Connection Details -->
             <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs space-y-2 font-mono">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <span class="text-slate-500">Meta Webhook Callback URL:</span>
@@ -790,8 +621,6 @@
                     <span id="webhook-token-label" class="text-amber-700 font-bold">whatsapp_groq_bot_secret_123</span>
                 </div>
             </div>
-
-            <!-- Webhook Events Stream -->
             <div id="webhook-logs-container" class="flex-1 overflow-y-auto space-y-2 text-xs">
                 <div class="p-8 text-center text-slate-400">Loading webhook events...</div>
             </div>
@@ -799,14 +628,12 @@
 
     </main>
 
-    <!-- ================= MODAL: SEND PHOTO OR DOCUMENT ================= -->
+    <!-- ================= MODAL: MEDIA ================= -->
     <div id="media-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl overflow-hidden">
             <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
                 <div class="flex items-center space-x-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base">
-                        <i class="fas fa-paperclip"></i>
-                    </div>
+                    <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base"><i class="fas fa-paperclip"></i></div>
                     <div>
                         <h3 class="font-extrabold text-slate-900 text-base">Send Photo or Document</h3>
                         <p class="text-[11px] text-slate-400">Attach and send directly to customer's WhatsApp</p>
@@ -814,9 +641,7 @@
                 </div>
                 <button onclick="closeMediaModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
             </div>
-
             <form id="media-upload-form" onsubmit="submitMediaUpload(event)" class="space-y-4 mt-4 text-xs">
-                <!-- Media Type Selection -->
                 <div>
                     <label class="block text-slate-700 font-bold mb-1.5">Attachment Type</label>
                     <div class="grid grid-cols-2 gap-2.5">
@@ -836,63 +661,42 @@
                         </label>
                     </div>
                 </div>
-
-                <!-- File Picker -->
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">Choose File</label>
-                    <input
-                        type="file"
-                        id="media-file-input"
-                        accept="image/jpeg,image/png,image/webp"
-                        required
-                        class="block w-full text-xs text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 border border-slate-200 rounded-xl p-1 bg-slate-50 cursor-pointer"
-                    />
+                    <input type="file" id="media-file-input" accept="image/jpeg,image/png,image/webp" required
+                           class="block w-full text-xs text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 border border-slate-200 rounded-xl p-1 bg-slate-50 cursor-pointer" />
                 </div>
-
-                <!-- Caption / Message -->
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">Caption / Message (Optional)</label>
-                    <input
-                        type="text"
-                        id="media-caption-input"
-                        placeholder="e.g. Here is your sample print preview..."
-                        class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 text-xs"
-                    />
+                    <input type="text" id="media-caption-input" placeholder="e.g. Here is your sample print preview..."
+                           class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 text-xs" />
                 </div>
-
-                <!-- Forward to WhatsApp checkbox -->
                 <div class="flex items-center justify-between pt-1">
                     <label class="flex items-center space-x-1.5 cursor-pointer text-xs font-bold text-slate-700">
                         <input type="checkbox" id="media-send-meta" checked class="rounded text-emerald-600 focus:ring-0">
                         <span class="text-emerald-700"><i class="fab fa-whatsapp mr-1"></i> Send to WhatsApp Customer</span>
                     </label>
                 </div>
-
-                <!-- Actions -->
                 <div class="flex items-center justify-end space-x-2.5 pt-3.5 border-t border-slate-100">
                     <button type="button" onclick="closeMediaModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Cancel</button>
                     <button type="submit" id="media-submit-btn" class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center space-x-2 shadow-sm transition disabled:opacity-50">
-                        <i class="fas fa-paper-plane text-xs"></i>
-                        <span>Send Attachment</span>
+                        <i class="fas fa-paper-plane text-xs"></i><span>Send Attachment</span>
                     </button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- ================= MODAL: SIMULATE CUSTOMER MESSAGE ================= -->
+    <!-- ================= MODAL: SIMULATE ================= -->
     <div id="simulate-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl">
             <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
                 <div class="flex items-center space-x-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base">
-                        <i class="fas fa-mobile-screen"></i>
-                    </div>
+                    <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base"><i class="fas fa-mobile-screen"></i></div>
                     <h3 class="font-extrabold text-slate-900 text-base">Simulate Inbound WhatsApp</h3>
                 </div>
                 <button onclick="closeSimulateModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
             </div>
-
             <form onsubmit="handleSimulateSubmit(event)" class="space-y-4 mt-4 text-xs">
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">Customer Phone Number</label>
@@ -910,31 +714,26 @@
                     <input type="checkbox" id="sim-auto-reply" checked class="rounded text-emerald-600 focus:ring-0">
                     <label for="sim-auto-reply" class="text-slate-700 font-bold">Trigger Support Agent AI Reply</label>
                 </div>
-
                 <div class="flex items-center justify-end space-x-2.5 pt-3.5 border-t border-slate-100">
                     <button type="button" onclick="closeSimulateModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Cancel</button>
                     <button type="submit" id="sim-submit-btn" class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center space-x-2 shadow-sm">
-                        <i class="fas fa-paper-plane"></i>
-                        <span>Send & Reply</span>
+                        <i class="fas fa-paper-plane"></i><span>Send & Reply</span>
                     </button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- ================= MODAL: CREATE CUSTOM TEMPLATE ================= -->
+    <!-- ================= MODAL: CREATE TEMPLATE ================= -->
     <div id="template-create-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 shadow-2xl">
             <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
                 <div class="flex items-center space-x-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base">
-                        <i class="fas fa-plus"></i>
-                    </div>
+                    <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base"><i class="fas fa-plus"></i></div>
                     <h3 class="font-extrabold text-slate-900 text-base">Create Message Template</h3>
                 </div>
                 <button onclick="closeCreateTemplateModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
             </div>
-
             <form onsubmit="handleCreateTemplateSubmit(event)" class="space-y-4 mt-4 text-xs">
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">Template Title</label>
@@ -955,7 +754,6 @@
                     <textarea id="tpl-content" rows="4" placeholder="Hi {{name}}, your order has been dispatched..." required class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-500"></textarea>
                     <p class="text-[11px] text-slate-500 mt-1">Tip: Use variables like <code class="text-blue-600 font-mono">{{name}}</code>, <code class="text-blue-600 font-mono">{{phone}}</code> for dynamic values.</p>
                 </div>
-
                 <div class="flex items-center justify-end space-x-2.5 pt-3.5 border-t border-slate-100">
                     <button type="button" onclick="closeCreateTemplateModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Cancel</button>
                     <button type="submit" class="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold">Save Template</button>
@@ -964,14 +762,12 @@
         </div>
     </div>
 
-    <!-- ================= MODAL: TEMPLATES PICKER (MULTI-SELECT) ================= -->
+    <!-- ================= MODAL: TEMPLATE PICKER ================= -->
     <div id="template-picker-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white border border-slate-200 rounded-3xl max-w-xl w-full p-6 shadow-2xl max-h-[88vh] flex flex-col">
             <div class="flex items-center justify-between pb-3.5 border-b border-slate-100 flex-shrink-0">
                 <div class="flex items-center space-x-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base">
-                        <i class="fas fa-layer-group"></i>
-                    </div>
+                    <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base"><i class="fas fa-layer-group"></i></div>
                     <div>
                         <h3 class="font-extrabold text-slate-900 text-base">Select Message Templates</h3>
                         <p class="text-[11px] text-slate-500">Tap one or more templates — then insert or send them</p>
@@ -979,12 +775,7 @@
                 </div>
                 <button onclick="closeTemplateSelectorModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
             </div>
-
-            <div id="template-picker-list" class="flex-1 overflow-y-auto space-y-2.5 mt-4 pr-1 text-xs">
-                <!-- Injected via JS -->
-            </div>
-
-            <!-- Multi-select action footer -->
+            <div id="template-picker-list" class="flex-1 overflow-y-auto space-y-2.5 mt-4 pr-1 text-xs"></div>
             <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
                 <div class="flex items-center space-x-2">
                     <span id="tpl-selected-count" class="text-[11px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg whitespace-nowrap">0 selected</span>
@@ -1004,14 +795,12 @@
         </div>
     </div>
 
-    <!-- ================= MODAL: SETTINGS & API KEYS ================= -->
+    <!-- ================= MODAL: SETTINGS ================= -->
     <div id="settings-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
                 <div class="flex items-center space-x-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-base">
-                        <i class="fas fa-gear"></i>
-                    </div>
+                    <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-base"><i class="fas fa-gear"></i></div>
                     <div>
                         <h3 class="font-extrabold text-slate-900 text-base">Settings & API Configuration</h3>
                         <p class="text-xs text-slate-500">Configure Groq AI Key and Meta WhatsApp Tokens</p>
@@ -1019,15 +808,12 @@
                 </div>
                 <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
             </div>
-
             <form onsubmit="handleSettingsSubmit(event)" class="space-y-4 mt-4 text-xs">
-                <!-- Groq AI -->
                 <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
                     <label class="block text-slate-800 font-bold">Groq API Key (`gsk_...`)</label>
                     <input type="password" id="set-groq-key" placeholder="Enter your Groq API Key" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono"/>
                     <p class="text-[11px] text-slate-500">Free key from <a href="https://console.groq.com/keys" target="_blank" class="text-emerald-600 font-bold hover:underline">console.groq.com/keys</a></p>
                 </div>
-
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">AI Model Selection</label>
                     <select id="set-groq-model" class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono text-xs">
@@ -1037,8 +823,6 @@
                         <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
                     </select>
                 </div>
-
-                <!-- Meta WhatsApp Credentials -->
                 <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
                     <h4 class="text-slate-800 font-bold">Meta WhatsApp Cloud API (Optional)</h4>
                     <div>
@@ -1054,31 +838,26 @@
                         <input type="text" id="set-meta-verify-token" value="whatsapp_groq_bot_secret_123" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono"/>
                     </div>
                 </div>
-
                 <div class="flex items-center justify-end space-x-2.5 pt-3.5 border-t border-slate-100">
                     <button type="button" onclick="closeSettingsModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Cancel</button>
                     <button type="submit" id="save-settings-btn" class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center space-x-2 shadow-sm">
-                        <i class="fas fa-save"></i>
-                        <span>Save Settings</span>
+                        <i class="fas fa-save"></i><span>Save Settings</span>
                     </button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- ================= MODAL: ADD MANUAL BOOKING ================= -->
+    <!-- ================= MODAL: BOOKING ================= -->
     <div id="booking-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl">
             <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
                 <div class="flex items-center space-x-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-base">
-                        <i class="fas fa-calendar-plus"></i>
-                    </div>
+                    <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-base"><i class="fas fa-calendar-plus"></i></div>
                     <h3 class="font-extrabold text-slate-900 text-base">New Customer Booking</h3>
                 </div>
                 <button onclick="closeBookingModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
             </div>
-
             <form onsubmit="handleAddBookingSubmit(event)" class="space-y-3.5 mt-4 text-xs">
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">Customer Phone Number</label>
@@ -1104,7 +883,6 @@
                         <option value="completed">Completed</option>
                     </select>
                 </div>
-
                 <div class="flex items-center justify-end space-x-2.5 pt-3.5 border-t border-slate-100">
                     <button type="button" onclick="closeBookingModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Cancel</button>
                     <button type="submit" class="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold">Save Booking</button>
@@ -1118,9 +896,6 @@
 
     <!-- ================================================================
          UI PATCH SCRIPT
-         1. Mobile navigation dropdown
-         2. Multi-select template picker
-         3. Mobile chat layout sync (fixes clipped composer)
          ================================================================ -->
     <script>
     /* =========================================================
@@ -1131,12 +906,10 @@
         var dd = document.getElementById('mobile-nav-dropdown');
         if (dd) dd.classList.toggle('hidden');
     }
-
     function closeMobileNav() {
         var dd = document.getElementById('mobile-nav-dropdown');
         if (dd) dd.classList.add('hidden');
     }
-
     function markMobileNavActive(tab) {
         var items = document.querySelectorAll('.mnav-item');
         for (var i = 0; i < items.length; i++) {
@@ -1146,23 +919,15 @@
             items[i].classList.toggle('font-extrabold', active);
         }
     }
-
     function mobileNavGo(tab) {
         closeMobileNav();
-        if (typeof window.switchTab === 'function') {
-            window.switchTab(tab);
-        }
+        if (typeof window.switchTab === 'function') window.switchTab(tab);
         markMobileNavActive(tab);
     }
-
     function mobileNavSettings() {
         closeMobileNav();
-        if (typeof window.openSettingsModal === 'function') {
-            window.openSettingsModal();
-        }
+        if (typeof window.openSettingsModal === 'function') window.openSettingsModal();
     }
-
-    /* Keep the mobile menu highlight in sync with the desktop tabs */
     (function () {
         if (typeof window.switchTab === 'function') {
             var originalSwitchTab = window.switchTab;
@@ -1174,8 +939,6 @@
         }
         markMobileNavActive('chats');
     })();
-
-    /* Close the dropdown when tapping anywhere outside */
     document.addEventListener('click', function (e) {
         var dd = document.getElementById('mobile-nav-dropdown');
         var btn = document.getElementById('mobile-nav-btn');
@@ -1183,38 +946,58 @@
         if (dd.contains(e.target) || (btn && btn.contains(e.target))) return;
         dd.classList.add('hidden');
     });
-
-    /* Mirror the bookings badge count into the mobile menu */
     (function () {
         var src = document.getElementById('nav-bookings-count');
         var dst = document.getElementById('nav-bookings-count-mobile');
         if (!src || !dst) return;
         var sync = function () { dst.textContent = src.textContent; };
-        try {
-            new MutationObserver(sync).observe(src, { childList: true, characterData: true, subtree: true });
-        } catch (err) {}
+        try { new MutationObserver(sync).observe(src, { childList: true, characterData: true, subtree: true }); } catch (err) {}
         sync();
     })();
 
     /* =========================================================
-       2) MULTI-SELECT TEMPLATE PICKER
+       2) REPLY MODE (moved from composer → three-dots dropdown)
+       ========================================================= */
+    function updateModeBtnStyles() {
+        var agentRadio = document.getElementById('role-agent');
+        var isAgent = agentRadio ? agentRadio.checked : true;
+        var agentBtn = document.getElementById('mode-btn-agent');
+        var custBtn  = document.getElementById('mode-btn-customer');
+        if (agentBtn) agentBtn.classList.toggle('is-active', isAgent);
+        if (custBtn)  custBtn.classList.toggle('is-active', !isAgent);
+    }
+
+    function setReplyMode(mode) {
+        var agentRadio = document.getElementById('role-agent');
+        var custRadio  = document.getElementById('role-customer');
+        if (agentRadio) agentRadio.checked = (mode === 'agent');
+        if (custRadio)  custRadio.checked  = (mode === 'customer');
+
+        // Fire the existing app.js handler
+        if (typeof window.handleRoleChange === 'function') {
+            try { window.handleRoleChange(mode); } catch (e) {}
+        }
+        updateModeBtnStyles();
+    }
+
+    // Sync the segmented button style with the hidden radios on load
+    document.addEventListener('DOMContentLoaded', updateModeBtnStyles);
+    window.addEventListener('load', updateModeBtnStyles);
+
+    /* =========================================================
+       3) MULTI-SELECT TEMPLATE PICKER
        ========================================================= */
     var selectedTplIdx = new Set();
 
-    function tplListEl() {
-        return document.getElementById('template-picker-list');
-    }
+    function tplListEl() { return document.getElementById('template-picker-list'); }
 
     function tplFillVars(text) {
         var nameEl = document.getElementById('active-name');
         var phoneEl = document.getElementById('active-phone');
-
         var name = nameEl ? (nameEl.textContent || '').trim() : '';
         if (!name || /select a customer/i.test(name)) name = 'there';
-
         var phone = phoneEl ? (phoneEl.textContent || '').trim() : '';
         if (/no active/i.test(phone)) phone = '';
-
         return String(text)
             .replace(/\{\{\s*name\s*\}\}/gi, name)
             .replace(/\{\{\s*phone\s*\}\}/gi, phone)
@@ -1234,7 +1017,7 @@
             for (var j = 0; j < junk.length; j++) junk[j].remove();
             best = (clone.innerText || clone.textContent || '').trim();
             var lines = best.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
-            if (lines.length > 1) lines.shift(); /* drop the title line */
+            if (lines.length > 1) lines.shift();
             best = lines.join(' ');
         }
         return tplFillVars(best);
@@ -1262,12 +1045,10 @@
         var n = selectedTplIdx.size;
         var label = document.getElementById('tpl-selected-count');
         if (label) label.textContent = n + ' selected';
-
         var ins = document.getElementById('tpl-insert-btn');
         var snd = document.getElementById('tpl-send-btn');
         if (ins) ins.disabled = (n === 0);
         if (snd) snd.disabled = (n === 0);
-
         var insLabel = document.getElementById('tpl-insert-label');
         var sndLabel = document.getElementById('tpl-send-label');
         if (insLabel) insLabel.textContent = n > 1 ? 'Insert All (' + n + ')' : 'Insert';
@@ -1309,7 +1090,6 @@
     function tplInsertSelected() {
         var texts = tplSelectedTexts();
         if (!texts.length) return;
-
         var input = document.getElementById('reply-input');
         if (input) {
             var existing = (input.value || '').trim();
@@ -1317,10 +1097,7 @@
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.focus();
         }
-
-        if (typeof window.closeTemplateSelectorModal === 'function') {
-            window.closeTemplateSelectorModal();
-        }
+        if (typeof window.closeTemplateSelectorModal === 'function') window.closeTemplateSelectorModal();
         selectedTplIdx = new Set();
         tplUpdateFooter();
     }
@@ -1328,17 +1105,12 @@
     function tplSendSelected() {
         var texts = tplSelectedTexts();
         if (!texts.length) return;
-
         var input = document.getElementById('reply-input');
         var form = document.getElementById('reply-form');
         if (!input || !form) { tplInsertSelected(); return; }
-
-        if (typeof window.closeTemplateSelectorModal === 'function') {
-            window.closeTemplateSelectorModal();
-        }
+        if (typeof window.closeTemplateSelectorModal === 'function') window.closeTemplateSelectorModal();
         selectedTplIdx = new Set();
         tplUpdateFooter();
-
         var i = 0;
         (function sendNext() {
             if (i >= texts.length) return;
@@ -1350,7 +1122,6 @@
         })();
     }
 
-    /* Hook the template picker: reset state, enhance the rendered cards */
     (function () {
         if (typeof window.openTemplateSelectorModal === 'function') {
             var origOpen = window.openTemplateSelectorModal;
@@ -1370,24 +1141,17 @@
                 return result;
             };
         }
-
-        /* Capture clicks inside the template list BEFORE app.js handlers run,
-           so selecting a template does not instantly close the modal. */
         document.addEventListener('click', function (ev) {
             var list = tplListEl();
             if (!list || !list.contains(ev.target) || ev.target === list) return;
-
             var card = ev.target;
             while (card && card.parentElement !== list) card = card.parentElement;
             if (!card || card === list) return;
-
             ev.preventDefault();
             ev.stopPropagation();
             if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
-
             var idx = Array.prototype.indexOf.call(list.children, card);
             if (idx < 0) return;
-
             if (selectedTplIdx.has(idx)) {
                 selectedTplIdx.delete(idx);
                 tplRemoveBadge(card);
@@ -1400,39 +1164,26 @@
     })();
 
     /* =========================================================
-       3) MOBILE CHAT LAYOUT SYNC (fixes clipped composer)
+       4) MOBILE CHAT LAYOUT SYNC (keeps composer visible)
        ========================================================= */
     (function () {
         var view = document.getElementById('view-chats');
         var paneChat = document.getElementById('pane-chat');
         if (!view || !paneChat) return;
-
-        var isMobile = function () {
-            return window.matchMedia('(max-width: 767px)').matches;
-        };
-
+        var isMobile = function () { return window.matchMedia('(max-width: 767px)').matches; };
         function sync() {
-            if (!isMobile()) {
-                view.classList.remove('mobile-chat-open');
-                return;
-            }
+            if (!isMobile()) { view.classList.remove('mobile-chat-open'); return; }
             var hiddenByClass = paneChat.classList.contains('hidden');
             var hiddenByStyle = paneChat.style.display === 'none';
             view.classList.toggle('mobile-chat-open', !hiddenByClass && !hiddenByStyle);
         }
-
         try {
-            new MutationObserver(sync).observe(paneChat, {
-                attributes: true,
-                attributeFilter: ['class', 'style', 'hidden']
-            });
+            new MutationObserver(sync).observe(paneChat, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
         } catch (e) {}
-
         window.addEventListener('resize', sync);
         window.addEventListener('orientationchange', function () { setTimeout(sync, 120); });
         document.addEventListener('click', function () { setTimeout(sync, 0); }, true);
         document.addEventListener('transitionend', sync);
-
         sync();
         setTimeout(sync, 100);
         setTimeout(sync, 400);
