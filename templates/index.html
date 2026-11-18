@@ -40,34 +40,67 @@
 
         /* ================= MOBILE CHAT PANE FIX =================
            Guarantees the chat window (and therefore the message box)
-           always fills the viewport on phones, no matter which class
-           the app script toggles. */
+           always fills the viewport on phones. */
         @media (max-width: 767px) {
-            #view-chats { position: relative; }
+            #view-chats {
+                position: relative;
+                overflow: hidden;
+            }
 
-            /* If the conversation list is hidden -> force the chat pane visible */
-            #pane-conversations.hidden ~ #pane-chat,
-            #view-chats:has(#pane-chat:not(.hidden)) #pane-chat {
-                display: flex !important;
-                flex-direction: column;
+            /* Conversation list fills the viewport by default */
+            #pane-conversations {
+                width: 100%;
                 flex: 1 1 auto;
                 min-height: 0;
-                height: 100%;
+                height: auto;
                 max-height: 100%;
             }
 
-            /* If the chat pane is open -> hide the conversation list */
-            #view-chats:has(#pane-chat:not(.hidden)) #pane-conversations,
-            #pane-conversations.hidden {
+            /* Newer browsers — no JS needed */
+            @supports selector(:has(*)) {
+                #view-chats:has(#pane-chat:not(.hidden)) #pane-chat {
+                    display: flex !important;
+                    flex-direction: column;
+                    flex: 1 1 auto;
+                    width: 100%;
+                    min-height: 0;
+                    height: auto;
+                    max-height: 100%;
+                    overflow: hidden;
+                }
+                #view-chats:has(#pane-chat:not(.hidden)) #pane-conversations {
+                    display: none !important;
+                }
+            }
+
+            /* JS fallback class — takes over when :has() isn't available
+               OR when the app shows the chat via inline styles */
+            #view-chats.mobile-chat-open #pane-chat {
+                display: flex !important;
+                flex-direction: column;
+                flex: 1 1 auto;
+                width: 100%;
+                min-height: 0;
+                height: auto;
+                max-height: 100%;
+                overflow: hidden;
+            }
+            #view-chats.mobile-chat-open #pane-conversations {
                 display: none !important;
             }
 
-            /* Keep the composer always reachable above the home indicator */
-            .chat-composer {
+            /* Messages scroll; composer stays pinned to the bottom */
+            #pane-chat #messages-container {
+                flex: 1 1 auto;
+                min-height: 0;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior: contain;
+            }
+            #pane-chat .chat-composer {
+                flex-shrink: 0;
                 padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)) !important;
             }
-
-            #messages-container { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
         }
     </style>
 </head>
@@ -1087,7 +1120,7 @@
          UI PATCH SCRIPT
          1. Mobile navigation dropdown
          2. Multi-select template picker
-         3. Keeps everything else wired to the existing app.js
+         3. Mobile chat layout sync (fixes clipped composer)
          ================================================================ -->
     <script>
     /* =========================================================
@@ -1364,6 +1397,45 @@
             }
             tplUpdateFooter();
         }, true);
+    })();
+
+    /* =========================================================
+       3) MOBILE CHAT LAYOUT SYNC (fixes clipped composer)
+       ========================================================= */
+    (function () {
+        var view = document.getElementById('view-chats');
+        var paneChat = document.getElementById('pane-chat');
+        if (!view || !paneChat) return;
+
+        var isMobile = function () {
+            return window.matchMedia('(max-width: 767px)').matches;
+        };
+
+        function sync() {
+            if (!isMobile()) {
+                view.classList.remove('mobile-chat-open');
+                return;
+            }
+            var hiddenByClass = paneChat.classList.contains('hidden');
+            var hiddenByStyle = paneChat.style.display === 'none';
+            view.classList.toggle('mobile-chat-open', !hiddenByClass && !hiddenByStyle);
+        }
+
+        try {
+            new MutationObserver(sync).observe(paneChat, {
+                attributes: true,
+                attributeFilter: ['class', 'style', 'hidden']
+            });
+        } catch (e) {}
+
+        window.addEventListener('resize', sync);
+        window.addEventListener('orientationchange', function () { setTimeout(sync, 120); });
+        document.addEventListener('click', function () { setTimeout(sync, 0); }, true);
+        document.addEventListener('transitionend', sync);
+
+        sync();
+        setTimeout(sync, 100);
+        setTimeout(sync, 400);
     })();
     </script>
 </body>
