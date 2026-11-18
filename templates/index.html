@@ -28,6 +28,15 @@
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* ---- Critical layout fixes: guarantee chat pane shows on desktop ---- */
+        @media (min-width: 768px) {
+            #pane-chat { display: flex !important; flex-direction: column; }
+            #pane-conversations { width: 320px; flex-shrink: 0; }
+        }
+        @media (min-width: 1024px) {
+            #pane-conversations { width: 384px; }
+        }
     </style>
 </head>
 <body class="text-slate-800 h-screen h-[100dvh] overflow-hidden flex flex-col antialiased selection:bg-emerald-500 selection:text-white">
@@ -271,6 +280,8 @@
                                 </button>
                             </div>
                         </div>
+                    </div>
+
                 </div>
 
                 <!-- Messages Stream (WhatsApp Light Theme Wallpaper) -->
