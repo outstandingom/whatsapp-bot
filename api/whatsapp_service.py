@@ -20,13 +20,13 @@ def get_env_var(key: str, default: str = "") -> str:
     return os.getenv(key, default).strip()
 
 
-def send_meta_whatsapp_message(recipient_number: str, message_text: str):
+def send_meta_whatsapp_message(recipient_number: str, message_text: str, phone_id: str = None):
     """
     Send text message to user via Meta WhatsApp Cloud API.
     Returns (success: bool, response_or_error: str).
     """
     token = get_env_var("WHATSAPP_TOKEN")
-    phone_id = get_env_var("WHATSAPP_PHONE_NUMBER_ID")
+    phone_id = (phone_id or get_env_var("WHATSAPP_PHONE_NUMBER_ID")).strip()
 
     if not token or not phone_id:
         return False, "Meta WhatsApp Token or Phone Number ID is not configured."
@@ -81,13 +81,13 @@ def upload_meta_media(file_bytes: bytes, filename: str, mime_type: str = "applic
         return None
 
 
-def send_meta_whatsapp_media(recipient_number: str, media_type: str, media_id: str = None, media_link: str = None, caption: str = "", filename: str = ""):
+def send_meta_whatsapp_media(recipient_number: str, media_type: str, media_id: str = None, media_link: str = None, caption: str = "", filename: str = "", phone_id: str = None):
     """
     Send photo or document to user via Meta WhatsApp Cloud API.
     Returns (success: bool, response_or_error: str).
     """
     token = get_env_var("WHATSAPP_TOKEN")
-    phone_id = get_env_var("WHATSAPP_PHONE_NUMBER_ID")
+    phone_id = (phone_id or get_env_var("WHATSAPP_PHONE_NUMBER_ID")).strip()
     if not token or not phone_id:
         return False, "Meta WhatsApp Token or Phone Number ID is not configured."
 

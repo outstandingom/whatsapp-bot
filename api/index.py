@@ -147,6 +147,11 @@ async def handle_meta_webhook(request: Request):
         for entry in entries:
             for change in entry.get("changes", []):
                 val = change.get("value", {})
+                metadata = val.get("metadata", {})
+                incoming_phone_id = metadata.get("phone_number_id")
+                if incoming_phone_id:
+                    os.environ["WHATSAPP_PHONE_NUMBER_ID"] = incoming_phone_id
+
                 contacts = val.get("contacts", [])
                 sender_name = contacts[0].get("profile", {}).get("name", "Customer") if contacts else "Customer"
                 
@@ -220,8 +225,8 @@ async def handle_meta_webhook(request: Request):
                             else:
                                 reply, latency_ms, engine_used = get_ai_reply(user_text)
 
-                            # Send to WhatsApp
-                            success, send_res = send_meta_whatsapp_message(sender_id, reply)
+                            # Send to WhatsApp (dynamically routes to incoming phone_number_id)
+                            success, send_res = send_meta_whatsapp_message(sender_id, reply, phone_id=incoming_phone_id)
 
                             # Save Outbound Message
                             db.save_message(
