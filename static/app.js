@@ -967,6 +967,12 @@ function deleteChatFromMenu() {
             const res = await fetch('/api/dashboard/settings');
             if (res.ok) {
                 const s = await res.json();
+                if (s.deepseek_api_key_set && document.getElementById('set-deepseek-key')) {
+                    document.getElementById('set-deepseek-key').placeholder = `Configured: ${s.deepseek_api_key_masked}`;
+                }
+                if (document.getElementById('set-deepseek-model')) {
+                    document.getElementById('set-deepseek-model').value = s.deepseek_model || 'deepseek-chat';
+                }
                 if (s.groq_api_key_set) document.getElementById('set-groq-key').placeholder = `Configured: ${s.groq_api_key_masked}`;
                 document.getElementById('set-groq-model').value = s.groq_model || 'llama-3.3-70b-versatile';
                 if (s.whatsapp_token_set) document.getElementById('set-meta-token').placeholder = `Configured: ${s.whatsapp_token_masked}`;
@@ -980,6 +986,11 @@ function deleteChatFromMenu() {
 
         async function handleSettingsSubmit(e) {
             e.preventDefault();
+            const deepseekKeyEl = document.getElementById('set-deepseek-key');
+            const deepseekModelEl = document.getElementById('set-deepseek-model');
+            const deepseekKey = deepseekKeyEl ? deepseekKeyEl.value.trim() : '';
+            const deepseekModel = deepseekModelEl ? deepseekModelEl.value : 'deepseek-chat';
+
             const groqKey = document.getElementById('set-groq-key').value.trim();
             const groqModel = document.getElementById('set-groq-model').value;
             const metaToken = document.getElementById('set-meta-token').value.trim();
@@ -995,6 +1006,8 @@ function deleteChatFromMenu() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        deepseek_api_key: deepseekKey,
+                        deepseek_model: deepseekModel,
                         groq_api_key: groqKey,
                         groq_model: groqModel,
                         whatsapp_token: metaToken,

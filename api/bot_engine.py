@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import httpx
 from groq import Groq
 
 logger = logging.getLogger("bot_engine")
@@ -98,12 +99,52 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
         f"Our support desk is on standby. How else may I assist you with your booking or project today?"
     )
 
-def generate_ai_reply(user_prompt: str, groq_api_key: str = "", groq_model: str = "llama-3.3-70b-versatile") -> tuple[str, float, str]:
+def generate_ai_reply(
+    user_prompt: str,
+    deepseek_api_key: str = "",
+    deepseek_model: str = "deepseek-chat",
+    groq_api_key: str = "",
+    groq_model: str = "llama-3.3-70b-versatile"
+) -> tuple[str, float, str]:
     """
-    Generate Customer Support response with Groq Cloud AI or smart fallback.
+    Generate Customer Support response with DeepSeek AI, Groq Cloud AI, or smart fallback.
+    Priority order:
+    1. DeepSeek API (deepseek-chat / deepseek-reasoner)
+    2. Groq Cloud API (llama-3.3-70b-versatile / gpt-oss-120b)
+    3. Rule-based Smart Customer Support Agent (Offline)
     """
     start = time.time()
-    
+
+    # 1. Try DeepSeek AI
+    if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
+        try:
+            model_to_use = deepseek_model.strip() if deepseek_model and deepseek_model.strip() else "deepseek-chat"
+            headers = {
+                "Authorization": f"Bearer {deepseek_api_key.strip()}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model_to_use,
+                "messages": [
+                    {"role": "system", "content": CUSTOMER_SUPPORT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 1024
+            }
+            with httpx.Client(timeout=30.0) as client:
+                res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    reply = data["choices"][0]["message"]["content"] or "No response generated."
+                    latency = round((time.time() - start) * 1000, 2)
+                    return reply, latency, f"DeepSeek ({model_to_use})"
+                else:
+                    logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back...")
+        except Exception as e:
+            logger.warning(f"DeepSeek call failed ({e}). Falling back...")
+
+    # 2. Try Groq AI Fallback
     if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
         try:
             client = Groq(api_key=groq_api_key.strip())
@@ -124,7 +165,7 @@ def generate_ai_reply(user_prompt: str, groq_api_key: str = "", groq_model: str 
         except Exception as e:
             logger.warning(f"Groq API error ({e}), using support agent fallback.")
 
-    # Smart fallback
+    # 3. Smart rule-based fallback
     latency = round((time.time() - start) * 1000, 2)
     reply = run_smart_customer_support_fallback(user_prompt)
     return reply, max(latency, 10.0), "Customer Support Agent"

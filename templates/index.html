@@ -861,13 +861,28 @@
                 <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-700"><i class="fas fa-times"></i></button>
             </div>
             <form onsubmit="handleSettingsSubmit(event)" class="space-y-4 mt-4 text-xs">
-                <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
-                    <label class="block text-slate-800 font-bold">Groq API Key (`gsk_...`)</label>
-                    <input type="password" id="set-groq-key" placeholder="Enter your Groq API Key" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono"/>
-                    <p class="text-[11px] text-slate-500">Free key from <a href="https://console.groq.com/keys" target="_blank" class="text-emerald-600 font-bold hover:underline">console.groq.com/keys</a></p>
+                <div class="p-4 bg-blue-50/70 rounded-2xl border border-blue-200 space-y-2.5">
+                    <div class="flex items-center justify-between">
+                        <label class="block text-blue-950 font-bold">DeepSeek API Key (Primary AI)</label>
+                        <span class="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">Primary</span>
+                    </div>
+                    <input type="password" id="set-deepseek-key" placeholder="Enter your DeepSeek API Key (sk-...)" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-blue-200 focus:outline-none focus:border-blue-500 font-mono"/>
+                    <p class="text-[11px] text-slate-500">Key from <a href="https://platform.deepseek.com/api_keys" target="_blank" class="text-blue-600 font-bold hover:underline">platform.deepseek.com/api_keys</a></p>
                 </div>
                 <div>
-                    <label class="block text-slate-700 font-bold mb-1">AI Model Selection</label>
+                    <label class="block text-slate-700 font-bold mb-1">DeepSeek Model</label>
+                    <select id="set-deepseek-model" class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-500 font-mono text-xs">
+                        <option value="deepseek-chat">deepseek-chat (DeepSeek-V3 - Fast & Smart)</option>
+                        <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1 - Deep Thinking)</option>
+                    </select>
+                </div>
+                <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
+                    <label class="block text-slate-800 font-bold">Groq API Key (Backup AI)</label>
+                    <input type="password" id="set-groq-key" placeholder="Enter your Groq API Key" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono"/>
+                    <p class="text-[11px] text-slate-500">Free backup key from <a href="https://console.groq.com/keys" target="_blank" class="text-emerald-600 font-bold hover:underline">console.groq.com/keys</a></p>
+                </div>
+                <div>
+                    <label class="block text-slate-700 font-bold mb-1">Groq Model Selection</label>
                     <select id="set-groq-model" class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono text-xs">
                         <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (Fast & Recommended)</option>
                         <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (Ultra Fast)</option>

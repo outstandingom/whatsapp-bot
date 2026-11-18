@@ -54,6 +54,20 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 SERVER_START_TIME = time.time()
 
+def get_ai_reply(prompt: str) -> tuple[str, float, str]:
+    """Helper to route AI responses: DeepSeek AI -> Groq AI -> Smart Customer Support Agent."""
+    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
+    deepseek_model = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
+    groq_key = get_env_var("GROQ_API_KEY")
+    groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
+    return generate_ai_reply(
+        user_prompt=prompt,
+        deepseek_api_key=deepseek_key,
+        deepseek_model=deepseek_model,
+        groq_api_key=groq_key,
+        groq_model=groq_model
+    )
+
 @app.get("/api/health")
 @app.get("/health")
 async def health_check():
@@ -194,9 +208,6 @@ async def handle_meta_webhook(request: Request):
                             db.set_bot_enabled_for_contact(sender_id, False)
 
                         if bot_active:
-                            groq_key = get_env_var("GROQ_API_KEY")
-                            groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-
                             if media_type:
                                 reply = (
                                     f"Thank you for sharing your {media_type}! 📄\n\n"
@@ -207,7 +218,7 @@ async def handle_meta_webhook(request: Request):
                                 latency_ms = 0.0
                                 engine_used = "printingtask Assistant"
                             else:
-                                reply, latency_ms, engine_used = generate_ai_reply(user_text, groq_key, groq_model)
+                                reply, latency_ms, engine_used = get_ai_reply(user_text)
 
                             # Send to WhatsApp
                             success, send_res = send_meta_whatsapp_message(sender_id, reply)
@@ -249,9 +260,7 @@ async def handle_twilio_webhook(From: str = Form(None), Body: str = Form(None), 
     latency_ms = 0.0
 
     if bot_active:
-        groq_key = get_env_var("GROQ_API_KEY")
-        groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-        reply, latency_ms, engine_used = generate_ai_reply(user_text, groq_key, groq_model)
+        reply, latency_ms, engine_used = get_ai_reply(user_text)
 
     db.save_message(phone_number=sender_id, sender_name="Support Agent (AI)", message=reply, direction="outbound", channel="twilio", status="sent", ai_model=engine_used, latency_ms=latency_ms)
 
@@ -265,6 +274,9 @@ async def handle_twilio_webhook(From: str = Form(None), Body: str = Form(None), 
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats():
     stats = db.get_stats()
+    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
+    stats["deepseek_configured"] = bool(deepseek_key and not deepseek_key.startswith("sk_your"))
+    stats["deepseek_model"] = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
     groq_key = get_env_var("GROQ_API_KEY")
     stats["groq_configured"] = bool(groq_key and not groq_key.startswith("gsk_your"))
     stats["groq_model"] = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -351,9 +363,7 @@ async def trigger_ai_reply(request: Request):
     if not prompt:
         prompt = "Hello! How can printingtask customer support help me today?"
 
-    groq_key = get_env_var("GROQ_API_KEY")
-    groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-    reply, latency_ms, engine_used = generate_ai_reply(prompt, groq_key, groq_model)
+    reply, latency_ms, engine_used = get_ai_reply(prompt)
 
     msg_id = None
     if phone:
@@ -415,7 +425,7 @@ async def send_dashboard_reply(request: Request):
         outbound_id = None
 
         if bot_active:
-            ai_reply, latency_ms, engine_used = generate_ai_reply(msg_input, groq_key, groq_model)
+            ai_reply, latency_ms, engine_used = get_ai_reply(msg_input)
             outbound_id = db.save_message(
                 phone_number=phone,
                 sender_name="Support Agent (AI)",
@@ -439,7 +449,7 @@ async def send_dashboard_reply(request: Request):
 
     # Case 2: Message is typed as Agent or AI generator
     if role == "ai":
-        reply_body, latency_ms, engine_used = generate_ai_reply(msg_input, groq_key, groq_model)
+        reply_body, latency_ms, engine_used = get_ai_reply(msg_input)
         sender_name = "Support Agent (AI)"
     else:
         reply_body = msg_input
@@ -587,9 +597,7 @@ async def simulate_inbound(request: Request):
     bot_active = db.is_bot_enabled_for_contact(phone)
 
     if auto_reply and bot_active:
-        groq_key = get_env_var("GROQ_API_KEY")
-        groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-        ai_reply, latency_ms, engine_used = generate_ai_reply(user_msg, groq_key, groq_model)
+        ai_reply, latency_ms, engine_used = get_ai_reply(user_msg)
 
         out_id = db.save_message(
             phone_number=phone,
@@ -618,9 +626,7 @@ async def test_ai_endpoint(request: Request):
     """Test AI bot reply to any text prompt directly."""
     data = await request.json()
     prompt = data.get("prompt", "Hello, what are your printing services and prices?")
-    groq_key = get_env_var("GROQ_API_KEY")
-    groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-    reply, latency_ms, engine_used = generate_ai_reply(prompt, groq_key, groq_model)
+    reply, latency_ms, engine_used = get_ai_reply(prompt)
     return JSONResponse({
         "prompt": prompt,
         "reply": reply,
@@ -631,12 +637,17 @@ async def test_ai_endpoint(request: Request):
 
 @app.get("/api/dashboard/settings")
 async def get_settings():
+    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
+    masked_deepseek = (deepseek_key[:4] + "..." + deepseek_key[-4:]) if len(deepseek_key) > 8 else ("Configured" if deepseek_key else "")
     groq_key = get_env_var("GROQ_API_KEY")
     masked_key = (groq_key[:4] + "..." + groq_key[-4:]) if len(groq_key) > 8 else ("Configured" if groq_key else "")
     meta_token = get_env_var("WHATSAPP_TOKEN")
     masked_token = (meta_token[:4] + "..." + meta_token[-4:]) if len(meta_token) > 8 else ("Configured" if meta_token else "")
 
     return JSONResponse({
+        "deepseek_api_key_set": bool(deepseek_key and not deepseek_key.startswith("sk_your")),
+        "deepseek_api_key_masked": masked_deepseek,
+        "deepseek_model": get_env_var("DEEPSEEK_MODEL", "deepseek-chat"),
         "groq_api_key_set": bool(groq_key and not groq_key.startswith("gsk_your")),
         "groq_api_key_masked": masked_key,
         "groq_model": get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile"),
@@ -649,11 +660,23 @@ async def get_settings():
 @app.post("/api/dashboard/settings")
 async def save_settings(request: Request):
     data = await request.json()
+    deepseek_key = data.get("deepseek_api_key", "").strip()
+    deepseek_model = data.get("deepseek_model", "deepseek-chat").strip()
     groq_key = data.get("groq_api_key", "").strip()
     groq_model = data.get("groq_model", "llama-3.3-70b-versatile").strip()
     whatsapp_token = data.get("whatsapp_token", "").strip()
     whatsapp_phone_id = data.get("whatsapp_phone_number_id", "").strip()
     whatsapp_verify_token = data.get("whatsapp_verify_token", "whatsapp_groq_bot_secret_123").strip()
+
+    if deepseek_key and not deepseek_key.startswith("..."):
+        os.environ["DEEPSEEK_API_KEY"] = deepseek_key
+        try: set_key(ENV_PATH, "DEEPSEEK_API_KEY", deepseek_key)
+        except Exception: pass
+
+    if deepseek_model:
+        os.environ["DEEPSEEK_MODEL"] = deepseek_model
+        try: set_key(ENV_PATH, "DEEPSEEK_MODEL", deepseek_model)
+        except Exception: pass
 
     if groq_key and not groq_key.startswith("..."):
         os.environ["GROQ_API_KEY"] = groq_key
