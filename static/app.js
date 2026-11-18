@@ -6,7 +6,6 @@ function showMobileChat() {
     if (window.innerWidth < 768) {
         const paneList = document.getElementById('pane-conversations');
         const paneChat = document.getElementById('pane-chat');
-        const analyticsCards = document.getElementById('analytics-cards');
         if (paneList) {
             paneList.classList.add('hidden');
             paneList.classList.remove('flex');
@@ -15,9 +14,6 @@ function showMobileChat() {
             paneChat.classList.remove('hidden');
             paneChat.classList.add('flex');
         }
-        if (analyticsCards) {
-            analyticsCards.classList.add('hidden');
-        }
     }
 }
 
@@ -25,7 +21,6 @@ function showMobileList() {
     if (window.innerWidth < 768) {
         const paneList = document.getElementById('pane-conversations');
         const paneChat = document.getElementById('pane-chat');
-        const analyticsCards = document.getElementById('analytics-cards');
         if (paneList) {
             paneList.classList.remove('hidden');
             paneList.classList.add('flex');
@@ -34,16 +29,12 @@ function showMobileList() {
             paneChat.classList.add('hidden');
             paneChat.classList.remove('flex');
         }
-        if (analyticsCards) {
-            analyticsCards.classList.remove('hidden');
-        }
     }
 }
 
 window.addEventListener('resize', () => {
     const paneList = document.getElementById('pane-conversations');
     const paneChat = document.getElementById('pane-chat');
-    const analyticsCards = document.getElementById('analytics-cards');
     if (window.innerWidth >= 768) {
         if (paneList) {
             paneList.classList.remove('hidden');
@@ -53,21 +44,65 @@ window.addEventListener('resize', () => {
             paneChat.classList.remove('hidden');
             paneChat.classList.add('flex');
         }
-        if (analyticsCards) {
-            analyticsCards.classList.remove('hidden');
-        }
     } else {
         if (currentPhone) {
             if (paneList) { paneList.classList.add('hidden'); paneList.classList.remove('flex'); }
             if (paneChat) { paneChat.classList.remove('hidden'); paneChat.classList.add('flex'); }
-            if (analyticsCards) { analyticsCards.classList.add('hidden'); }
         } else {
             if (paneList) { paneList.classList.remove('hidden'); paneList.classList.add('flex'); }
             if (paneChat) { paneChat.classList.add('hidden'); paneChat.classList.remove('flex'); }
-            if (analyticsCards) { analyticsCards.classList.remove('hidden'); }
         }
     }
 });
+
+// ====================================================================
+// CHAT HEADER ACTION DROPDOWN MENU HELPERS (MOBILE & COMPACT VIEW)
+// ====================================================================
+function toggleChatActionsMenu(e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    const dropdown = document.getElementById('chat-actions-dropdown');
+    if (dropdown) {
+        dropdown.classList.toggle('hidden');
+    }
+}
+
+function closeChatActionsMenu() {
+    const dropdown = document.getElementById('chat-actions-dropdown');
+    if (dropdown) {
+        dropdown.classList.add('hidden');
+    }
+}
+
+// Close dropdown on outside click
+document.addEventListener('click', (e) => {
+    const wrapper = document.getElementById('chat-menu-wrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        closeChatActionsMenu();
+    }
+});
+
+function triggerAiReplyFromMenu() {
+    closeChatActionsMenu();
+    triggerAiReplyForCurrent();
+}
+
+function toggleSelectModeFromMenu() {
+    closeChatActionsMenu();
+    toggleSelectMode(true);
+}
+
+function openBookingFromMenu() {
+    closeChatActionsMenu();
+    openBookCurrentContactModal();
+}
+
+function deleteChatFromMenu() {
+    closeChatActionsMenu();
+    deleteCurrentChat();
+}
 
         let currentPhone = null;
         let currentContactName = 'Customer';
@@ -79,15 +114,17 @@ window.addEventListener('resize', () => {
 
         function switchTab(tab) {
             activeTab = tab;
-            ['chats', 'testai', 'templates', 'bookings', 'webhooks'].forEach(t => {
+            ['chats', 'analytics', 'testai', 'templates', 'bookings', 'webhooks'].forEach(t => {
                 const view = document.getElementById('view-' + t);
                 const btn = document.getElementById('tab-btn-' + t);
-                if (t === tab) {
-                    view.classList.remove('hidden');
-                    btn.className = 'px-3.5 py-2 rounded-lg bg-white text-emerald-700 font-bold shadow-sm transition flex items-center space-x-1.5';
-                } else {
-                    view.classList.add('hidden');
-                    btn.className = 'px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5';
+                if (view && btn) {
+                    if (t === tab) {
+                        view.classList.remove('hidden');
+                        btn.className = 'px-3.5 py-2 rounded-lg bg-white text-emerald-700 font-bold shadow-sm transition flex items-center space-x-1.5 flex-shrink-0';
+                    } else {
+                        view.classList.add('hidden');
+                        btn.className = 'px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0';
+                    }
                 }
             });
 
@@ -109,13 +146,39 @@ window.addEventListener('resize', () => {
 
                 if (statsRes && statsRes.ok) {
                     const stats = await statsRes.json();
-                    document.getElementById('stat-total-messages').innerText = stats.total_messages || 0;
-                    document.getElementById('stat-inbound').innerText = stats.inbound_messages || 0;
-                    document.getElementById('stat-outbound').innerText = stats.outbound_messages || 0;
-                    document.getElementById('stat-contacts').innerText = stats.total_contacts || 0;
-                    document.getElementById('stat-bookings').innerText = stats.total_bookings || 0;
-                    document.getElementById('nav-bookings-count').innerText = stats.total_bookings || 0;
-                    document.getElementById('stat-engine-badge').innerText = stats.groq_configured ? stats.groq_model : 'printingtask AI';
+                    const totalMsg = stats.total_messages || 0;
+                    const inMsg = stats.inbound_messages || 0;
+                    const outMsg = stats.outbound_messages || 0;
+
+                    const totalEl = document.getElementById('stat-total-messages');
+                    const inEl = document.getElementById('stat-inbound');
+                    const outEl = document.getElementById('stat-outbound');
+                    const contactsEl = document.getElementById('stat-contacts');
+                    const bookingsEl = document.getElementById('stat-bookings');
+                    const navBookingsEl = document.getElementById('nav-bookings-count');
+                    const engineEl = document.getElementById('stat-engine-badge');
+
+                    if (totalEl) totalEl.innerText = totalMsg;
+                    if (inEl) inEl.innerText = inMsg;
+                    if (outEl) outEl.innerText = outMsg;
+                    if (contactsEl) contactsEl.innerText = stats.total_contacts || 0;
+                    if (bookingsEl) bookingsEl.innerText = stats.total_bookings || 0;
+                    if (navBookingsEl) navBookingsEl.innerText = stats.total_bookings || 0;
+                    if (engineEl) engineEl.innerText = stats.groq_configured ? stats.groq_model : 'printingtask AI';
+
+                    // Update traffic balance ratio bar
+                    if (totalMsg > 0) {
+                        const inPct = Math.round((inMsg / totalMsg) * 100);
+                        const outPct = 100 - inPct;
+                        const barIn = document.getElementById('stat-bar-inbound');
+                        const barOut = document.getElementById('stat-bar-outbound');
+                        const pctIn = document.getElementById('stat-pct-inbound');
+                        const pctOut = document.getElementById('stat-pct-outbound');
+                        if (barIn) barIn.style.width = inPct + '%';
+                        if (barOut) barOut.style.width = outPct + '%';
+                        if (pctIn) pctIn.innerText = inPct + '%';
+                        if (pctOut) pctOut.innerText = outPct + '%';
+                    }
                 }
 
                 if (convsRes && convsRes.ok) {
@@ -215,10 +278,17 @@ window.addEventListener('resize', () => {
             badge.classList.remove('hidden');
             badge.innerText = (channel || 'WHATSAPP').toUpperCase().replace('_', ' ');
 
-            document.getElementById('select-mode-btn').classList.remove('hidden');
-            document.getElementById('delete-chat-btn').classList.remove('hidden');
-            document.getElementById('book-lead-btn').classList.remove('hidden');
-            document.getElementById('bot-toggle-container').classList.remove('hidden');
+            document.getElementById('select-mode-btn')?.classList.remove('hidden');
+            document.getElementById('delete-chat-btn')?.classList.remove('hidden');
+            document.getElementById('book-lead-btn')?.classList.remove('hidden');
+            document.getElementById('bot-toggle-container')?.classList.remove('hidden');
+            document.getElementById('ai-reply-btn')?.classList.remove('hidden');
+
+            const menuBtn = document.getElementById('chat-actions-menu-btn');
+            if (menuBtn) {
+                menuBtn.classList.remove('hidden');
+                menuBtn.classList.add('flex');
+            }
 
             renderConversations(allConversations);
             showMobileChat();
@@ -457,7 +527,12 @@ window.addEventListener('resize', () => {
         function updateBotStatusPill(enabled) {
             const pill = document.getElementById('bot-status-pill');
             const checkbox = document.getElementById('contact-bot-checkbox');
+            const menuCheckbox = document.getElementById('menu-contact-bot-checkbox');
+            const menuSub = document.getElementById('menu-bot-status-sub');
+
             if (checkbox) checkbox.checked = !!enabled;
+            if (menuCheckbox) menuCheckbox.checked = !!enabled;
+
             if (pill) {
                 if (enabled) {
                     pill.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center";
@@ -465,6 +540,16 @@ window.addEventListener('resize', () => {
                 } else {
                     pill.className = "text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 flex items-center";
                     pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1"></span> AI Paused (Human Agent)`;
+                }
+            }
+
+            if (menuSub) {
+                if (enabled) {
+                    menuSub.className = "text-[10px] text-emerald-600 font-semibold";
+                    menuSub.innerText = "Bot is Active";
+                } else {
+                    menuSub.className = "text-[10px] text-amber-600 font-semibold";
+                    menuSub.innerText = "Paused for Agent";
                 }
             }
         }
@@ -1071,10 +1156,17 @@ window.addEventListener('resize', () => {
                                 <p class="text-xs text-slate-500 max-w-sm mt-1">Select a customer or type below to test chatting with the AI Support Bot.</p>
                             </div>
                         `;
-                        document.getElementById('select-mode-btn').classList.add('hidden');
-                        document.getElementById('delete-chat-btn').classList.add('hidden');
-                        document.getElementById('book-lead-btn').classList.add('hidden');
-                        document.getElementById('bot-toggle-container').classList.add('hidden');
+                        document.getElementById('select-mode-btn')?.classList.add('hidden');
+                        document.getElementById('delete-chat-btn')?.classList.add('hidden');
+                        document.getElementById('book-lead-btn')?.classList.add('hidden');
+                        document.getElementById('bot-toggle-container')?.classList.add('hidden');
+                        document.getElementById('ai-reply-btn')?.classList.add('hidden');
+                        const menuBtn = document.getElementById('chat-actions-menu-btn');
+                        if (menuBtn) {
+                            menuBtn.classList.add('hidden');
+                            menuBtn.classList.remove('flex');
+                        }
+                        closeChatActionsMenu();
                         showMobileList();
                     }
                     await fetchData(true);
