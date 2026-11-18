@@ -44,7 +44,7 @@ db.init_db()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("whatsapp_support_bot")
 
-app = FastAPI(title="printingtask • WhatsApp Support Hub & Dashboard")
+app = FastAPI(title="Growhaz • WhatsApp Support Hub & Dashboard")
 
 # Mount static files and uploaded media
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -211,12 +211,12 @@ async def handle_meta_webhook(request: Request):
                             if media_type:
                                 reply = (
                                     f"Thank you for sharing your {media_type}! 📄\n\n"
-                                    "We have received your file at **printingtask**. "
-                                    "Our team is reviewing the document quality and printing requirements. "
-                                    "If you have specific instructions (quantity, paper type, color or B&W, binding), please reply with the details here!"
+                                    "We have received your file at **Growhaz**. "
+                                    "Our team is reviewing your requirements and will update you shortly. "
+                                    "If you have specific instructions or questions, please reply here!"
                                 )
                                 latency_ms = 0.0
-                                engine_used = "printingtask Assistant"
+                                engine_used = "Growhaz Assistant"
                             else:
                                 reply, latency_ms, engine_used = get_ai_reply(user_text)
 
@@ -361,7 +361,7 @@ async def trigger_ai_reply(request: Request):
             prompt = inbounds[-1]["message"]
     
     if not prompt:
-        prompt = "Hello! How can printingtask customer support help me today?"
+        prompt = "Hello! How can Growhaz customer support help me today?"
 
     reply, latency_ms, engine_used = get_ai_reply(prompt)
 
@@ -455,7 +455,7 @@ async def send_dashboard_reply(request: Request):
         reply_body = msg_input
         latency_ms = 0.0
         engine_used = None
-        sender_name = "printingtask Support"
+        sender_name = "Growhaz Support"
         # When an agent replies directly, automatically pause AI bot for this contact so the AI does not interrupt!
         db.set_bot_enabled_for_contact(phone, False)
 
@@ -547,7 +547,7 @@ async def send_dashboard_media(
     display_msg = caption if caption else (f"📷 Photo" if media_type == "image" else f"📄 Document: {filename or 'File'}")
     msg_id = db.save_message(
         phone_number=phone,
-        sender_name="printingtask Support",
+        sender_name="Growhaz Support",
         message=display_msg,
         direction="outbound",
         channel="manual_admin",
@@ -758,7 +758,7 @@ async def serve_dashboard():
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
-    return HTMLResponse("<h1>printingtask Support Hub</h1><p>Dashboard template not found.</p>")
+    return HTMLResponse("<h1>Growhaz Support Hub</h1><p>Dashboard template not found.</p>")
 
 @app.api_route("/privacy", methods=["GET", "HEAD"], response_class=HTMLResponse)
 @app.api_route("/privacy-policy", methods=["GET", "HEAD"], response_class=HTMLResponse)

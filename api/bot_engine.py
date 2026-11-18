@@ -6,18 +6,18 @@ from groq import Groq
 
 logger = logging.getLogger("bot_engine")
 
-CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are a professional, helpful, polite, and efficient Customer Support Representative chatting with a client on WhatsApp for printingtask (a professional printing, document, and custom printing services company).
+CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are a professional, helpful, polite, and efficient Customer Support Representative chatting with a client on WhatsApp for Growhaz (a modern digital solutions and services company).
 Your goals:
-1. Greet customers warmly as the printingtask support agent and answer their questions clearly and concisely.
-2. Assist with booking appointments, consultations, service orders, and printing tasks (color/BW documents, posters, flyers, banners, business cards, binding, lamination, and custom design).
-3. Provide accurate pricing guidance, turnaround times, and order status help for printingtask.
-4. If the customer asks for a human agent or has an unresolved complex issue, assure them that a printingtask specialist is notified.
+1. Greet customers warmly as the Growhaz support agent and answer their questions clearly and concisely.
+2. Assist with booking appointments, consultations, service orders, and customer queries.
+3. Provide accurate service guidance, turnaround times, and order status help for Growhaz.
+4. If the customer asks for a human agent or has an unresolved complex issue, assure them that a Growhaz specialist is notified.
 5. Format your responses with clean, readable WhatsApp markdown (e.g. *bold*, • bullet points, and friendly emojis).
 6. Keep replies concise, conversational, and easy to read on mobile devices."""
 
 def run_smart_customer_support_fallback(user_prompt: str) -> str:
     """
-    Dedicated Customer Support Agent fallback logic for printingtask.
+    Dedicated Customer Support Agent fallback logic for Growhaz.
     Handles common customer service inquiries when offline or without API key.
     """
     p = user_prompt.lower().strip()
@@ -25,78 +25,74 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
     # Human Agent Handover Request
     if any(w in p for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]):
         return (
-            "👤 *Connecting to printingtask Support Team*\n\n"
-            "I've flagged this conversation for our printingtask team. A human specialist is reviewing your message and will respond here shortly.\n\n"
-            "Feel free to share any files or order details in the meantime!"
+            "👤 *Connecting to Growhaz Support Team*\n\n"
+            "I've flagged this conversation for our Growhaz team. A human specialist is reviewing your message and will respond here shortly.\n\n"
+            "Feel free to share any files or inquiry details in the meantime!"
         )
 
     # Bookings & Appointments
     if any(w in p for w in ["book", "appointment", "schedule", "reserve", "slot", "meeting", "consultation"]):
         return (
-            "📅 *printingtask Booking Request*\n\n"
-            "Thank you for contacting printingtask! I've logged your booking request in our system.\n\n"
+            "📅 *Growhaz Booking Request*\n\n"
+            "Thank you for contacting Growhaz! I've logged your booking request in our system.\n\n"
             "📌 *Next Steps:*\n"
             "• Please reply with your preferred date and time\n"
-            "• Specify if you need printing, consultation, or a custom task\n\n"
-            "Our printingtask team will confirm your slot right away!"
+            "• Specify the service or project details\n\n"
+            "Our Growhaz team will confirm your slot right away!"
         )
 
     # Printing & Task Services
-    if any(w in p for w in ["print", "task", "service", "document", "paper", "poster", "banner", "flyer", "card", "binding"]):
+    if any(w in p for w in ["print", "task", "service", "document", "paper", "poster", "banner", "flyer", "card", "binding", "app", "website"]):
         return (
-            "🖨️ *printingtask Document & Print Services*\n\n"
-            "We handle all custom printing and document tasks at printingtask:\n"
-            "• High-resolution Color & B/W Documents\n"
-            "• Business Cards, Flyers, Menus & Brochures\n"
-            "• Large Format Banners & Posters\n"
-            "• Spiral Binding, Lamination & Custom Finishing\n\n"
-            "👉 *How to proceed:* Send us your PDF/image file or dimensions for an instant quote!"
+            "🚀 *Growhaz Services*\n\n"
+            "We handle professional digital solutions and custom tasks at Growhaz:\n"
+            "• Web & Mobile App Development\n"
+            "• Custom Design & Digital Solutions\n"
+            "• Business Printing, Flyers, Cards & Posters\n"
+            "• Consultation & Technical Support\n\n"
+            "👉 *How to proceed:* Tell us more about what you need or share files for an instant estimate!"
         )
 
     # Pricing & Quotes
     if any(w in p for w in ["price", "cost", "rate", "quote", "how much", "charges", "estimate"]):
         return (
-            "💰 *printingtask Pricing Guide*\n\n"
-            "Here is our standard rate breakdown:\n"
-            "• *B/W Printing:* $0.05 / page\n"
-            "• *High Quality Color:* $0.25 / page\n"
-            "• *Business Cards (Set of 100):* from $15\n"
-            "• *Custom Task / Design:* Based on project specifications\n\n"
-            "Reply with your quantity or task details to get an exact quote!"
+            "💰 *Growhaz Pricing & Quotes*\n\n"
+            "We provide transparent, competitive rates for all our services.\n"
+            "Reply with your specific requirements or project scope to get an instant customized quote!"
         )
 
     # Order Status Tracking
     if any(w in p for w in ["status", "track", "order", "where is", "progress"]):
         return (
-            "📦 *printingtask Order Status Help*\n\n"
-            "Please share your **Order ID** or phone number associated with the order. Our printingtask support team will check the production status and update you immediately!"
+            "📦 *Growhaz Order & Project Status Help*\n\n"
+            "Please share your **Order ID** or registered phone number. Our Growhaz support team will check the status and update you immediately!"
         )
 
     # Payment & Invoices
     if any(w in p for w in ["pay", "payment", "invoice", "bill", "upi", "card", "link"]):
         return (
-            "💳 *printingtask Billing & Payments*\n\n"
-            "We accept credit/debit cards, UPI, and online transfers. Once your quote is finalized, we will share a secure payment link directly in this chat!"
+            "💳 *Growhaz Billing & Payments*\n\n"
+            "We accept secure payments via Cards, UPI, and Bank Transfers. We can send you a secure payment link directly in this chat!"
         )
 
     # Greetings
     if any(w in p for w in ["hi", "hello", "hey", "hola", "good morning", "good evening", "namaste", "start"]):
         return (
-            "👋 *Welcome to printingtask!*\n\n"
-            "Hello! I am your printingtask AI Assistant. How can I assist you today?\n\n"
-            "1️⃣ *Book an Appointment or Service*\n"
-            "2️⃣ *Inquire about Printing & Custom Tasks*\n"
+            "👋 *Welcome to Growhaz!*\n\n"
+            "Hello! I am your Growhaz AI Assistant. How can I assist you today?\n\n"
+            "1️⃣ *Book an Appointment or Consultation*\n"
+            "2️⃣ *Inquire about Growhaz Services*\n"
             "3️⃣ *Request a Price Quote*\n"
-            "4️⃣ *Track an Existing Order*\n"
+            "4️⃣ *Track an Existing Order / Task*\n"
             "5️⃣ *Speak with a Human Representative*\n\n"
-            "Simply reply with your query!"
+            "Simply reply with your question or option number!"
         )
 
     # General Helpful Support Response
     return (
-        f"Thank you for contacting printingtask! 😊\n\n"
+        f"Thank you for contacting Growhaz! 😊\n\n"
         f"I have received your message: \"{user_prompt}\"\n\n"
-        f"Our support desk is on standby. How else may I assist you with your booking or project today?"
+        f"Our support desk is on standby. How else may I assist you today?"
     )
 
 def generate_ai_reply(
