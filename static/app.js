@@ -285,10 +285,7 @@ function deleteChatFromMenu() {
             document.getElementById('ai-reply-btn')?.classList.remove('hidden');
 
             const menuBtn = document.getElementById('chat-actions-menu-btn');
-            if (menuBtn) {
-                menuBtn.classList.remove('hidden');
-                menuBtn.classList.add('flex');
-            }
+            if (menuBtn) menuBtn.classList.remove('hidden');
 
             renderConversations(allConversations);
             showMobileChat();
@@ -1162,10 +1159,7 @@ function deleteChatFromMenu() {
                         document.getElementById('bot-toggle-container')?.classList.add('hidden');
                         document.getElementById('ai-reply-btn')?.classList.add('hidden');
                         const menuBtn = document.getElementById('chat-actions-menu-btn');
-                        if (menuBtn) {
-                            menuBtn.classList.add('hidden');
-                            menuBtn.classList.remove('flex');
-                        }
+                        if (menuBtn) menuBtn.classList.add('hidden');
                         closeChatActionsMenu();
                         showMobileList();
                     }

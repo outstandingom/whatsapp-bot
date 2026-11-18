@@ -167,7 +167,7 @@
 
                         <!-- DESKTOP Controls (hidden on mobile, visible on md:flex) -->
                         <div class="hidden md:flex items-center space-x-2">
-                            <button id="ai-reply-btn" onclick="triggerAiReplyForCurrent()" title="Force AI to reply to latest message" class="hidden px-2.5 py-1 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition font-bold items-center space-x-1">
+                            <button id="ai-reply-btn" onclick="triggerAiReplyForCurrent()" title="Force AI to reply to latest message" class="hidden flex px-2.5 py-1 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition font-bold items-center space-x-1">
                                 <i class="fas fa-wand-magic-sparkles text-emerald-600"></i>
                                 <span>AI Reply</span>
                             </button>
@@ -182,15 +182,15 @@
                                 </span>
                             </div>
 
-                            <button id="select-mode-btn" onclick="toggleSelectMode()" title="Select messages to delete" class="hidden px-2.5 py-1 text-xs text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition font-bold items-center space-x-1">
+                            <button id="select-mode-btn" onclick="toggleSelectMode()" title="Select messages to delete" class="hidden flex px-2.5 py-1 text-xs text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition font-bold items-center space-x-1">
                                 <i class="fas fa-check-square text-slate-500"></i>
                                 <span>Select</span>
                             </button>
 
-                            <button id="book-lead-btn" onclick="openBookCurrentContactModal()" title="Convert to Booking" class="hidden px-2.5 py-1 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition font-bold items-center space-x-1">
+                            <button id="book-lead-btn" onclick="openBookCurrentContactModal()" title="Convert to Booking" class="hidden flex px-2.5 py-1 text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition font-bold items-center space-x-1">
                                 <i class="fas fa-calendar-plus mr-1"></i> Add Booking
                             </button>
-                            <button id="delete-chat-btn" onclick="deleteCurrentChat()" title="Delete entire conversation" class="hidden px-2.5 py-1 text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition font-bold items-center space-x-1">
+                            <button id="delete-chat-btn" onclick="deleteCurrentChat()" title="Delete entire conversation" class="hidden flex px-2.5 py-1 text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition font-bold items-center space-x-1">
                                 <i class="fas fa-trash text-[10px]"></i>
                                 <span>Delete Chat</span>
                             </button>
@@ -203,7 +203,7 @@
                                 type="button"
                                 onclick="toggleChatActionsMenu(event)" 
                                 title="Chat Options & Actions" 
-                                class="hidden p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition items-center justify-center flex-shrink-0"
+                                class="hidden flex md:hidden p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition items-center justify-center flex-shrink-0"
                             >
                                 <i class="fas fa-ellipsis-vertical text-base"></i>
                             </button>
