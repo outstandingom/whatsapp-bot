@@ -216,8 +216,8 @@ async def handle_meta_webhook(request: Request):
                             if media_type:
                                 reply = (
                                     f"Thank you for sharing your {media_type}! 📄\n\n"
-                                    "We have received your file at **Growhaz**. "
-                                    "Our team is reviewing your requirements and will update you shortly. "
+                                    "We have received your file at **Growhaz** (https://www.growhaz.in/). "
+                                    "Our technical team is reviewing your requirements and will update you shortly.\n\n"
                                     "If you have specific instructions or questions, please reply here!"
                                 )
                                 latency_ms = 0.0

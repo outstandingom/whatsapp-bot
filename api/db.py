@@ -113,14 +113,14 @@ def init_db(force: bool = False):
         cursor.execute("SELECT COUNT(*) as count FROM templates")
         if cursor.fetchone()["count"] == 0:
             default_templates = [
-                ("👋 Welcome Greeting", "Greeting", "Hello {{name}}! 👋 Thank you for reaching out to Growhaz Support. How can we assist you with our services today?", "/welcome"),
-                ("📅 Booking Confirmation", "Bookings", "Hi {{name}}, your appointment/booking for {{service}} on {{date_time}} with Growhaz is confirmed! Please let us know if you need to make changes.", "/confirm"),
-                ("💼 Service Quote Details", "Quotes", "Hi {{name}}, here is our estimate for your Growhaz project request:\n• Custom project scope\n• Quality guaranteed\nWould you like us to proceed?", "/quote"),
-                ("📦 Project / Order Ready", "Orders", "Great news {{name}}! 🎉 Your Growhaz service or project is ready. Please let us know if you have any questions.", "/ready"),
-                ("💳 Payment Request", "Billing", "Hi {{name}}, you can complete your Growhaz payment securely using this link: https://pay.example.com/invoice/{{phone}} . Let us know once completed!", "/pay"),
-                ("⏳ Under Review by Specialist", "Support", "Hi {{name}}, your request has been escalated to our senior Growhaz specialist. We are reviewing your details and will update you shortly.", "/review"),
-                ("⭐ Feedback & CSAT Survey", "Feedback", "Hi {{name}}, how was your Growhaz experience today? Please rate us from 1 (Poor) to 5 (Excellent) ⭐. Thank you!", "/feedback"),
-                ("👤 Human Handover", "Handover", "A human customer support specialist from Growhaz has joined this chat. One moment please while I connect you.", "/agent")
+                ("👋 Welcome Greeting", "Greeting", "Hello {{name}}! 👋 Thank you for reaching out to Growhaz (https://www.growhaz.in/). How can we assist you with our cybersecurity, app development, or blockchain solutions today?", "/welcome"),
+                ("🛡️ Security Vulnerability Scan", "Security", "Hi {{name}}, you can run automated vulnerability scans (Alpha G1/G5) on your website in under 5 minutes. Start your audit here: https://www.growhaz.in/security-tools", "/security"),
+                ("📱 Appify & Web Development", "Development", "Hi {{name}}, we build high-speed static websites, dynamic web apps, and convert websites to native Android/iOS mobile apps. Check our portfolio: https://www.growhaz.in/development", "/development"),
+                ("🔗 Blockchain Verification", "Trust", "Hi {{name}}, you can instantly verify certificates and documents on our blockchain ledger here: https://www.growhaz.in/verify", "/verify"),
+                ("💰 Pricing & Packages", "Pricing", "Hi {{name}}, here is our transparent pricing guide:\n• AlphaG1 Scan: ₹1,999 | AlphaG5: ₹4,999\n• Static Website: ₹20,000 | Dynamic: ₹60,000+\n• Details: https://www.growhaz.in/pricing", "/pricing"),
+                ("📅 Consultation Booking", "Bookings", "Hi {{name}}, your consultation with Growhaz is registered for {{service}} on {{date_time}}! Need to reschedule? Visit https://www.growhaz.in/contact", "/confirm"),
+                ("👤 Human Handover", "Handover", "A specialist from the Growhaz engineering team has joined this chat. One moment please while I connect you.", "/agent"),
+                ("⭐ Feedback & CSAT Survey", "Feedback", "Hi {{name}}, how was your Growhaz experience today? Please rate us from 1 (Poor) to 5 (Excellent) ⭐. Visit us at https://www.growhaz.in/ . Thank you!", "/feedback")
             ]
             cursor.executemany("INSERT INTO templates (title, category, content, shortcut) VALUES (?, ?, ?, ?)", default_templates)
         

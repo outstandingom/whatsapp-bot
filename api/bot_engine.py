@@ -6,19 +6,63 @@ from groq import Groq
 
 logger = logging.getLogger("bot_engine")
 
-CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are a professional, helpful, polite, and efficient Customer Support Representative chatting with a client on WhatsApp for Growhaz (a modern digital solutions and services company).
-Your goals:
-1. Greet customers warmly as the Growhaz support agent and answer their questions clearly and concisely.
-2. Assist with booking appointments, consultations, service orders, and customer queries.
-3. Provide accurate service guidance, turnaround times, and order status help for Growhaz.
-4. If the customer asks for a human agent or has an unresolved complex issue, assure them that a Growhaz specialist is notified.
-5. Format your responses with clean, readable WhatsApp markdown (e.g. *bold*, • bullet points, and friendly emojis).
-6. Keep replies concise, conversational, and easy to read on mobile devices."""
+CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are the official Customer Support & Sales AI Representative chatting with clients on WhatsApp for Growhaz (Growhaz Secure Systems).
+
+Website: https://www.growhaz.in/
+Founder & CEO: Om Uikey
+Contact Email: info.growhaz@gmail.com
+
+ABOUT GROWHAZ:
+Growhaz is a next-generation cybersecurity, trust infrastructure, and secure digital solutions company based in India, serving clients worldwide.
+
+CORE SERVICES, PRICING & LINKS:
+1. Website Security Vulnerability Scanning (Alpha G5 / Alpha G1 / Alpha G3):
+   - Fast, automated security testing (SQLi, XSS, IDOR, API security, auth bypass) completed in under 5 minutes.
+   - Pricing:
+     • AlphaG1: ₹1,999 per scan (Basic security audit for small websites)
+     • AlphaG5: ₹4,999 per scan (Advanced audit, API testing & IDOR checks — Most Popular)
+     • AlphaG3: ₹9,999 per scan (Enterprise-grade full penetration testing & attack vectors)
+   - Link: https://www.growhaz.in/security-tools
+
+2. Appify Your Website (Mobile App Conversion):
+   - Convert any website into a high-performance native Android & iOS mobile app.
+   - Features: Firebase push notifications, offline cache fallback, native navigation, and app store deployment.
+   - Link: https://www.growhaz.in/development
+
+3. Secure Web & Full-Stack Development:
+   - High-performance, SEO-optimized, and security-hardened web solutions.
+   - Pricing:
+     • Static Website: ₹20,000 (100% Lighthouse SEO score, security certified, responsive)
+     • Dynamic Web App: Starting from ₹60,000 (Full CRUD, E-commerce, CRM, admin dashboard)
+     • Custom Enterprise Systems: Tailored quotes
+   - Link: https://www.growhaz.in/development
+
+4. Blockchain Document Verification:
+   - Tamper-proof on-chain document issuance and verification for certificates, degrees, and legal contracts.
+   - Instant verification portal: https://www.growhaz.in/verify
+   - Blockchain overview: https://www.growhaz.in/blockchain
+
+5. SEO & Workflow Automation:
+   - Basic SEO (Lighthouse 100%, Core Web Vitals): ₹8,000
+   - Monthly On-Page SEO: ₹10,000/month
+   - Custom Workflow Automation: ₹8,000+
+   - Link: https://www.growhaz.in/seo
+
+6. Cybersecurity Mentorship:
+   - Practical 1-on-1 ethical hacking, web penetration testing, and secure coding mentorship.
+   - Link: https://www.growhaz.in/mentorship
+
+YOUR RESPONSE GUIDELINES:
+1. Warm, polite, professional, and helpful tone.
+2. Naturally include the exact website link (e.g. https://www.growhaz.in/...) when discussing services, pricing, or bookings so users can easily visit the site.
+3. Use clean WhatsApp formatting (*bold*, • bullet points, emojis).
+4. Keep messages mobile-friendly and concise.
+5. If someone asks for human support, reassure them that our team lead Om Uikey / support specialist will connect shortly."""
 
 def run_smart_customer_support_fallback(user_prompt: str) -> str:
     """
     Dedicated Customer Support Agent fallback logic for Growhaz.
-    Handles common customer service inquiries when offline or without API key.
+    Provides rich, accurate information and website links when AI APIs are unreachable.
     """
     p = user_prompt.lower().strip()
     
@@ -26,73 +70,98 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
     if any(w in p for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]):
         return (
             "👤 *Connecting to Growhaz Support Team*\n\n"
-            "I've flagged this conversation for our Growhaz team. A human specialist is reviewing your message and will respond here shortly.\n\n"
-            "Feel free to share any files or inquiry details in the meantime!"
+            "I've flagged this chat for our specialist team and founder Om Uikey. A human representative will review your query and reply here shortly.\n\n"
+            "🌐 *Explore Growhaz:* https://www.growhaz.in/\n"
+            "📧 *Direct Email:* info.growhaz@gmail.com"
         )
 
-    # Bookings & Appointments
+    # Security Scans (Alpha G1, G5, Penetration Testing)
+    if any(w in p for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "audit", "firewall"]):
+        return (
+            "🛡️ *Growhaz Website Security Scans*\n\n"
+            "We offer automated vulnerability scanning that discovers SQLi, XSS, IDOR, and API flaws in under 5 minutes:\n\n"
+            "• *AlphaG1 (Basic Scan):* ₹1,999 / scan\n"
+            "• *AlphaG5 (Advanced Audit):* ₹4,999 / scan (Most Popular)\n"
+            "• *AlphaG3 (Full Pentest):* ₹9,999 / scan\n\n"
+            "🔗 *Start a scan on our portal:* https://www.growhaz.in/security-tools\n"
+            "Reply with your website URL to get started!"
+        )
+
+    # Bookings & Appointments / Consultations
     if any(w in p for w in ["book", "appointment", "schedule", "reserve", "slot", "meeting", "consultation"]):
         return (
-            "📅 *Growhaz Booking Request*\n\n"
-            "Thank you for contacting Growhaz! I've logged your booking request in our system.\n\n"
-            "📌 *Next Steps:*\n"
-            "• Please reply with your preferred date and time\n"
-            "• Specify the service or project details\n\n"
-            "Our Growhaz team will confirm your slot right away!"
+            "📅 *Growhaz Consultation & Service Booking*\n\n"
+            "Thank you for reaching out to Growhaz! I've logged your consultation request.\n\n"
+            "📌 *Quick Details to Share:*\n"
+            "• Your project or website URL\n"
+            "• Preferred date & time\n"
+            "• Service needed (Security Scan, App Development, or Blockchain)\n\n"
+            "🔗 *Book directly online:* https://www.growhaz.in/contact"
         )
 
-    # Printing & Task Services
-    if any(w in p for w in ["print", "task", "service", "document", "paper", "poster", "banner", "flyer", "card", "binding", "app", "website"]):
+    # Appify / Mobile App Conversion / Web Development
+    if any(w in p for w in ["app", "appify", "apk", "android", "ios", "website", "develop", "web development", "design"]):
         return (
-            "🚀 *Growhaz Services*\n\n"
-            "We handle professional digital solutions and custom tasks at Growhaz:\n"
-            "• Web & Mobile App Development\n"
-            "• Custom Design & Digital Solutions\n"
-            "• Business Printing, Flyers, Cards & Posters\n"
-            "• Consultation & Technical Support\n\n"
-            "👉 *How to proceed:* Tell us more about what you need or share files for an instant estimate!"
+            "🚀 *Growhaz Development & Appify Services*\n\n"
+            "We build secure, high-speed digital products:\n\n"
+            "• *Appify Your Website:* Turn any site into native Android/iOS apps with push notifications & offline support.\n"
+            "• *Static Website (100% SEO):* ₹20,000\n"
+            "• *Dynamic Web Application:* From ₹60,000\n"
+            "• *Custom Enterprise Tools:* Tailored quotes\n\n"
+            "🔗 *View portfolio & packages:* https://www.growhaz.in/development"
+        )
+
+    # Blockchain Document Verification
+    if any(w in p for w in ["blockchain", "verify", "certificate", "document", "degree", "authenticity"]):
+        return (
+            "🔗 *Growhaz Blockchain Document Verification*\n\n"
+            "Tamper-proof on-chain verification for certificates, legal contracts, and academic degrees.\n\n"
+            "• Instant verification portal\n"
+            "• Cryptographic authenticity proof\n\n"
+            "🔍 *Verify a document now:* https://www.growhaz.in/verify\n"
+            "🌐 *Learn more:* https://www.growhaz.in/blockchain"
         )
 
     # Pricing & Quotes
     if any(w in p for w in ["price", "cost", "rate", "quote", "how much", "charges", "estimate"]):
         return (
-            "💰 *Growhaz Pricing & Quotes*\n\n"
-            "We provide transparent, competitive rates for all our services.\n"
-            "Reply with your specific requirements or project scope to get an instant customized quote!"
+            "💰 *Growhaz Transparent Pricing*\n\n"
+            "• *Security Scans:* AlphaG1 (₹1,999) | AlphaG5 (₹4,999) | AlphaG3 (₹9,999)\n"
+            "• *Web Development:* Static (₹20,000) | Dynamic (From ₹60,000)\n"
+            "• *SEO Services:* ₹8,000 (One-time) | ₹10,000/mo (On-page)\n"
+            "• *Workflow Automation:* From ₹8,000\n\n"
+            "🔗 *See full pricing breakdown:* https://www.growhaz.in/pricing"
         )
 
-    # Order Status Tracking
+    # Order / Project Status Tracking
     if any(w in p for w in ["status", "track", "order", "where is", "progress"]):
         return (
-            "📦 *Growhaz Order & Project Status Help*\n\n"
-            "Please share your **Order ID** or registered phone number. Our Growhaz support team will check the status and update you immediately!"
-        )
-
-    # Payment & Invoices
-    if any(w in p for w in ["pay", "payment", "invoice", "bill", "upi", "card", "link"]):
-        return (
-            "💳 *Growhaz Billing & Payments*\n\n"
-            "We accept secure payments via Cards, UPI, and Bank Transfers. We can send you a secure payment link directly in this chat!"
+            "📦 *Growhaz Project & Scan Status*\n\n"
+            "Please share your registered email or Project/Scan ID. Our team will look up the status and update you immediately!\n\n"
+            "🌐 *Check live dashboard:* https://www.growhaz.in/"
         )
 
     # Greetings
     if any(w in p for w in ["hi", "hello", "hey", "hola", "good morning", "good evening", "namaste", "start"]):
         return (
-            "👋 *Welcome to Growhaz!*\n\n"
-            "Hello! I am your Growhaz AI Assistant. How can I assist you today?\n\n"
-            "1️⃣ *Book an Appointment or Consultation*\n"
-            "2️⃣ *Inquire about Growhaz Services*\n"
-            "3️⃣ *Request a Price Quote*\n"
-            "4️⃣ *Track an Existing Order / Task*\n"
-            "5️⃣ *Speak with a Human Representative*\n\n"
+            "👋 *Welcome to Growhaz!* (https://www.growhaz.in/)\n\n"
+            "Hello! I am your Growhaz AI Assistant. How can we help you today?\n\n"
+            "1️⃣ 🛡️ *Website Security Audit & Scans* (https://www.growhaz.in/security-tools)\n"
+            "2️⃣ 📱 *Appify Website to Mobile App* (https://www.growhaz.in/development)\n"
+            "3️⃣ 💻 *Secure Web & Full-Stack Development*\n"
+            "4️⃣ 🔗 *Blockchain Document Verification* (https://www.growhaz.in/verify)\n"
+            "5️⃣ 💰 *View Pricing Plans* (https://www.growhaz.in/pricing)\n"
+            "6️⃣ 👤 *Speak with Our Human Team*\n\n"
             "Simply reply with your question or option number!"
         )
 
     # General Helpful Support Response
     return (
         f"Thank you for contacting Growhaz! 😊\n\n"
-        f"I have received your message: \"{user_prompt}\"\n\n"
-        f"Our support desk is on standby. How else may I assist you today?"
+        f"I received your message: \"{user_prompt}\"\n\n"
+        f"You can explore all our cybersecurity and development solutions at our official website:\n"
+        f"👉 https://www.growhaz.in/\n\n"
+        f"How else may I assist you today?"
     )
 
 def generate_ai_reply(
