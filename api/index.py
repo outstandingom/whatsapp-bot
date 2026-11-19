@@ -14,6 +14,7 @@ from dotenv import load_dotenv, set_key
 try:
     from api import db
     from api.bot_engine import generate_ai_reply
+    from api.dna_service import dynamic_dna
     from api.whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
@@ -25,6 +26,7 @@ try:
 except ImportError:
     import db
     from bot_engine import generate_ai_reply
+    from dna_service import dynamic_dna
     from whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
@@ -55,8 +57,8 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 SERVER_START_TIME = time.time()
 
-def get_ai_reply(prompt: str) -> tuple[str, float, str]:
-    """Helper to route AI responses: DeepSeek AI -> Groq AI -> Smart Customer Support Agent."""
+def get_ai_reply(prompt: str, customer_id: str = "") -> tuple[str, float, str]:
+    """Helper to route AI responses: DeepSeek AI -> Groq AI -> Smart Customer Support Agent with DNA Memory."""
     deepseek_key = get_env_var("DEEPSEEK_API_KEY")
     deepseek_model = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
     groq_key = get_env_var("GROQ_API_KEY")
@@ -66,7 +68,8 @@ def get_ai_reply(prompt: str) -> tuple[str, float, str]:
         deepseek_api_key=deepseek_key,
         deepseek_model=deepseek_model,
         groq_api_key=groq_key,
-        groq_model=groq_model
+        groq_model=groq_model,
+        customer_id=customer_id
     )
 
 @app.get("/api/health")
@@ -227,7 +230,13 @@ async def handle_meta_webhook(request: Request):
                                 latency_ms = 0.0
                                 engine_used = "Growhaz Assistant"
                             else:
-                                reply, latency_ms, engine_used = get_ai_reply(user_text)
+                                # Track interaction dynamically in DNA memory
+                                try:
+                                    dynamic_dna.record_interaction(customer_id=sender_id, action="received_message", target_id="chat_interaction", attributes={"snippet": user_text[:60]})
+                                except Exception as _e:
+                                    logger.debug(f"DNA record error: {_e}")
+
+                                reply, latency_ms, engine_used = get_ai_reply(user_text, customer_id=sender_id)
 
                             # Send to WhatsApp (dynamically routes to incoming phone_number_id)
                             success, send_res = send_meta_whatsapp_message(sender_id, reply, phone_id=incoming_phone_id)
@@ -302,6 +311,15 @@ async def get_messages(phone: str = Query(None), limit: int = Query(200)):
     messages = db.get_messages(phone_number=phone, limit=limit)
     bot_enabled = db.is_bot_enabled_for_contact(phone) if phone else True
     return JSONResponse({"messages": messages, "phone": phone, "bot_enabled": bot_enabled})
+
+@app.get("/api/dashboard/dna/{phone}")
+async def get_customer_dna(phone: str):
+    """Retrieves customer's dynamic DNA predictions, top preferences, and recurrence cadence."""
+    try:
+        pred = dynamic_dna.predict_customer_behavior(phone)
+        return JSONResponse({"success": True, "dna": pred})
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 @app.get("/api/dashboard/templates")
 async def get_templates():

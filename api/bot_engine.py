@@ -211,16 +211,27 @@ def generate_ai_reply(
     deepseek_api_key: str = "",
     deepseek_model: str = "deepseek-chat",
     groq_api_key: str = "",
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "llama-3.3-70b-versatile",
+    customer_id: str = ""
 ) -> tuple[str, float, str]:
     """
     Generate Customer Support response with DeepSeek AI, Groq Cloud AI, or smart fallback.
-    Priority order:
-    1. DeepSeek API (deepseek-chat / deepseek-reasoner)
-    2. Groq Cloud API (llama-3.3-70b-versatile / gpt-oss-120b)
-    3. Rule-based Smart Customer Support Agent (Offline)
+    Augmented with dynamic customer DNA memory context.
     """
     start = time.time()
+
+    # Dynamic DNA Memory retrieval (Zero hardcoded data)
+    dna_context = ""
+    if customer_id:
+        try:
+            from api.dna_service import dynamic_dna
+            dna_context = dynamic_dna.format_memory_for_ai(customer_id)
+        except Exception as e:
+            logger.debug(f"Could not load DNA memory context: {e}")
+
+    system_prompt = CUSTOMER_SUPPORT_SYSTEM_PROMPT
+    if dna_context:
+        system_prompt += "\n" + dna_context
 
     # 1. Try DeepSeek AI
     if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
@@ -233,7 +244,7 @@ def generate_ai_reply(
             payload = {
                 "model": model_to_use,
                 "messages": [
-                    {"role": "system", "content": CUSTOMER_SUPPORT_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 "temperature": 0.7,
@@ -262,7 +273,7 @@ def generate_ai_reply(
             payload = {
                 "model": model_to_use,
                 "messages": [
-                    {"role": "system", "content": CUSTOMER_SUPPORT_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 "temperature": 0.7,
