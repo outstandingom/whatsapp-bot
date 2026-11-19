@@ -171,14 +171,16 @@ def save_message(phone_number: str, message: str, direction: str = "inbound",
 def detect_and_record_booking(cursor, phone_number: str, customer_name: str, message: str):
     """Detect if incoming message has booking or order intent."""
     msg_lower = message.lower()
-    booking_keywords = ["book", "booking", "appointment", "schedule", "reserve", "slot", "meeting", "consultation", "order", "print"]
+    booking_keywords = ["book", "booking", "appointment", "schedule", "reserve", "slot", "meeting", "consultation", "order", "scan", "security", "app", "appify", "verify"]
     
     if any(k in msg_lower for k in booking_keywords):
-        service = "Customer Support & Task Order"
-        if "print" in msg_lower: service = "Printing Service Order"
-        elif "consult" in msg_lower: service = "Customer Consultation"
-        elif "order" in msg_lower: service = "Custom Order Request"
-        elif "appointment" in msg_lower or "book" in msg_lower: service = "Scheduled Appointment"
+        service = "Growhaz Service Consultation"
+        if "security" in msg_lower or "scan" in msg_lower: service = "Website Security Audit (Alpha G5)"
+        elif "app" in msg_lower or "appify" in msg_lower: service = "Appify Website to Mobile App"
+        elif "blockchain" in msg_lower or "verify" in msg_lower: service = "Blockchain Document Verification"
+        elif "web" in msg_lower or "develop" in msg_lower: service = "Secure Web Development"
+        elif "consult" in msg_lower: service = "Growhaz Technical Consultation"
+        elif "order" in msg_lower or "book" in msg_lower: service = "Growhaz Service Order"
 
         cursor.execute("""
             SELECT id FROM bookings 
