@@ -585,7 +585,7 @@ async def simulate_inbound(request: Request):
     data = await request.json()
     phone = (data.get("phone") or "+14155550199").strip()
     name = (data.get("name") or "Sarah Jenkins").strip()
-    user_msg = (data.get("message") or "Hi! I need help with a printing quote for 100 brochures.").strip()
+    user_msg = (data.get("message") or "Hi! I need help with a website security scan.").strip()
     auto_reply = data.get("auto_reply", True)
 
     in_id = db.save_message(
@@ -764,7 +764,7 @@ async def direct_chat(request: Request):
 @app.api_route("/dashboard", methods=["GET", "HEAD"], response_class=HTMLResponse)
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_dashboard():
-    """Serves the modular responsive printingtask CRM dashboard HTML."""
+    """Serves the modular responsive Growhaz CRM dashboard HTML."""
     index_path = os.path.join(TEMPLATES_DIR, "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:

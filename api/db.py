@@ -124,6 +124,9 @@ def init_db(force: bool = False):
             ]
             cursor.executemany("INSERT INTO templates (title, category, content, shortcut) VALUES (?, ?, ?, ?)", default_templates)
         
+        # Ensure any stale messages containing old company branding are wiped
+        cursor.execute("DELETE FROM messages WHERE message LIKE '%printingtask%' OR sender_name LIKE '%printingtask%' OR phone_number IN ('918103976748', '917803872080')")
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone ON messages(phone_number)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON messages(created_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone_created ON messages(phone_number, created_at DESC)")

@@ -164,7 +164,7 @@ function deleteChatFromMenu() {
                     if (contactsEl) contactsEl.innerText = stats.total_contacts || 0;
                     if (bookingsEl) bookingsEl.innerText = stats.total_bookings || 0;
                     if (navBookingsEl) navBookingsEl.innerText = stats.total_bookings || 0;
-                    if (engineEl) engineEl.innerText = stats.groq_configured ? stats.groq_model : 'printingtask AI';
+                    if (engineEl) engineEl.innerText = stats.deepseek_configured ? stats.deepseek_model : (stats.groq_configured ? stats.groq_model : 'Growhaz AI');
 
                     // Update traffic balance ratio bar
                     if (totalMsg > 0) {
@@ -702,7 +702,7 @@ function deleteChatFromMenu() {
                 .replace(/\{\{name\}\}/g, currentContactName || 'Customer')
                 .replace(/\{\{phone\}\}/g, currentPhone || '')
                 .replace(/\{\{date_time\}\}/g, 'Tomorrow at 2:00 PM')
-                .replace(/\{\{service\}\}/g, 'Printing & Task Service');
+                .replace(/\{\{service\}\}/g, 'Website Security & App Service');
             
             document.getElementById('role-agent').checked = true;
             document.getElementById('reply-input').value = replaced;
@@ -1162,7 +1162,7 @@ function deleteChatFromMenu() {
                                 <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center text-emerald-500 text-2xl mb-2.5 shadow-sm border border-slate-200">
                                     <i class="fab fa-whatsapp"></i>
                                 </div>
-                                <h3 class="text-sm font-bold text-slate-700">printingtask Support Inbox</h3>
+                                <h3 class="text-sm font-bold text-slate-700">Growhaz Support Inbox</h3>
                                 <p class="text-xs text-slate-500 max-w-sm mt-1">Select a customer or type below to test chatting with the AI Support Bot.</p>
                             </div>
                         `;
