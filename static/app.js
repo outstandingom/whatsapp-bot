@@ -114,7 +114,7 @@ function deleteChatFromMenu() {
 
         function switchTab(tab) {
             activeTab = tab;
-            ['chats', 'analytics', 'testai', 'templates', 'bookings', 'webhooks'].forEach(t => {
+            ['chats', 'analytics', 'testai', 'templates', 'bookings', 'webhooks', 'broadcast'].forEach(t => {
                 const view = document.getElementById('view-' + t);
                 const btn = document.getElementById('tab-btn-' + t);
                 if (view && btn) {
@@ -131,6 +131,11 @@ function deleteChatFromMenu() {
             if (tab === 'templates') fetchTemplates();
             if (tab === 'bookings') fetchBookings();
             if (tab === 'webhooks') fetchWebhooks();
+            if (tab === 'broadcast') {
+                populateBroadcastTemplateDropdown();
+                loadLeadsTable();
+                updateBroadcastContactsCount();
+            }
         }
 
         async function fetchData(manual = false) {
@@ -1228,6 +1233,233 @@ function deleteChatFromMenu() {
         function escapeHtml(str) {
             if (!str) return '';
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+
+        // ==================== BULK BROADCAST & LEADS CRM ====================
+
+        function parseBroadcastNumbers(rawText) {
+            if (!rawText) return [];
+            const tokens = rawText.split(/[\n,;]+/);
+            const valid = [];
+            const seen = new Set();
+            for (let t of tokens) {
+                let digits = t.replace(/[^0-9]/g, '');
+                if (digits.length === 10) {
+                    digits = '91' + digits;
+                }
+                if (digits.length >= 10 && !seen.has(digits)) {
+                    seen.add(digits);
+                    valid.push(digits);
+                }
+            }
+            return valid;
+        }
+
+        function handleBroadcastNumbersInput() {
+            const input = document.getElementById('broadcast-numbers-input');
+            const badge = document.getElementById('broadcast-number-badge');
+            if (!input || !badge) return;
+            const valid = parseBroadcastNumbers(input.value);
+            badge.innerText = `${valid.length} valid number${valid.length === 1 ? '' : 's'}`;
+            if (valid.length > 0) {
+                badge.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800';
+            } else {
+                badge.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700';
+            }
+        }
+
+        function clearBroadcastNumbers() {
+            const input = document.getElementById('broadcast-numbers-input');
+            if (input) input.value = '';
+            handleBroadcastNumbersInput();
+        }
+
+        function handleBroadcastFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                const input = document.getElementById('broadcast-numbers-input');
+                if (input) {
+                    input.value = (input.value ? input.value + '\n' : '') + content;
+                    handleBroadcastNumbersInput();
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function updateBroadcastContactsCount() {
+            const el = document.getElementById('broadcast-contacts-count');
+            if (el && allConversations) {
+                el.innerText = allConversations.length;
+            }
+        }
+
+        function loadExistingContactsToBroadcast() {
+            if (!allConversations || allConversations.length === 0) {
+                alert('No existing conversations found to import.');
+                return;
+            }
+            const existingNumbers = allConversations.map(c => c.phone_number).filter(Boolean);
+            const input = document.getElementById('broadcast-numbers-input');
+            if (input) {
+                const current = input.value ? input.value + '\n' : '';
+                input.value = current + existingNumbers.join('\n');
+                handleBroadcastNumbersInput();
+            }
+        }
+
+        function populateBroadcastTemplateDropdown() {
+            const select = document.getElementById('broadcast-template-select');
+            if (!select) return;
+            select.innerHTML = '<option value="">-- Choose Template --</option>' +
+                allTemplates.map(t => `<option value="${escapeHtml(t.content)}">${escapeHtml(t.title)}</option>`).join('');
+        }
+
+        function insertBroadcastTemplate() {
+            const select = document.getElementById('broadcast-template-select');
+            const input = document.getElementById('broadcast-message-input');
+            if (select && input && select.value) {
+                input.value = select.value;
+            }
+        }
+
+        async function startBulkBroadcast() {
+            const numInput = document.getElementById('broadcast-numbers-input');
+            const msgInput = document.getElementById('broadcast-message-input');
+            const sendMeta = document.getElementById('broadcast-send-meta').checked;
+            const saveLeads = document.getElementById('broadcast-save-leads').checked;
+            const btn = document.getElementById('broadcast-send-btn');
+            const statusBadge = document.getElementById('broadcast-status-badge');
+            const progressBar = document.getElementById('broadcast-progress-bar');
+            const statTotal = document.getElementById('broadcast-stat-total');
+            const statSent = document.getElementById('broadcast-stat-sent');
+            const statFailed = document.getElementById('broadcast-stat-failed');
+            const logBox = document.getElementById('broadcast-log-box');
+
+            const validNumbers = parseBroadcastNumbers(numInput.value);
+            const message = (msgInput.value || '').trim();
+
+            if (validNumbers.length === 0) {
+                alert('Please enter at least one valid 10+ digit phone number.');
+                return;
+            }
+            if (!message) {
+                alert('Please write a message before broadcasting.');
+                return;
+            }
+
+            const confirmMsg = `Are you sure you want to send this message to ${validNumbers.length} recipients${sendMeta ? ' via official Meta WhatsApp' : ' (simulated)'}?`;
+            if (!confirm(confirmMsg)) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Sending Broadcast...';
+            statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800';
+            statusBadge.innerText = 'Broadcasting...';
+            progressBar.style.width = '20%';
+            logBox.innerHTML = `<div class="text-indigo-600 font-bold">🚀 Starting broadcast to ${validNumbers.length} recipients...</div>`;
+
+            try {
+                const res = await fetch('/api/dashboard/broadcast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone_numbers: validNumbers,
+                        message: message,
+                        send_via_meta: sendMeta,
+                        add_as_leads: saveLeads,
+                        lead_source: 'Bulk Broadcast'
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to complete broadcast');
+                }
+
+                statTotal.innerText = data.total;
+                statSent.innerText = data.sent;
+                statFailed.innerText = data.failed;
+                progressBar.style.width = '100%';
+
+                if (data.failed > 0) {
+                    statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800';
+                    statusBadge.innerText = `Completed with ${data.failed} fails`;
+                } else {
+                    statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800';
+                    statusBadge.innerText = 'All Sent Successfully!';
+                }
+
+                let logsHtml = `<div class="text-emerald-600 font-bold">✅ Completed: ${data.sent} sent, ${data.failed} failed.</div>`;
+                data.results.forEach(r => {
+                    const icon = r.status === 'sent' || r.status === 'simulated' ? '✅' : '❌';
+                    const color = r.status === 'sent' || r.status === 'simulated' ? 'text-slate-700' : 'text-rose-600 font-bold';
+                    logsHtml += `<div class="${color}">${icon} +${r.phone}: ${r.status}${r.error ? ` (${r.error})` : ''}</div>`;
+                });
+                logBox.innerHTML = logsHtml;
+
+                // Refresh Leads and Conversations
+                loadLeadsTable();
+                fetchData(true);
+
+            } catch (err) {
+                statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800';
+                statusBadge.innerText = 'Error';
+                logBox.innerHTML += `<div class="text-rose-600 font-bold">❌ Error: ${err.message}</div>`;
+                alert('Broadcast failed: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Bulk Broadcast';
+            }
+        }
+
+        async function loadLeadsTable() {
+            const tbody = document.getElementById('leads-table-body');
+            const badge = document.getElementById('leads-count-badge');
+            if (!tbody) return;
+
+            try {
+                const res = await fetch('/api/dashboard/leads');
+                const data = await res.json();
+                const leads = data.leads || [];
+
+                if (badge) badge.innerText = `${leads.length} Lead${leads.length === 1 ? '' : 's'}`;
+
+                if (leads.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-slate-400 italic">No leads recorded yet.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = leads.map(l => `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="p-2 font-mono font-bold text-slate-800">+${escapeHtml(l.phone_number)}</td>
+                        <td class="p-2">
+                            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${l.status === 'Contacted' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-700'}">${escapeHtml(l.status || 'New')}</span>
+                        </td>
+                        <td class="p-2 text-right space-x-1">
+                            <button onclick="selectChat('${l.phone_number}', '${escapeHtml(l.name || 'Lead')}'); switchTab('chats');" class="px-2 py-1 rounded bg-emerald-50 text-emerald-700 font-bold hover:bg-emerald-600 hover:text-white transition text-[10px]" title="Open Chat">
+                                <i class="fas fa-comment"></i>
+                            </button>
+                            <button onclick="deleteLeadItem(${l.id})" class="text-slate-300 hover:text-rose-500 p-1 transition text-[10px]" title="Delete Lead">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error('Error loading leads:', err);
+            }
+        }
+
+        async function deleteLeadItem(id) {
+            if (!confirm('Delete this lead?')) return;
+            try {
+                const res = await fetch(`/api/dashboard/leads/${id}`, { method: 'DELETE' });
+                if (res.ok) loadLeadsTable();
+            } catch (e) {
+                console.error(e);
+            }
         }
 
         // Initialize & Auto Poll every 3 seconds

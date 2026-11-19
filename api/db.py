@@ -109,6 +109,20 @@ def init_db(force: bool = False):
             )
         """)
 
+        # Leads & CRM Prospects Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS leads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone_number TEXT NOT NULL UNIQUE,
+                name TEXT DEFAULT 'Lead',
+                source TEXT DEFAULT 'Manual Import',
+                status TEXT DEFAULT 'New', -- 'New', 'Contacted', 'Interested', 'Converted', 'Closed'
+                notes TEXT DEFAULT '',
+                last_messaged_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Seed default support templates if empty
         cursor.execute("SELECT COUNT(*) as count FROM templates")
         if cursor.fetchone()["count"] == 0:
@@ -540,3 +554,94 @@ def delete_contact(phone_number: str):
     except Exception as e:
         print(f"[DB] Error deleting contact: {e}")
         return False
+
+# ==================== LEADS MANAGEMENT ====================
+
+def add_or_update_lead(phone_number: str, name: str = "Lead", source: str = "Manual Import", status: str = "New", notes: str = "") -> int:
+    """Insert a new lead or update an existing lead by phone number."""
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        clean_phone = "".join(c for c in phone_number if c.isdigit())
+        if not clean_phone:
+            conn.close()
+            return 0
+        
+        cursor.execute("""
+            INSERT INTO leads (phone_number, name, source, status, notes)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(phone_number) DO UPDATE SET
+                name = CASE WHEN excluded.name != 'Lead' AND excluded.name != '' THEN excluded.name ELSE leads.name END,
+                source = CASE WHEN excluded.source != '' THEN excluded.source ELSE leads.source END,
+                notes = CASE WHEN excluded.notes != '' THEN excluded.notes ELSE leads.notes END
+        """, (clean_phone, name or "Lead", source or "Manual Import", status or "New", notes or ""))
+        
+        lead_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return lead_id or 1
+    except Exception as e:
+        print(f"[DB] Error adding lead: {e}")
+        return 0
+
+def record_lead_messaged(phone_number: str, status: str = "Contacted"):
+    """Update last messaged timestamp and status for a lead."""
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        clean_phone = "".join(c for c in phone_number if c.isdigit())
+        cursor.execute("""
+            UPDATE leads 
+            SET last_messaged_at = CURRENT_TIMESTAMP,
+                status = ?
+            WHERE phone_number = ?
+        """, (status, clean_phone))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[DB] Error recording lead messaged: {e}")
+
+def get_leads() -> list:
+    """Retrieve all leads ordered by newest first."""
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM leads ORDER BY id DESC")
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return rows
+    except Exception as e:
+        print(f"[DB] Error fetching leads: {e}")
+        return []
+
+def delete_lead(lead_id: int) -> bool:
+    """Delete a lead by ID."""
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM leads WHERE id = ?", (int(lead_id),))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB] Error deleting lead: {e}")
+        return False
+
+def update_lead_status(lead_id: int, status: str) -> bool:
+    """Update the status of a lead."""
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE leads SET status = ? WHERE id = ?", (status, int(lead_id)))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB] Error updating lead status: {e}")
+        return False
+

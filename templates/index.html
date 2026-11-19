@@ -158,6 +158,9 @@
                     <button type="button" onclick="mobileNavGo('webhooks')" data-mnav="webhooks" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-network-wired text-purple-500 w-4 text-center"></i><span>Webhooks</span>
                     </button>
+                    <button type="button" onclick="mobileNavGo('broadcast')" data-mnav="broadcast" class="mnav-item w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
+                        <i class="fas fa-bullhorn text-indigo-500 w-4 text-center"></i><span>Bulk Broadcast & Leads</span>
+                    </button>
                     <div class="border-t border-slate-100 my-1"></div>
                     <button type="button" onclick="mobileNavSettings()" class="w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-gear text-slate-500 w-4 text-center"></i><span>Settings &amp; API Keys</span>
@@ -204,6 +207,9 @@
             </button>
             <button onclick="switchTab('webhooks')" id="tab-btn-webhooks" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
                 <i class="fas fa-network-wired text-purple-500"></i><span>Webhooks</span>
+            </button>
+            <button onclick="switchTab('broadcast')" id="tab-btn-broadcast" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
+                <i class="fas fa-bullhorn text-indigo-500"></i><span>Bulk Broadcast</span>
             </button>
             <button onclick="openSettingsModal()" class="px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0">
                 <i class="fas fa-gear text-slate-500"></i><span>Settings</span>
@@ -679,6 +685,158 @@
             </div>
             <div id="webhook-logs-container" class="flex-1 overflow-y-auto space-y-2 text-xs">
                 <div class="p-8 text-center text-slate-400">Loading webhook events...</div>
+            </div>
+        </div>
+
+        <!-- ================= TAB 7: BULK BROADCAST & LEADS ================= -->
+        <div id="view-broadcast" class="hidden bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-sm flex flex-col space-y-6 flex-1 min-h-0 overflow-y-auto">
+            <!-- Header -->
+            <div class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200">
+                <div>
+                    <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
+                        <i class="fas fa-bullhorn text-indigo-600"></i><span>Bulk Broadcast & Lead Messaging</span>
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Send custom announcements, offers, or notifications to multiple phone numbers at once</p>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button type="button" onclick="loadExistingContactsToBroadcast()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center space-x-1.5">
+                        <i class="fas fa-users text-slate-500"></i><span>Import Existing Chats (<span id="broadcast-contacts-count">0</span>)</span>
+                    </button>
+                    <button type="button" onclick="loadLeadsTable()" class="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition flex items-center space-x-1.5">
+                        <i class="fas fa-rotate text-indigo-500"></i><span>Refresh Leads</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Two-column grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <!-- LEFT COLUMN: Input Numbers & Message (7 cols) -->
+                <div class="lg:col-span-7 flex flex-col space-y-4">
+                    <!-- Numbers Input Card -->
+                    <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <label class="text-xs font-extrabold text-slate-800 flex items-center space-x-1.5">
+                                <i class="fas fa-phone text-emerald-600"></i>
+                                <span>Recipients Phone Numbers</span>
+                            </label>
+                            <span id="broadcast-number-badge" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700">0 valid numbers</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500">Paste numbers separated by newlines or commas (e.g. 918103976748 or +91 98765 43210). 10-digit numbers auto-prefix with 91.</p>
+                        <textarea id="broadcast-numbers-input" oninput="handleBroadcastNumbersInput()" rows="4" placeholder="918103976748&#10;917803872080&#10;+91 98765 43210" class="w-full text-xs font-mono p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white resize-y"></textarea>
+                        
+                        <div class="flex items-center justify-between pt-1 text-[11px]">
+                            <label class="cursor-pointer text-indigo-600 hover:text-indigo-800 font-semibold flex items-center space-x-1">
+                                <i class="fas fa-file-import"></i><span>Upload CSV / TXT list</span>
+                                <input type="file" id="broadcast-file-input" accept=".csv,.txt" onchange="handleBroadcastFileUpload(event)" class="hidden">
+                            </label>
+                            <button type="button" onclick="clearBroadcastNumbers()" class="text-slate-400 hover:text-red-500 font-semibold transition">Clear Numbers</button>
+                        </div>
+                    </div>
+
+                    <!-- Message Composer Card -->
+                    <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <label class="text-xs font-extrabold text-slate-800 flex items-center space-x-1.5">
+                                <i class="fas fa-comment-dots text-indigo-600"></i>
+                                <span>Broadcast Message</span>
+                            </label>
+                            <!-- Quick Template Selector -->
+                            <div class="flex items-center space-x-1.5">
+                                <span class="text-[11px] text-slate-400 font-semibold">Template:</span>
+                                <select id="broadcast-template-select" onchange="insertBroadcastTemplate()" class="text-xs bg-white border border-slate-300 rounded-lg px-2 py-1 font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                    <option value="">-- Choose Template --</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <textarea id="broadcast-message-input" rows="5" placeholder="Type your broadcast message here...&#10;&#10;Tip: To keep it natural, avoid spamming links on every turn! Send website links only when users ask." class="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white resize-y"></textarea>
+
+                        <!-- Controls & Options -->
+                        <div class="space-y-3 pt-1 text-xs">
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <label class="flex items-center space-x-2 cursor-pointer font-bold text-slate-700">
+                                    <input type="checkbox" id="broadcast-send-meta" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4">
+                                    <span>Send via Official Meta WhatsApp Cloud API</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer font-semibold text-slate-600">
+                                    <input type="checkbox" id="broadcast-save-leads" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4">
+                                    <span>Save recipients as Leads CRM</span>
+                                </label>
+                            </div>
+
+                            <button type="button" id="broadcast-send-btn" onclick="startBulkBroadcast()" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-700 hover:to-emerald-700 text-white font-extrabold text-sm shadow-md shadow-indigo-500/20 transition flex items-center justify-center space-x-2">
+                                <i class="fas fa-paper-plane"></i>
+                                <span>Send Bulk Broadcast</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT COLUMN: Live Execution Status & Leads Directory (5 cols) -->
+                <div class="lg:col-span-5 flex flex-col space-y-4">
+                    <!-- Progress & Stats Card -->
+                    <div id="broadcast-status-card" class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-xs font-extrabold text-slate-800">Broadcast Execution</h3>
+                            <span id="broadcast-status-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600">Idle</span>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                            <div id="broadcast-progress-bar" class="bg-indigo-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+
+                        <!-- Mini stat pills -->
+                        <div class="grid grid-cols-3 gap-2 text-center">
+                            <div class="bg-white p-2 rounded-xl border border-slate-200">
+                                <span class="block text-[10px] font-bold text-slate-400">Total</span>
+                                <span id="broadcast-stat-total" class="font-extrabold text-sm text-slate-800">0</span>
+                            </div>
+                            <div class="bg-white p-2 rounded-xl border border-slate-200">
+                                <span class="block text-[10px] font-bold text-emerald-500">Sent</span>
+                                <span id="broadcast-stat-sent" class="font-extrabold text-sm text-emerald-600">0</span>
+                            </div>
+                            <div class="bg-white p-2 rounded-xl border border-slate-200">
+                                <span class="block text-[10px] font-bold text-rose-500">Failed</span>
+                                <span id="broadcast-stat-failed" class="font-extrabold text-sm text-rose-600">0</span>
+                            </div>
+                        </div>
+
+                        <!-- Live Log Box -->
+                        <div id="broadcast-log-box" class="h-32 overflow-y-auto bg-white rounded-xl border border-slate-200 p-2.5 text-[11px] font-mono text-slate-600 space-y-1">
+                            <div class="text-slate-400 italic text-center py-4">No broadcast sent yet. Add numbers above to start.</div>
+                        </div>
+                    </div>
+
+                    <!-- Leads List Card -->
+                    <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 flex-1 flex flex-col min-h-[260px]">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-xs font-extrabold text-slate-800 flex items-center space-x-1.5">
+                                <i class="fas fa-address-book text-indigo-600"></i>
+                                <span>Recent Leads CRM</span>
+                            </h3>
+                            <span id="leads-count-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700">0 Leads</span>
+                        </div>
+
+                        <!-- Leads Table Container -->
+                        <div class="flex-1 overflow-y-auto bg-white rounded-xl border border-slate-200 max-h-64">
+                            <table class="w-full text-left text-[11px]">
+                                <thead class="bg-slate-50 border-b border-slate-200 sticky top-0 text-slate-400 font-bold uppercase text-[9px]">
+                                    <tr>
+                                        <th class="p-2">Phone</th>
+                                        <th class="p-2">Status</th>
+                                        <th class="p-2 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="leads-table-body" class="divide-y divide-slate-100">
+                                    <tr>
+                                        <td colspan="3" class="p-4 text-center text-slate-400 italic">No leads recorded yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 

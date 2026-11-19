@@ -6,189 +6,204 @@ from groq import Groq
 
 logger = logging.getLogger("bot_engine")
 
-CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are the official Customer Support & Sales AI Representative chatting with clients on WhatsApp for Growhaz (Growhaz Secure Systems).
+CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are the official Customer Support Representative chatting with clients on WhatsApp for Growhaz (Growhaz Secure Systems).
 
-Website: https://www.growhaz.in/
+About Growhaz:
+Growhaz is a next-generation cybersecurity, trust infrastructure, and digital solutions company based in India.
 Founder & CEO: Om Uikey
-Contact Email: info.growhaz@gmail.com
+Official Website: https://www.growhaz.in/
+Email: info.growhaz@gmail.com
 
-ABOUT GROWHAZ:
-Growhaz is a next-generation cybersecurity, trust infrastructure, and secure digital solutions company based in India, serving clients worldwide.
-
-CORE SERVICES, PRICING & LINKS:
-1. Website Security Vulnerability Scanning (Alpha G5 / Alpha G1 / Alpha G3):
-   - Fast, automated security testing (SQLi, XSS, IDOR, API security, auth bypass) completed in under 5 minutes.
+CORE SERVICES & PRICING:
+1. Website Security Vulnerability Scanning (Alpha G1 / Alpha G5 / Alpha G3):
+   - Automated security testing discovering SQLi, XSS, IDOR, API vulnerabilities in under 5 minutes.
    - Pricing:
      • AlphaG1: ₹1,999 per scan (Basic security audit for small websites)
      • AlphaG5: ₹4,999 per scan (Advanced audit, API testing & IDOR checks — Most Popular)
-     • AlphaG3: ₹9,999 per scan (Enterprise-grade full penetration testing & attack vectors)
-   - Link: https://www.growhaz.in/security-tools
+     • AlphaG3: ₹9,999 per scan (Enterprise-grade full penetration testing)
+   - Portal Link (ONLY if user specifically asks for website/link/scan portal): https://www.growhaz.in/security-tools
 
 2. Appify Your Website (Mobile App Conversion):
-   - Convert any website into a high-performance native Android & iOS mobile app.
-   - Features: Firebase push notifications, offline cache fallback, native navigation, and app store deployment.
-   - Link: https://www.growhaz.in/development
+   - Convert any website or web app into native Android & iOS mobile apps with push notifications and offline mode.
+   - Link (ONLY if user asks for website/link): https://www.growhaz.in/development
 
 3. Secure Web & Full-Stack Development:
-   - High-performance, SEO-optimized, and security-hardened web solutions.
+   - Ultra-fast, SEO-optimized, security-hardened websites and custom web apps.
    - Pricing:
-     • Static Website: ₹20,000 (100% Lighthouse SEO score, security certified, responsive)
-     • Dynamic Web App: Starting from ₹60,000 (Full CRUD, E-commerce, CRM, admin dashboard)
+     • Static Website: ₹20,000 (100% Lighthouse SEO score, security certified)
+     • Dynamic Web App: Starting from ₹60,000 (CRUD, E-commerce, CRM, admin dashboard)
      • Custom Enterprise Systems: Tailored quotes
-   - Link: https://www.growhaz.in/development
+   - Link (ONLY if user asks for website/link): https://www.growhaz.in/development
 
 4. Blockchain Document Verification:
-   - Tamper-proof on-chain document issuance and verification for certificates, degrees, and legal contracts.
-   - Instant verification portal: https://www.growhaz.in/verify
-   - Blockchain overview: https://www.growhaz.in/blockchain
+   - Tamper-proof on-chain verification for degrees, certificates, and legal contracts.
+   - Portal Link (ONLY if user asks for website/link): https://www.growhaz.in/verify
 
 5. SEO & Workflow Automation:
-   - Basic SEO (Lighthouse 100%, Core Web Vitals): ₹8,000
-   - Monthly On-Page SEO: ₹10,000/month
-   - Custom Workflow Automation: ₹8,000+
-   - Link: https://www.growhaz.in/seo
+   - Basic SEO: ₹8,000 | Monthly On-Page SEO: ₹10,000/month | Workflow Automation: From ₹8,000
+   - Link (ONLY if user asks for website/link): https://www.growhaz.in/seo
 
-6. Cybersecurity Mentorship:
-   - Practical 1-on-1 ethical hacking, web penetration testing, and secure coding mentorship.
-   - Link: https://www.growhaz.in/mentorship
-
-YOUR RESPONSE GUIDELINES:
-1. Warm, polite, professional, and helpful tone.
-2. Naturally include the exact website link (e.g. https://www.growhaz.in/...) when discussing services, pricing, or bookings so users can easily visit the site.
-3. Use clean WhatsApp formatting (*bold*, • bullet points, emojis).
-4. Keep messages mobile-friendly and concise.
-5. If someone asks for human support, reassure them that our team lead Om Uikey / support specialist will connect shortly."""
+CRITICAL CONVERSATIONAL & LINK RULES:
+1. HUMAN TONE: Talk naturally, warmly, and helpfully like a real human customer support executive on WhatsApp. Do NOT sound like an automated robot.
+2. STRICT LINK RULE (NEVER SPAM LINKS):
+   - DO NOT include website links or URLs in greetings or general conversation.
+   - DO NOT attach links to every service item.
+   - ONLY provide a link when the user explicitly asks for a link, website URL, portal, online scan link, or where to visit online.
+3. WHEN ASKED FOR SERVICES (e.g. "what are your services", "what do you do", "list services"):
+   - List the 5 core areas cleanly with bullet points or numbers in a friendly human tone.
+   - Do NOT dump URLs under each service.
+   - Ask them warmly which one they'd like more details on.
+4. GREETINGS (e.g. "hi", "hello", "hey"):
+   - Keep it short, warm, and natural: "Hey there! 👋 Welcome to Growhaz. How can I help you today?" (NO links).
+5. FORMATTING: Use clean WhatsApp formatting (*bold*, • bullets, friendly emojis). Keep messages concise and easy to read on mobile.
+6. HUMAN HANDOVER: If someone asks to speak to a person or founder Om Uikey, warmly assure them that a human specialist will reply directly shortly.
+"""
 
 def run_smart_customer_support_fallback(user_prompt: str) -> str:
     """
-    Dedicated Customer Support Agent fallback logic for Growhaz.
-    Provides rich, accurate information and website links when AI APIs are unreachable.
+    Dedicated Human-like Customer Support Agent fallback for Growhaz.
+    Provides warm, conversational answers and only provides links when explicitly requested.
     """
     p = user_prompt.lower().strip()
-    
-    # Human Agent Handover Request
+    wants_link = any(w in p for w in ["link", "url", "website", "portal", "site", "webpage", "online", "where can i", "send link", "visit"])
+
+    # 1. Human Handover Request
     if any(w in p for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]):
+        res = (
+            "👤 *Connecting you with our team*\n\n"
+            "I've flagged this conversation for our founder Om Uikey and our support team. "
+            "A specialist will reply directly here on WhatsApp shortly!"
+        )
+        if wants_link:
+            res += "\n\n🌐 You can also reach us via email at info.growhaz@gmail.com or visit https://www.growhaz.in/"
+        return res
+
+    # 2. Greetings
+    if any(p == w or p.startswith(w + " ") or p.endswith(" " + w) for w in ["hi", "hello", "hey", "hola", "namaste", "good morning", "good evening", "good afternoon", "start"]):
         return (
-            "👤 *Connecting to Growhaz Support Team*\n\n"
-            "I've flagged this chat for our specialist team and founder Om Uikey. A human representative will review your query and reply here shortly.\n\n"
-            "🌐 *Explore Growhaz:* https://www.growhaz.in/\n"
-            "📧 *Direct Email:* info.growhaz@gmail.com"
+            "Hey there! 👋 Welcome to Growhaz.\n\n"
+            "How can I help you today? Feel free to ask about our website security scanning, mobile app conversion, web development, or blockchain services!"
         )
 
-    # All Services / What do you offer / List of solutions
+    # 3. Services / What do you offer / List of solutions
     if any(w in p for w in ["service", "services", "provide", "providing", "offer", "offering", "solution", "solutions", "what do you do", "what can you do", "list"]):
+        if wants_link:
+            return (
+                "Here are our official service portals:\n\n"
+                "• Security Tools & Scans: https://www.growhaz.in/security-tools\n"
+                "• Appify & Web Development: https://www.growhaz.in/development\n"
+                "• Blockchain Verification: https://www.growhaz.in/verify\n"
+                "• SEO & Automation: https://www.growhaz.in/seo\n"
+                "• Full Pricing: https://www.growhaz.in/pricing\n\n"
+                "Let me know if you need help with any specific one!"
+            )
         return (
-            "🚀 *Growhaz Official Services & Solutions*\n\n"
-            "We provide cutting-edge cybersecurity, trust infrastructure, and secure development:\n\n"
+            "Here is what we do at Growhaz:\n\n"
             "1️⃣ 🛡️ *Website Security Vulnerability Scanning*\n"
-            "• Automated Alpha G1/G5/G3 scanners discovering SQLi, XSS, IDOR, API vulnerabilities in under 5 minutes.\n"
-            "🔗 https://www.growhaz.in/security-tools\n\n"
+            "Fast, automated audits (Alpha G1/G5/G3) that scan your website for SQLi, XSS, IDOR, and API security flaws in under 5 minutes.\n\n"
             "2️⃣ 📱 *Appify Your Website (Mobile App Conversion)*\n"
-            "• Convert any web app or site into native Android & iOS mobile apps with Push Notifications & Offline Support.\n"
-            "🔗 https://www.growhaz.in/development\n\n"
+            "We convert any website or web app into high-performance native Android & iOS mobile apps with push notifications and offline mode.\n\n"
             "3️⃣ 💻 *Secure Web & Full-Stack Development*\n"
-            "• High-speed static websites (100% Lighthouse SEO) & dynamic CRUD/CRM/E-commerce web apps.\n"
-            "🔗 https://www.growhaz.in/development\n\n"
+            "Fast, SEO-optimized static websites (100% Lighthouse score) and custom full-stack dynamic web applications.\n\n"
             "4️⃣ 🔗 *Blockchain Document Verification*\n"
-            "• Tamper-proof on-chain verification for degrees, certificates, and legal contracts.\n"
-            "🔗 https://www.growhaz.in/verify\n\n"
-            "5️⃣ 📈 *SEO & Automation*\n"
-            "• Core Web Vitals optimization and automated business workflows.\n"
-            "🔗 https://www.growhaz.in/seo\n\n"
-            "💰 *Check all pricing:* https://www.growhaz.in/pricing\n"
-            "Reply with any service or option number to get started!"
+            "Tamper-proof on-chain verification for degrees, certificates, and legal contracts.\n\n"
+            "5️⃣ 📈 *SEO & Workflow Automation*\n"
+            "Core Web Vitals optimization and tailored business automation.\n\n"
+            "Which of these would you like to know more about? Just let me know!"
         )
 
-    # Security Scans (Alpha G1, G5, Penetration Testing)
+    # 4. Security Scans (Alpha G1, G5, Pentest)
     if any(w in p for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "audit", "firewall"]):
+        if wants_link:
+            return (
+                "You can launch a security vulnerability scan directly on our portal here: https://www.growhaz.in/security-tools\n\n"
+                "Let me know if you need any assistance choosing the right scan tier!"
+            )
         return (
             "🛡️ *Growhaz Website Security Scans*\n\n"
             "We offer automated vulnerability scanning that discovers SQLi, XSS, IDOR, and API flaws in under 5 minutes:\n\n"
-            "• *AlphaG1 (Basic Scan):* ₹1,999 / scan\n"
-            "• *AlphaG5 (Advanced Audit):* ₹4,999 / scan (Most Popular)\n"
-            "• *AlphaG3 (Full Pentest):* ₹9,999 / scan\n\n"
-            "🔗 *Start a scan on our portal:* https://www.growhaz.in/security-tools\n"
-            "Reply with your website URL to get started!"
+            "• *AlphaG1 (Basic Audit):* ₹1,999 per scan\n"
+            "• *AlphaG5 (Advanced Audit - Most Popular):* ₹4,999 per scan\n"
+            "• *AlphaG3 (Full Pentest):* ₹9,999 per scan\n\n"
+            "Would you like us to run a scan on your website? Just send me your website URL!"
         )
 
-    # Bookings & Appointments / Consultations
-    if any(w in p for w in ["book", "appointment", "schedule", "reserve", "slot", "meeting", "consultation"]):
-        return (
-            "📅 *Growhaz Consultation & Service Booking*\n\n"
-            "Thank you for reaching out to Growhaz! I've logged your consultation request.\n\n"
-            "📌 *Quick Details to Share:*\n"
-            "• Your project or website URL\n"
-            "• Preferred date & time\n"
-            "• Service needed (Security Scan, App Development, or Blockchain)\n\n"
-            "🔗 *Book directly online:* https://www.growhaz.in/contact"
-        )
-
-    # Appify / Mobile App Conversion / Web Development
+    # 5. Appify / Mobile App Conversion / Web Development
     if any(w in p for w in ["app", "appify", "apk", "android", "ios", "website", "develop", "web development", "design"]):
+        if wants_link:
+            return (
+                "You can explore our development packages and mobile app conversion here: https://www.growhaz.in/development"
+            )
         return (
             "🚀 *Growhaz Development & Appify Services*\n\n"
-            "We build secure, high-speed digital products:\n\n"
-            "• *Appify Your Website:* Turn any site into native Android/iOS apps with push notifications & offline support.\n"
+            "Here's what we offer:\n"
+            "• *Appify:* Convert any website into native Android & iOS mobile apps with push notifications and offline cache.\n"
             "• *Static Website (100% SEO):* ₹20,000\n"
-            "• *Dynamic Web Application:* From ₹60,000\n"
-            "• *Custom Enterprise Tools:* Tailored quotes\n\n"
-            "🔗 *View portfolio & packages:* https://www.growhaz.in/development"
+            "• *Dynamic Web Application:* Starting from ₹60,000\n\n"
+            "Tell me a little about your project or share your website URL, and we can discuss the best approach!"
         )
 
-    # Blockchain Document Verification
+    # 6. Blockchain Document Verification
     if any(w in p for w in ["blockchain", "verify", "certificate", "document", "degree", "authenticity"]):
+        if wants_link:
+            return (
+                "You can verify documents on our blockchain portal here: https://www.growhaz.in/verify"
+            )
         return (
             "🔗 *Growhaz Blockchain Document Verification*\n\n"
-            "Tamper-proof on-chain verification for certificates, legal contracts, and academic degrees.\n\n"
-            "• Instant verification portal\n"
-            "• Cryptographic authenticity proof\n\n"
-            "🔍 *Verify a document now:* https://www.growhaz.in/verify\n"
-            "🌐 *Learn more:* https://www.growhaz.in/blockchain"
+            "We provide tamper-proof on-chain verification for certificates, legal contracts, and academic degrees with cryptographic proof.\n\n"
+            "Would you like to verify a document or integrate on-chain verification for your organization?"
         )
 
-    # Pricing & Quotes
+    # 7. Pricing & Quotes
     if any(w in p for w in ["price", "cost", "rate", "quote", "how much", "charges", "estimate", "pricing"]):
+        if wants_link:
+            return (
+                "Here is our complete online pricing breakdown: https://www.growhaz.in/pricing"
+            )
         return (
-            "💰 *Growhaz Transparent Pricing*\n\n"
+            "💰 *Growhaz Pricing Overview*\n\n"
             "• *Security Scans:* AlphaG1 (₹1,999) | AlphaG5 (₹4,999) | AlphaG3 (₹9,999)\n"
             "• *Web Development:* Static (₹20,000) | Dynamic (From ₹60,000)\n"
-            "• *SEO Services:* ₹8,000 (One-time) | ₹10,000/mo (On-page)\n"
+            "• *SEO:* ₹8,000 one-time | ₹10,000/mo ongoing\n"
             "• *Workflow Automation:* From ₹8,000\n\n"
-            "🔗 *See full pricing breakdown:* https://www.growhaz.in/pricing"
+            "Would you like a custom quote for your specific needs? Just let me know what you're looking for!"
         )
 
-    # Order / Project Status Tracking
+    # 8. Bookings & Appointments / Consultations
+    if any(w in p for w in ["book", "appointment", "schedule", "reserve", "slot", "meeting", "consultation"]):
+        if wants_link:
+            return (
+                "You can book a consultation directly through our online form: https://www.growhaz.in/contact"
+            )
+        return (
+            "📅 *Book a Consultation with Growhaz*\n\n"
+            "I'd be happy to schedule that for you! Please let me know:\n"
+            "1. Your website or project details\n"
+            "2. Preferred date and time\n"
+            "3. The service you are interested in\n\n"
+            "Our team will confirm your slot right away!"
+        )
+
+    # 9. Order / Project Status Tracking
     if any(w in p for w in ["status", "track", "order", "where is", "progress"]):
         return (
             "📦 *Growhaz Project & Scan Status*\n\n"
-            "Please share your registered email or Project/Scan ID. Our team will look up the status and update you immediately!\n\n"
-            "🌐 *Check live dashboard:* https://www.growhaz.in/"
+            "Please share your registered email or Scan/Project ID, and our team will check the status and update you right here!"
         )
 
-    # Greetings
-    if any(w in p for w in ["hi", "hello", "hey", "hola", "good morning", "good evening", "namaste", "start"]):
+    # 10. Default Natural Human Response (Never spam links)
+    if wants_link:
         return (
-            "👋 *Welcome to Growhaz!* (https://www.growhaz.in/)\n\n"
-            "Hello! I am your Growhaz AI Assistant. How can we help you today?\n\n"
-            "1️⃣ 🛡️ *Website Security Audit & Scans* (https://www.growhaz.in/security-tools)\n"
-            "2️⃣ 📱 *Appify Website to Mobile App* (https://www.growhaz.in/development)\n"
-            "3️⃣ 💻 *Secure Web & Full-Stack Development*\n"
-            "4️⃣ 🔗 *Blockchain Document Verification* (https://www.growhaz.in/verify)\n"
-            "5️⃣ 💰 *View Pricing Plans* (https://www.growhaz.in/pricing)\n"
-            "6️⃣ 👤 *Speak with Our Human Team*\n\n"
-            "Simply reply with your question or option number!"
+            "Here are the official Growhaz links:\n\n"
+            "• Website: https://www.growhaz.in/\n"
+            "• Security Tools: https://www.growhaz.in/security-tools\n"
+            "• Development & Appify: https://www.growhaz.in/development\n"
+            "• Pricing: https://www.growhaz.in/pricing"
         )
-
-    # Comprehensive Default Response (Never generic)
     return (
-        f"Thank you for contacting Growhaz! 😊\n\n"
-        f"You can explore our key solutions and get instant answers here:\n\n"
-        f"• 🛡️ *Website Security Scans (Alpha G1/G5):* https://www.growhaz.in/security-tools\n"
-        f"• 📱 *Appify Website to Mobile App:* https://www.growhaz.in/development\n"
-        f"• 🔗 *Blockchain Document Verification:* https://www.growhaz.in/verify\n"
-        f"• 💰 *Pricing & Plans:* https://www.growhaz.in/pricing\n"
-        f"• 🌐 *Official Website:* https://www.growhaz.in/\n\n"
-        f"Feel free to reply with what you need, or ask any question!"
+        "Thanks for reaching out to Growhaz! 😊\n\n"
+        "How can I help you today? Feel free to ask about our security scanning, mobile app conversion, web development, or pricing."
     )
 
 def generate_ai_reply(

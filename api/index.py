@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import asyncio
@@ -219,7 +220,7 @@ async def handle_meta_webhook(request: Request):
                             if media_type:
                                 reply = (
                                     f"Thank you for sharing your {media_type}! 📄\n\n"
-                                    "We have received your file at **Growhaz** (https://www.growhaz.in/). "
+                                    "We have received your file at **Growhaz**. "
                                     "Our technical team is reviewing your requirements and will update you shortly.\n\n"
                                     "If you have specific instructions or questions, please reply here!"
                                 )
@@ -756,6 +757,149 @@ async def direct_chat(request: Request):
 
 # ====================================================================
 
+
+# ====================================================================
+# BULK BROADCAST & LEADS CRM ENDPOINTS
+# ====================================================================
+
+@app.post("/api/dashboard/broadcast")
+async def bulk_broadcast(request: Request):
+    """
+    Send WhatsApp messages to multiple leads/numbers with rate limiting and logging.
+    """
+    data = await request.json()
+    numbers_raw = data.get("phone_numbers", [])
+    message = (data.get("message") or "").strip()
+    send_via_meta = data.get("send_via_meta", True)
+    add_as_leads = data.get("add_as_leads", True)
+    lead_source = (data.get("lead_source") or "Bulk Broadcast").strip()
+    
+    if not message:
+        return JSONResponse({"error": "Message content cannot be empty"}, status_code=400)
+    
+    # If string was passed (newline or comma separated), split it
+    if isinstance(numbers_raw, str):
+        numbers_raw = [n.strip() for n in re.split(r'[\n,;]+', numbers_raw) if n.strip()]
+    
+    clean_numbers = []
+    seen = set()
+    for raw in numbers_raw:
+        # Keep only digits
+        digits = re.sub(r'[^0-9]', '', str(raw))
+        # Handle 10-digit Indian numbers without country code
+        if len(digits) == 10:
+            digits = "91" + digits
+        if len(digits) >= 10 and digits not in seen:
+            clean_numbers.append(digits)
+            seen.add(digits)
+            
+    if not clean_numbers:
+        return JSONResponse({"error": "No valid phone numbers found. Please enter 10+ digit numbers with country code."}, status_code=400)
+        
+    results = []
+    sent_count = 0
+    failed_count = 0
+    
+    for phone in clean_numbers:
+        status = "sent"
+        err_msg = None
+        meta_res = {}
+        
+        if send_via_meta:
+            success, meta_res = send_meta_whatsapp_message(phone, message)
+            if success:
+                status = "sent"
+                sent_count += 1
+            else:
+                status = "failed"
+                failed_count += 1
+                err_msg = str(meta_res.get("error", {}).get("message") if isinstance(meta_res.get("error"), dict) else meta_res.get("error", "Meta send failed"))
+        else:
+            status = "simulated"
+            sent_count += 1
+            
+        # Record to message history so it appears in the live chat inbox
+        db.save_message(
+            phone_number=phone,
+            sender_name="Growhaz Support",
+            message=message,
+            direction="outbound",
+            channel="bulk_broadcast" if send_via_meta else "simulator",
+            status=status,
+            raw_payload={"broadcast": True, "meta_response": meta_res}
+        )
+        
+        # Save or update in leads table
+        if add_as_leads:
+            db.add_or_update_lead(
+                phone_number=phone,
+                name="Lead",
+                source=lead_source,
+                status="Contacted" if status in ["sent", "simulated"] else "New"
+            )
+            db.record_lead_messaged(phone, status="Contacted" if status in ["sent", "simulated"] else "Failed")
+            
+        results.append({
+            "phone": phone,
+            "status": status,
+            "error": err_msg
+        })
+        
+        # Throttling delay to avoid Meta WhatsApp Cloud API rate limits
+        if send_via_meta and len(clean_numbers) > 1:
+            await asyncio.sleep(0.2)
+            
+    return JSONResponse({
+        "success": True,
+        "total": len(clean_numbers),
+        "sent": sent_count,
+        "failed": failed_count,
+        "results": results
+    })
+
+@app.get("/api/dashboard/leads")
+async def get_all_leads():
+    """Retrieve all leads in CRM."""
+    leads = db.get_leads()
+    return JSONResponse({"leads": leads, "total": len(leads)})
+
+@app.post("/api/dashboard/leads")
+async def add_leads_endpoint(request: Request):
+    """Add one or more leads without sending messages immediately."""
+    data = await request.json()
+    numbers_raw = data.get("phone_numbers", [])
+    name = (data.get("name") or "Lead").strip()
+    source = (data.get("source") or "Manual Import").strip()
+    notes = (data.get("notes") or "").strip()
+    status = (data.get("status") or "New").strip()
+    
+    if isinstance(numbers_raw, str):
+        numbers_raw = [n.strip() for n in re.split(r'[\n,;]+', numbers_raw) if n.strip()]
+        
+    added = 0
+    for raw in numbers_raw:
+        digits = re.sub(r'[^0-9]', '', str(raw))
+        if len(digits) == 10:
+            digits = "91" + digits
+        if len(digits) >= 10:
+            db.add_or_update_lead(digits, name=name, source=source, status=status, notes=notes)
+            added += 1
+            
+    return JSONResponse({"success": True, "added_count": added})
+
+@app.delete("/api/dashboard/leads/{lead_id}")
+async def delete_lead_endpoint(lead_id: int):
+    """Delete a lead by ID."""
+    success = db.delete_lead(lead_id)
+    return JSONResponse({"success": success, "lead_id": lead_id})
+
+@app.put("/api/dashboard/leads/{lead_id}/status")
+async def update_lead_status_endpoint(lead_id: int, request: Request):
+    """Update lead pipeline status."""
+    data = await request.json()
+    status = data.get("status", "Contacted")
+    success = db.update_lead_status(lead_id, status)
+    return JSONResponse({"success": success, "lead_id": lead_id, "status": status})
 
 # ====================================================================
 # 3. DASHBOARD USER INTERFACE (MODULAR TEMPLATE & STATIC JS)
