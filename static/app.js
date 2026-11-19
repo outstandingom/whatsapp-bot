@@ -190,7 +190,23 @@ function deleteChatFromMenu() {
                     const data = await convsRes.json();
                     allConversations = data.conversations || [];
                     document.getElementById('chat-count').innerText = allConversations.length;
-                    renderConversations(allConversations);
+
+                    // Update 24-Hour Free Promotional Window Badges & Counts
+                    const freeCount = allConversations.filter(c => c.free_window_active === true).length;
+                    const freeBadge = document.getElementById('badge-free-window-count');
+                    const allBadge = document.getElementById('badge-all-chats-count');
+                    const bannerCount = document.getElementById('free-promo-banner-count');
+                    if (freeBadge) freeBadge.innerText = freeCount;
+                    if (allBadge) allBadge.innerText = `(${allConversations.length})`;
+                    if (bannerCount) bannerCount.innerText = freeCount;
+
+                    filterConversations();
+
+                    // Update active conversation free window UI
+                    if (currentPhone) {
+                        const activeConv = allConversations.find(c => c.phone_number === currentPhone);
+                        updateActiveFreeWindowUI(activeConv);
+                    }
 
                     // On desktop, auto-select first conversation. On mobile, let user see inbox first.
                     if (!currentPhone && allConversations.length > 0 && window.innerWidth >= 768) {
@@ -264,6 +280,20 @@ function deleteChatFromMenu() {
                                     </button>
                                 </div>
                             </div>
+                            <!-- 24-Hour Free Promotional Window Tracker Badge -->
+                            <div class="mt-1.5 flex items-center justify-between text-[10px]">
+                                ${c.free_window_active ? `
+                                    <span class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold border border-emerald-300">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span>Free Window (${formatFreeWindowCountdown(c.free_window_remaining_seconds)})</span>
+                                    </span>
+                                    <span class="text-[9px] font-extrabold text-emerald-600 uppercase tracking-wider">₹0 Free Promo</span>
+                                ` : `
+                                    <span class="inline-flex items-center space-x-1 px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-400 font-semibold border border-slate-200">
+                                        <span>🔴 Window Expired</span>
+                                    </span>
+                                `}
+                            </div>
                         </div>
                     </div>
                 `;
@@ -282,6 +312,10 @@ function deleteChatFromMenu() {
             const badge = document.getElementById('active-channel-badge');
             badge.classList.remove('hidden');
             badge.innerText = (channel || 'WHATSAPP').toUpperCase().replace('_', ' ');
+
+            // Update 24-Hour Free Window UI for Active Contact
+            const activeConv = (allConversations || []).find(c => c.phone_number === phone);
+            updateActiveFreeWindowUI(activeConv);
 
             document.getElementById('select-mode-btn')?.classList.remove('hidden');
             document.getElementById('delete-chat-btn')?.classList.remove('hidden');
@@ -1197,14 +1231,106 @@ function deleteChatFromMenu() {
             fetchData(true);
         }
 
+        let currentInboxFilter = 'all'; // 'all' or 'free_window'
+
+        function setInboxFilter(filter) {
+            currentInboxFilter = filter;
+            const btnAll = document.getElementById('filter-btn-all');
+            const btnFree = document.getElementById('filter-btn-free-window');
+            const banner = document.getElementById('free-promo-filter-banner');
+
+            if (filter === 'free_window') {
+                if (btnFree) btnFree.className = 'flex-1 py-1.5 px-2 rounded-xl bg-emerald-600 text-white font-extrabold border border-emerald-600 text-center transition flex items-center justify-center space-x-1.5 shadow-xs';
+                if (btnAll) btnAll.className = 'flex-1 py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold border border-slate-200 text-center transition flex items-center justify-center space-x-1';
+                banner?.classList.remove('hidden');
+            } else {
+                if (btnAll) btnAll.className = 'flex-1 py-1.5 px-2 rounded-xl bg-emerald-50 text-emerald-800 font-extrabold border border-emerald-200 text-center transition flex items-center justify-center space-x-1 shadow-xs';
+                if (btnFree) btnFree.className = 'flex-1 py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 font-bold border border-slate-200 text-center transition flex items-center justify-center space-x-1.5';
+                banner?.classList.add('hidden');
+            }
+            filterConversations();
+        }
+
         function filterConversations() {
-            const q = document.getElementById('search-input').value.toLowerCase();
-            const filtered = allConversations.filter(c => 
-                (c.phone_number && c.phone_number.toLowerCase().includes(q)) ||
-                (c.sender_name && c.sender_name.toLowerCase().includes(q)) ||
-                (c.last_message && c.last_message.toLowerCase().includes(q))
-            );
+            const q = (document.getElementById('search-input')?.value || '').toLowerCase();
+            let filtered = allConversations || [];
+            
+            // Filter by 24-Hour Free Window if selected
+            if (currentInboxFilter === 'free_window') {
+                filtered = filtered.filter(c => c.free_window_active === true);
+            }
+
+            if (q) {
+                filtered = filtered.filter(c => 
+                    (c.phone_number && c.phone_number.toLowerCase().includes(q)) ||
+                    (c.sender_name && c.sender_name.toLowerCase().includes(q)) ||
+                    (c.last_message && c.last_message.toLowerCase().includes(q))
+                );
+            }
             renderConversations(filtered);
+        }
+
+        function formatFreeWindowCountdown(seconds) {
+            if (!seconds || seconds <= 0) return 'Expired';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            if (h > 0) {
+                return `${h}h ${m}m left`;
+            }
+            return `${m}m ${s}s left`;
+        }
+
+        function updateActiveFreeWindowUI(conv) {
+            const banner = document.getElementById('chat-free-window-banner');
+            const timerText = document.getElementById('banner-countdown-timer');
+            const badge = document.getElementById('active-free-window-badge');
+            const promoBtn = document.getElementById('active-promo-btn');
+
+            if (conv && conv.free_window_active && conv.free_window_remaining_seconds > 0) {
+                const timeLeft = formatFreeWindowCountdown(conv.free_window_remaining_seconds);
+                if (banner) banner.classList.remove('hidden');
+                if (timerText) timerText.innerText = timeLeft;
+                if (badge) {
+                    badge.classList.remove('hidden');
+                    badge.className = 'text-[10px] px-2 py-0.5 rounded-full font-extrabold flex items-center space-x-1 border bg-emerald-100 text-emerald-800 border-emerald-300';
+                    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1"></span>Free Window (${timeLeft}) • ₹0 Free`;
+                }
+                if (promoBtn) promoBtn.classList.remove('hidden');
+            } else if (conv) {
+                if (banner) banner.classList.add('hidden');
+                if (badge) {
+                    badge.classList.remove('hidden');
+                    badge.className = 'text-[10px] px-2 py-0.5 rounded-full font-semibold flex items-center space-x-1 border bg-slate-100 text-slate-500 border-slate-200';
+                    badge.innerHTML = `<span>🔴 Window Expired</span>`;
+                }
+                if (promoBtn) promoBtn.classList.add('hidden');
+            } else {
+                if (banner) banner.classList.add('hidden');
+                if (badge) badge.classList.add('hidden');
+                if (promoBtn) promoBtn.classList.add('hidden');
+            }
+        }
+
+        function blastPromoToAllFreeWindows() {
+            const activeEligible = (allConversations || []).filter(c => c.free_window_active && c.phone_number);
+            if (activeEligible.length === 0) {
+                alert('No customers currently have an active 24-hour free window.');
+                return;
+            }
+            // Switch to bulk broadcast tab
+            switchTab('broadcast');
+            // Put numbers in textarea
+            const input = document.getElementById('broadcast-numbers-input');
+            if (input) {
+                input.value = activeEligible.map(c => c.phone_number).join('\n');
+                handleBroadcastNumbersInput();
+            }
+            // Pre-fill a high-converting promo message
+            const msgInput = document.getElementById('broadcast-message-input');
+            if (msgInput && !msgInput.value.trim()) {
+                msgInput.value = "Hi there! 👋 Special update from Growhaz: As a valued customer, you get an exclusive 20% discount on our Alpha G5 Advanced Website Security Vulnerability Scan. Reply to this message to claim your audit slot today! 🛡️";
+            }
         }
 
         function formatTime(isoStr) {
@@ -1461,6 +1587,118 @@ function deleteChatFromMenu() {
                 console.error(e);
             }
         }
+
+        // ==================== ONE-CLICK PROMOTIONAL SENDER ====================
+
+        const promoPresets = {
+            security: "Hi there! 👋 Exclusive offer from Growhaz: Protect your website with a 20% discount on our Alpha G5 Advanced Security Vulnerability Scan. Reply here to claim your discounted audit slot today! 🛡️",
+            appify: "Hi! 🚀 Ready to launch your own mobile app? With Growhaz Appify, we turn your website into native Android & iOS mobile apps with push notifications and offline mode. Reply here to get a free mobile app preview!",
+            webdev: "Hi there! 💻 Is your website running fast and fully secure? Growhaz is offering a free Lighthouse SEO & security speed audit for your site. Reply with your website URL to get your free report!",
+            blockchain: "Hi! 🔗 Eliminate document forgery with Growhaz Blockchain Document Verification. We provide cryptographic tamper-proof issuance for certificates and contracts. Reply to book a quick demo!"
+        };
+
+        function openPromoModalForCurrent() {
+            if (!currentPhone) {
+                alert('Please select a customer chat first.');
+                return;
+            }
+            const modal = document.getElementById('promo-modal');
+            const recipientLabel = document.getElementById('promo-modal-recipient');
+            const timerBadge = document.getElementById('promo-modal-timer-badge');
+            const msgArea = document.getElementById('promo-modal-message');
+
+            const conv = (allConversations || []).find(c => c.phone_number === currentPhone);
+            const name = currentContactName || currentPhone;
+
+            if (recipientLabel) recipientLabel.innerText = `${name} (+${currentPhone})`;
+            if (timerBadge && conv && conv.free_window_active) {
+                timerBadge.innerText = `${formatFreeWindowCountdown(conv.free_window_remaining_seconds)}`;
+                timerBadge.className = 'px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300';
+            } else if (timerBadge) {
+                timerBadge.innerText = 'Window Expired';
+                timerBadge.className = 'px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-500 border border-slate-200';
+            }
+
+            if (msgArea && !msgArea.value.trim()) {
+                applyPromoPreset('security');
+            }
+
+            modal?.classList.remove('hidden');
+        }
+
+        function closePromoModal() {
+            document.getElementById('promo-modal')?.classList.add('hidden');
+        }
+
+        function applyPromoPreset(presetKey) {
+            const msgArea = document.getElementById('promo-modal-message');
+            if (msgArea && promoPresets[presetKey]) {
+                msgArea.value = promoPresets[presetKey];
+            }
+        }
+
+        async function sendPromoModalMessage() {
+            const msgArea = document.getElementById('promo-modal-message');
+            const btn = document.getElementById('promo-send-btn');
+            const message = (msgArea?.value || '').trim();
+
+            if (!currentPhone) {
+                alert('No active recipient selected.');
+                return;
+            }
+            if (!message) {
+                alert('Please enter a promotional message to send.');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Sending Promo...';
+
+            try {
+                const res = await fetch('/api/dashboard/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone: currentPhone,
+                        message: message,
+                        role: 'agent',
+                        send_via_meta: true
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    closePromoModal();
+                    await loadMessages(true);
+                    fetchData(true);
+                } else {
+                    alert('Error sending promo: ' + (data.error || 'Failed to send message'));
+                }
+            } catch (err) {
+                alert('Failed to send promo: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-paper-plane mr-1"></i> Send Free Promo Now (₹0)';
+            }
+        }
+
+        // Live 1-second countdown ticker for free window remaining time
+        setInterval(() => {
+            if (allConversations && allConversations.length > 0) {
+                allConversations.forEach(c => {
+                    if (c.free_window_remaining_seconds > 0) {
+                        c.free_window_remaining_seconds -= 1;
+                        if (c.free_window_remaining_seconds <= 0) {
+                            c.free_window_active = false;
+                        }
+                    }
+                });
+            }
+            if (currentPhone && allConversations) {
+                const activeConv = allConversations.find(c => c.phone_number === currentPhone);
+                if (activeConv) updateActiveFreeWindowUI(activeConv);
+            }
+        }, 1000);
 
         // Initialize & Auto Poll every 3 seconds
         fetchData();

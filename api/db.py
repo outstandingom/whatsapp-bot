@@ -2,7 +2,7 @@ import os
 import sqlite3
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Database path
 DB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -288,6 +288,7 @@ def get_conversations():
                 m1.direction as last_direction,
                 m1.channel as last_channel,
                 m1.created_at as last_time,
+                (SELECT m_in.created_at FROM messages m_in WHERE REPLACE(m_in.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m_in.direction = 'inbound' ORDER BY m_in.id DESC LIMIT 1) as last_inbound_time,
                 (SELECT COUNT(*) FROM messages m2 WHERE REPLACE(m2.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '')) as total_messages,
                 (SELECT COUNT(*) FROM messages m3 WHERE REPLACE(m3.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m3.direction = 'inbound') as inbound_count,
                 COALESCE((SELECT cs.bot_enabled FROM contact_settings cs WHERE REPLACE(cs.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') LIMIT 1), 1) as bot_enabled
@@ -300,7 +301,30 @@ def get_conversations():
         cursor.execute(query)
         rows = cursor.fetchall()
         conn.close()
-        return [dict(row) for row in rows]
+
+        import datetime
+        utc_now = datetime.datetime.now(datetime.timezone.utc)
+        conversations = []
+        for row in rows:
+            d = dict(row)
+            last_inbound_str = d.get("last_inbound_time")
+            free_window_active = False
+            remaining_seconds = 0
+            if last_inbound_str:
+                try:
+                    clean_ts = str(last_inbound_str).split(".")[0].strip()
+                    inbound_dt = datetime.datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+                    elapsed = (utc_now - inbound_dt).total_seconds()
+                    if 0 <= elapsed < 86400:
+                        free_window_active = True
+                        remaining_seconds = int(86400 - elapsed)
+                except Exception as err:
+                    print(f"[DB] Error parsing inbound timestamp: {err}")
+            d["free_window_active"] = free_window_active
+            d["free_window_remaining_seconds"] = remaining_seconds
+            conversations.append(d)
+
+        return conversations
     except Exception as e:
         print(f"[DB] Error getting conversations: {e}")
         return []
@@ -448,6 +472,15 @@ def get_stats():
         cursor.execute("SELECT COUNT(*) as today_total FROM messages WHERE created_at LIKE ?", (f"{today_str}%",))
         today_messages = cursor.fetchone()["today_total"]
         
+        # Count contacts with active 24h free promotional window
+        cutoff_24h = (datetime.utcnow() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            SELECT COUNT(DISTINCT REPLACE(phone_number, '+', '')) as active_window_count
+            FROM messages
+            WHERE direction = 'inbound' AND created_at >= ?
+        """, (cutoff_24h,))
+        active_free_windows = cursor.fetchone()["active_window_count"] or 0
+
         conn.close()
         return {
             "total_messages": total_messages,
@@ -457,7 +490,8 @@ def get_stats():
             "avg_latency_ms": avg_latency,
             "total_webhooks": total_webhooks,
             "total_bookings": total_bookings,
-            "today_messages": today_messages
+            "today_messages": today_messages,
+            "active_free_windows": active_free_windows
         }
     except Exception as e:
         return {
