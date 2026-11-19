@@ -1,8 +1,9 @@
 import os
+import re
 import time
 import logging
+from typing import List, Dict, Any, Optional
 import httpx
-from groq import Groq
 
 logger = logging.getLogger("bot_engine")
 
@@ -49,23 +50,21 @@ CRITICAL CONVERSATIONAL & LINK RULES:
    - DO NOT include website links or URLs in greetings or general conversation.
    - DO NOT attach links to every service item.
    - ONLY provide a link when the user explicitly asks for a link, website URL, portal, online scan link, or where to visit online.
-3. WHEN ASKED FOR SERVICES (e.g. "what are your services", "what do you do", "list services"):
-   - List the 5 core areas cleanly with bullet points or numbers in a friendly human tone.
-   - Do NOT dump URLs under each service.
-   - Ask them warmly which one they'd like more details on.
-4. GREETINGS (e.g. "hi", "hello", "hey"):
-   - Keep it short, warm, and natural: "Hey there! 👋 Welcome to Growhaz. How can I help you today?" (NO links).
+3. CONVERSATIONAL MEMORY: Pay close attention to what the customer has already asked or discussed. Do NOT repeat the exact same greeting or service list if the conversation is already in progress.
+4. GREETINGS: Keep initial greetings short: "Hey there! 👋 Welcome to Growhaz. How can I help you today?" (NO links).
 5. FORMATTING: Use clean WhatsApp formatting (*bold*, • bullets, friendly emojis). Keep messages concise and easy to read on mobile.
 6. HUMAN HANDOVER: If someone asks to speak to a person or founder Om Uikey, warmly assure them that a human specialist will reply directly shortly.
 """
 
-def run_smart_customer_support_fallback(user_prompt: str) -> str:
+def run_smart_customer_support_fallback(user_prompt: str, history: Optional[List[dict]] = None, customer_id: str = "") -> str:
     """
-    Dedicated Human-like Customer Support Agent fallback for Growhaz.
-    Provides warm, conversational answers and only provides links when explicitly requested.
+    Context-aware rule-based fallback when AI APIs (DeepSeek/Groq) are unavailable.
+    Inspects user prompt, conversation history, and DNA memory to never repeat identical canned answers.
     """
     p = user_prompt.lower().strip()
-    wants_link = any(w in p for w in ["link", "url", "website", "portal", "site", "webpage", "online", "where can i", "send link", "visit"])
+    # Explicit link requests only - never trigger on "my website" or "my site"
+    wants_link = any(phrase in p for phrase in ["link", "send link", "share link", "give link", "url", "portal link", "website link", "where to visit", "where can i visit", "online portal"])
+    has_history = bool(history and len(history) > 0)
 
     # 1. Human Handover Request
     if any(w in p for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]):
@@ -78,46 +77,83 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
             res += "\n\n🌐 You can also reach us via email at info.growhaz@gmail.com or visit https://www.growhaz.in/"
         return res
 
-    # 2. Greetings
-    if any(p == w or p.startswith(w + " ") or p.endswith(" " + w) for w in ["hi", "hello", "hey", "hola", "namaste", "good morning", "good evening", "good afternoon", "start"]):
+    # 2. Thank you / Closing
+    if any(w in p for w in ["thank", "thanks", "thx", "dhanyawad", "shukriya", "great", "perfect"]):
         return (
-            "Hey there! 👋 Welcome to Growhaz.\n\n"
-            "How can I help you today? Feel free to ask about our website security scanning, mobile app conversion, web development, or blockchain services!"
+            "You're very welcome! 😊 Glad I could help.\n\n"
+            "Feel free to reply anytime if you have more questions or need technical support. Have a wonderful day!"
         )
 
-    # 3. Services / What do you offer / List of solutions
+    # 3. Confirmation / Agreement / "Yes" / "Ok" / "Sure" / "Go ahead"
+    if any(w in p for w in ["yes", "yeah", "yep", "sure", "ok", "okay", "go ahead", "start", "proceed", "interested"]):
+        return (
+            "Awesome! 🎉 To get started, please share:\n"
+            "1. Your website or app URL\n"
+            "2. The best email address to send the detailed report/quote\n\n"
+            "Our technical team will review it and initiate your service right away!"
+        )
+
+    # 4. Detected Website URL in user message (e.g. example.com, https://...)
+    has_url = bool(re.search(r'(https?://[^\s]+|[a-zA-Z0-9-]+\.(com|in|org|net|io|co|ai|app))', user_prompt))
+    if has_url:
+        return (
+            "Got your website URL! 🛡️\n\n"
+            "We can initiate a security vulnerability scan or review right away. Would you prefer:\n"
+            "• *AlphaG1 (Basic Audit):* ₹1,999 (Under 5-minute automated scan for SQLi & XSS)\n"
+            "• *AlphaG5 (Advanced Audit):* ₹4,999 (In-depth API & IDOR vulnerability testing — Most Popular)\n\n"
+            "Let me know which tier you'd like, and I'll confirm your scan!"
+        )
+
+    # 5. Process / "How does it work" / "How to start"
+    if any(w in p for w in ["how does it work", "how it works", "process", "steps", "how to start", "timeline", "how long"]):
+        return (
+            "⚙️ *How Growhaz Works*\n\n"
+            "1️⃣ *Submit Details:* Send us your website or application URL.\n"
+            "2️⃣ *Automated & Manual Scan:* Our security engine audits for SQLi, XSS, IDOR, and exposed API keys.\n"
+            "3️⃣ *Executive Report:* You receive a full PDF vulnerability report with step-by-step remediation fixes within 24 hours.\n\n"
+            "Would you like us to run a preliminary check on your website today?"
+        )
+
+    # 6. Greetings (Only if first interaction; never repeat if conversation is active!)
+    if any(p == w or p.startswith(w + " ") or p.endswith(" " + w) for w in ["hi", "hello", "hey", "hola", "namaste", "good morning", "good evening", "good afternoon"]):
+        if has_history:
+            return (
+                "Hey again! 👋 How can I assist you further with your project or security audit?"
+            )
+        return (
+            "Hey there! 👋 Welcome to Growhaz.\n\n"
+            "How can I help you today? Feel free to ask about our website security scanning, mobile app conversion, web development, or pricing!"
+        )
+
+    # 7. Services / What do you offer
     if any(w in p for w in ["service", "services", "provide", "providing", "offer", "offering", "solution", "solutions", "what do you do", "what can you do", "list"]):
         if wants_link:
             return (
                 "Here are our official service portals:\n\n"
-                "• Security Tools & Scans: https://www.growhaz.in/security-tools\n"
+                "• Security Tools: https://www.growhaz.in/security-tools\n"
                 "• Appify & Web Development: https://www.growhaz.in/development\n"
                 "• Blockchain Verification: https://www.growhaz.in/verify\n"
-                "• SEO & Automation: https://www.growhaz.in/seo\n"
                 "• Full Pricing: https://www.growhaz.in/pricing\n\n"
-                "Let me know if you need help with any specific one!"
+                "Which area would you like to explore?"
             )
         return (
             "Here is what we do at Growhaz:\n\n"
             "1️⃣ 🛡️ *Website Security Vulnerability Scanning*\n"
-            "Fast, automated audits (Alpha G1/G5/G3) that scan your website for SQLi, XSS, IDOR, and API security flaws in under 5 minutes.\n\n"
+            "Automated audits (Alpha G1/G5/G3) scanning SQLi, XSS, IDOR, and API security flaws in under 5 minutes.\n\n"
             "2️⃣ 📱 *Appify Your Website (Mobile App Conversion)*\n"
-            "We convert any website or web app into high-performance native Android & iOS mobile apps with push notifications and offline mode.\n\n"
+            "Convert any website or web app into native Android & iOS mobile apps with push notifications and offline mode.\n\n"
             "3️⃣ 💻 *Secure Web & Full-Stack Development*\n"
-            "Fast, SEO-optimized static websites (100% Lighthouse score) and custom full-stack dynamic web applications.\n\n"
+            "Ultra-fast static websites (100% Lighthouse SEO score) and custom dynamic web applications.\n\n"
             "4️⃣ 🔗 *Blockchain Document Verification*\n"
             "Tamper-proof on-chain verification for degrees, certificates, and legal contracts.\n\n"
-            "5️⃣ 📈 *SEO & Workflow Automation*\n"
-            "Core Web Vitals optimization and tailored business automation.\n\n"
-            "Which of these would you like to know more about? Just let me know!"
+            "Which of these would you like to know more about?"
         )
 
-    # 4. Security Scans (Alpha G1, G5, Pentest)
-    if any(w in p for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "audit", "firewall"]):
+    # 8. Security Scans specifically
+    if any(w in p for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "alphag3", "audit", "firewall"]):
         if wants_link:
             return (
-                "You can launch a security vulnerability scan directly on our portal here: https://www.growhaz.in/security-tools\n\n"
-                "Let me know if you need any assistance choosing the right scan tier!"
+                "You can launch a security vulnerability scan directly on our portal here: https://www.growhaz.in/security-tools"
             )
         return (
             "🛡️ *Growhaz Website Security Scans*\n\n"
@@ -128,71 +164,48 @@ def run_smart_customer_support_fallback(user_prompt: str) -> str:
             "Would you like us to run a scan on your website? Just send me your website URL!"
         )
 
-    # 5. Appify / Mobile App Conversion / Web Development
-    if any(w in p for w in ["app", "appify", "apk", "android", "ios", "website", "develop", "web development", "design"]):
+    # 9. Appify / Mobile App Conversion
+    if any(w in p for w in ["app", "appify", "apk", "android", "ios", "convert to app"]):
         if wants_link:
-            return (
-                "You can explore our development packages and mobile app conversion here: https://www.growhaz.in/development"
-            )
+            return "You can check out our Appify mobile conversion packages here: https://www.growhaz.in/development"
         return (
-            "🚀 *Growhaz Development & Appify Services*\n\n"
-            "Here's what we offer:\n"
-            "• *Appify:* Convert any website into native Android & iOS mobile apps with push notifications and offline cache.\n"
-            "• *Static Website (100% SEO):* ₹20,000\n"
-            "• *Dynamic Web Application:* Starting from ₹60,000\n\n"
-            "Tell me a little about your project or share your website URL, and we can discuss the best approach!"
+            "📱 *Appify by Growhaz*\n\n"
+            "We convert any website or web application into fast native Android (APK) & iOS apps with push notifications, biometric login, and offline caching.\n\n"
+            "Do you have an existing website URL you'd like to convert into a mobile app?"
         )
 
-    # 6. Blockchain Document Verification
-    if any(w in p for w in ["blockchain", "verify", "certificate", "document", "degree", "authenticity"]):
+    # 10. Web Development
+    if any(w in p for w in ["website", "develop", "web development", "design", "redesign", "full stack", "react"]):
         if wants_link:
-            return (
-                "You can verify documents on our blockchain portal here: https://www.growhaz.in/verify"
-            )
+            return "You can explore our web development services here: https://www.growhaz.in/development"
         return (
-            "🔗 *Growhaz Blockchain Document Verification*\n\n"
-            "We provide tamper-proof on-chain verification for certificates, legal contracts, and academic degrees with cryptographic proof.\n\n"
-            "Would you like to verify a document or integrate on-chain verification for your organization?"
+            "💻 *Growhaz Web Development*\n\n"
+            "• *Static SEO-Certified Website:* ₹20,000 (100% Lighthouse SEO score)\n"
+            "• *Dynamic Full-Stack Web App:* From ₹60,000 (CRUD, E-commerce, CRM, admin dashboard)\n\n"
+            "Tell me a little about your project requirements, and we can prepare a tailored roadmap for you!"
         )
 
-    # 7. Pricing & Quotes
+    # 11. Pricing & Quotes
     if any(w in p for w in ["price", "cost", "rate", "quote", "how much", "charges", "estimate", "pricing"]):
         if wants_link:
-            return (
-                "Here is our complete online pricing breakdown: https://www.growhaz.in/pricing"
-            )
+            return "Here is our complete online pricing breakdown: https://www.growhaz.in/pricing"
         return (
             "💰 *Growhaz Pricing Overview*\n\n"
             "• *Security Scans:* AlphaG1 (₹1,999) | AlphaG5 (₹4,999) | AlphaG3 (₹9,999)\n"
             "• *Web Development:* Static (₹20,000) | Dynamic (From ₹60,000)\n"
             "• *SEO:* ₹8,000 one-time | ₹10,000/mo ongoing\n"
             "• *Workflow Automation:* From ₹8,000\n\n"
-            "Would you like a custom quote for your specific needs? Just let me know what you're looking for!"
+            "Which service do you need a customized quote for?"
         )
 
-    # 8. Bookings & Appointments / Consultations
-    if any(w in p for w in ["book", "appointment", "schedule", "reserve", "slot", "meeting", "consultation"]):
-        if wants_link:
-            return (
-                "You can book a consultation directly through our online form: https://www.growhaz.in/contact"
-            )
+    # 12. Context-aware follow-up (when conversation is active)
+    if has_history:
         return (
-            "📅 *Book a Consultation with Growhaz*\n\n"
-            "I'd be happy to schedule that for you! Please let me know:\n"
-            "1. Your website or project details\n"
-            "2. Preferred date and time\n"
-            "3. The service you are interested in\n\n"
-            "Our team will confirm your slot right away!"
+            "Got it! Could you tell me a bit more about what you're looking for, or share your website / project details? "
+            "I'll help you pick the best solution right away."
         )
 
-    # 9. Order / Project Status Tracking
-    if any(w in p for w in ["status", "track", "order", "where is", "progress"]):
-        return (
-            "📦 *Growhaz Project & Scan Status*\n\n"
-            "Please share your registered email or Scan/Project ID, and our team will check the status and update you right here!"
-        )
-
-    # 10. Default Natural Human Response (Never spam links)
+    # 13. Default first-contact message
     if wants_link:
         return (
             "Here are the official Growhaz links:\n\n"
@@ -216,11 +229,13 @@ def generate_ai_reply(
 ) -> tuple[str, float, str]:
     """
     Generate Customer Support response with DeepSeek AI, Groq Cloud AI, or smart fallback.
-    Augmented with dynamic customer DNA memory context.
+    Augmented with:
+      1. Multi-turn conversation history from database.
+      2. Dynamic customer DNA memory context.
     """
     start = time.time()
 
-    # Dynamic DNA Memory retrieval (Zero hardcoded data)
+    # 1. Retrieve Dynamic DNA Memory
     dna_context = ""
     if customer_id:
         try:
@@ -233,7 +248,34 @@ def generate_ai_reply(
     if dna_context:
         system_prompt += "\n" + dna_context
 
-    # 1. Try DeepSeek AI
+    # 2. Retrieve Multi-Turn Conversation History from Database
+    conversation_history = []
+    if customer_id:
+        try:
+            from api import db
+            raw_history = db.get_messages(phone_number=customer_id, limit=8)
+            # Exclude current prompt if already inserted
+            for m in raw_history:
+                text = (m.get("message") or "").strip()
+                if text and not text.startswith("📷") and not text.startswith("📄"):
+                    conversation_history.append({
+                        "direction": m.get("direction"),
+                        "message": text
+                    })
+        except Exception as e:
+            logger.debug(f"Could not load conversation history: {e}")
+
+    # Build messages array for LLM (DeepSeek / Groq)
+    llm_messages = [{"role": "system", "content": system_prompt}]
+    for h in conversation_history[-6:]:
+        role = "user" if h.get("direction") == "inbound" else "assistant"
+        llm_messages.append({"role": role, "content": h.get("message")})
+    
+    # Ensure current user_prompt is at the end
+    if not llm_messages or llm_messages[-1].get("content") != user_prompt:
+        llm_messages.append({"role": "user", "content": user_prompt})
+
+    # 3. Try DeepSeek AI
     if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
         try:
             model_to_use = deepseek_model.strip() if deepseek_model and deepseek_model.strip() else "deepseek-chat"
@@ -243,10 +285,7 @@ def generate_ai_reply(
             }
             payload = {
                 "model": model_to_use,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                "messages": llm_messages,
                 "temperature": 0.7,
                 "max_tokens": 1024
             }
@@ -258,11 +297,11 @@ def generate_ai_reply(
                     latency = round((time.time() - start) * 1000, 2)
                     return reply, latency, f"DeepSeek ({model_to_use})"
                 else:
-                    logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back...")
+                    logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to Groq...")
         except Exception as e:
-            logger.warning(f"DeepSeek call failed ({e}). Falling back...")
+            logger.warning(f"DeepSeek call failed ({e}). Falling back to Groq...")
 
-    # 2. Try Groq AI Fallback (using direct HTTP call for maximum reliability)
+    # 4. Try Groq AI Fallback
     if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
         try:
             model_to_use = groq_model.strip() if groq_model and groq_model.strip() else "llama-3.3-70b-versatile"
@@ -272,10 +311,7 @@ def generate_ai_reply(
             }
             payload = {
                 "model": model_to_use,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                "messages": llm_messages,
                 "temperature": 0.7,
                 "max_tokens": 1024
             }
@@ -287,11 +323,11 @@ def generate_ai_reply(
                     latency = round((time.time() - start) * 1000, 2)
                     return reply, latency, f"Groq ({model_to_use})"
                 else:
-                    logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back...")
+                    logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
         except Exception as e:
-            logger.warning(f"Groq API call failed ({e}). Falling back...")
+            logger.warning(f"Groq API call failed ({e}). Falling back to smart agent...")
 
-    # 3. Smart rule-based fallback
+    # 5. Smart Context-Aware Fallback (Never repeats identical canned text)
     latency = round((time.time() - start) * 1000, 2)
-    reply = run_smart_customer_support_fallback(user_prompt)
+    reply = run_smart_customer_support_fallback(user_prompt, history=conversation_history, customer_id=customer_id)
     return reply, max(latency, 10.0), "Customer Support Agent"
