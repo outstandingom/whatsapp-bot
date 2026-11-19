@@ -56,56 +56,124 @@ CRITICAL CONVERSATIONAL & LINK RULES:
 6. HUMAN HANDOVER: If someone asks to speak to a person or founder Om Uikey, warmly assure them that a human specialist will reply directly shortly.
 """
 
-def run_smart_customer_support_fallback(user_prompt: str, history: Optional[List[dict]] = None, customer_id: str = "") -> str:
+def run_smart_customer_support_fallback(
+    user_prompt: str,
+    history: Optional[List[dict]] = None,
+    customer_id: str = "",
+    dna_analysis: Optional[dict] = None
+) -> str:
     """
     Context-aware rule-based fallback when AI APIs (DeepSeek/Groq) are unavailable.
-    Inspects user prompt, conversation history, and DNA memory to never repeat identical canned answers.
+    Directly grounded in the DNA Modal's activated relationship graph and customer memories.
+    Guarantees non-repetitive, contextually relevant replies.
     """
     p = user_prompt.lower().strip()
+    dna = dna_analysis or {}
+    prediction = dna.get("prediction", {})
+    activated_nodes = [n.get("id", "") for n in dna.get("activated_nodes", [])]
+    relationships = dna.get("relationships", [])
+
+    p_clean = re.sub(r'[^\w\s]', ' ', p)
+    words = set(p_clean.split())
+
     # Explicit link requests only - never trigger on "my website" or "my site"
     wants_link = any(phrase in p for phrase in ["link", "send link", "share link", "give link", "url", "portal link", "website link", "where to visit", "where can i visit", "online portal"])
-    has_history = bool(history and len(history) > 0)
+    has_history = bool(history and len(history) > 1)
+    has_dna_memory = bool(prediction and prediction.get("predicted_event") != "unknown")
+    raw_target = prediction.get("predicted_target") or (activated_nodes[0] if activated_nodes else "")
+    top_target = "" if (raw_target.isdigit() or raw_target.startswith("+") or raw_target.startswith("asmb_event")) else raw_target
+
+    # Retrieve last bot message to prevent duplicate canned replies
+    last_bot_reply = ""
+    for h in reversed(history or []):
+        if h.get("direction") == "outbound" or h.get("role") == "assistant":
+            last_bot_reply = (h.get("message") or "").strip()
+            break
 
     # 1. Human Handover Request
-    if any(w in p for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]):
+    if any(w in words for w in ["human", "agent", "person", "representative", "specialist"]) or any(phrase in p for phrase in ["talk to someone", "call me"]):
         res = (
             "👤 *Connecting you with our team*\n\n"
-            "I've flagged this conversation for our founder Om Uikey and our support team. "
-            "A specialist will reply directly here on WhatsApp shortly!"
+            "I've flagged this conversation for our founder Om Uikey and our technical team. "
+            "A human specialist will reply directly here on WhatsApp shortly!"
         )
         if wants_link:
             res += "\n\n🌐 You can also reach us via email at info.growhaz@gmail.com or visit https://www.growhaz.in/"
         return res
 
     # 2. Thank you / Closing
-    if any(w in p for w in ["thank", "thanks", "thx", "dhanyawad", "shukriya", "great", "perfect"]):
+    if any(w in words for w in ["thank", "thanks", "thx", "dhanyawad", "shukriya", "great", "perfect", "bye"]):
         return (
             "You're very welcome! 😊 Glad I could help.\n\n"
             "Feel free to reply anytime if you have more questions or need technical support. Have a wonderful day!"
         )
 
-    # 3. Confirmation / Agreement / "Yes" / "Ok" / "Sure" / "Go ahead"
-    if any(w in p for w in ["yes", "yeah", "yep", "sure", "ok", "okay", "go ahead", "start", "proceed", "interested"]):
-        return (
-            "Awesome! 🎉 To get started, please share:\n"
-            "1. Your website or app URL\n"
-            "2. The best email address to send the detailed report/quote\n\n"
-            "Our technical team will review it and initiate your service right away!"
-        )
-
-    # 4. Detected Website URL in user message (e.g. example.com, https://...)
+    # 3. Detected Website URL in user message (e.g. example.com, https://...)
     has_url = bool(re.search(r'(https?://[^\s]+|[a-zA-Z0-9-]+\.(com|in|org|net|io|co|ai|app))', user_prompt))
     if has_url:
+        if "appify" in top_target or any(w in words for w in ["app", "mobile", "apk", "ios"]):
+            return (
+                "Got your website URL for mobile conversion! 📱\n\n"
+                "We can convert this directly into native Android & iOS mobile apps with push notifications, offline mode, and biometric auth.\n\n"
+                "• *Starter Android APK:* ₹15,000 (Complete native bundle)\n"
+                "• *Dual Platform (Android + iOS):* ₹25,000 (App Store & Play Store ready)\n\n"
+                "Would you like us to generate a mobile preview package for your website?"
+            )
         return (
             "Got your website URL! 🛡️\n\n"
             "We can initiate a security vulnerability scan or review right away. Would you prefer:\n"
             "• *AlphaG1 (Basic Audit):* ₹1,999 (Under 5-minute automated scan for SQLi & XSS)\n"
-            "• *AlphaG5 (Advanced Audit):* ₹4,999 (In-depth API & IDOR vulnerability testing — Most Popular)\n\n"
+            "• *AlphaG5 (Advanced Audit):* ₹4,999 (In-depth API & IDOR vulnerability testing — Most Popular)\n"
+            "• *AlphaG3 (Full Pentest):* ₹9,999 (Comprehensive manual penetration testing)\n\n"
             "Let me know which tier you'd like, and I'll confirm your scan!"
+        )
+
+    # 4. Pricing & Quotes (Prioritized over generic topic keywords)
+    if any(w in words for w in ["price", "cost", "rate", "quote", "charges", "estimate", "pricing"]) or "how much" in p:
+        if wants_link:
+            return "Here is our complete online pricing breakdown: https://www.growhaz.in/pricing"
+        if any(w in words for w in ["app", "appify", "apk", "mobile"]) or "appify" in top_target:
+            return (
+                "📱 *Appify Mobile App Conversion Pricing*\n\n"
+                "• *Starter Android APK:* ₹15,000 (Native Android APK + push notifications + offline cache)\n"
+                "• *Full Android & iOS Store Package:* ₹25,000 (Dual platform, Play Store & App Store ready, biometric login)\n\n"
+                "Would you like us to build your mobile app? Just share your website URL!"
+            )
+        if any(w in words for w in ["security", "scan", "vulnerability", "alphag5", "alphag1", "alphag3", "audit"]) or "service_alphag5_audit" in top_target:
+            return (
+                "🛡️ *Growhaz Security Audit Pricing*\n\n"
+                "• *AlphaG1 (Basic Audit):* ₹1,999 (Automated scan for SQLi & XSS in under 5 minutes)\n"
+                "• *AlphaG5 (Advanced Audit):* ₹4,999 (Full API & IDOR testing + 24hr remediation PDF — Most Popular)\n"
+                "• *AlphaG3 (Comprehensive Pentest):* ₹9,999 (Human hacker validation & zero-day checks)\n\n"
+                "Send over your website URL to initiate your scan!"
+            )
+        if any(w in words for w in ["web", "website", "develop", "development"]):
+            return (
+                "💻 *Growhaz Web Development Pricing*\n\n"
+                "• *Static SEO Website:* ₹20,000 (100% Google Lighthouse score, lightning fast)\n"
+                "• *Dynamic Full-Stack Web App:* Starting at ₹60,000 (Custom CRM, payment gateway, user auth, dynamic database)\n\n"
+                "Tell us about your project requirements, and we'll prepare a custom milestone quote!"
+            )
+        return (
+            "💰 *Growhaz Pricing Overview*\n\n"
+            "• *Security Scans:* AlphaG1 (₹1,999) | AlphaG5 (₹4,999) | AlphaG3 (₹9,999)\n"
+            "• *Appify Mobile App:* Android APK (₹15,000) | Android + iOS (₹25,000)\n"
+            "• *Web Development:* Static (₹20,000) | Dynamic (From ₹60,000)\n"
+            "• *SEO & Speed:* ₹8,000 one-time | ₹10,000/mo ongoing\n"
+            "• *Workflow Automation:* From ₹8,000\n\n"
+            "Which service would you like a customized quote for?"
         )
 
     # 5. Process / "How does it work" / "How to start"
     if any(w in p for w in ["how does it work", "how it works", "process", "steps", "how to start", "timeline", "how long"]):
+        if "appify" in top_target:
+            return (
+                "⚙️ *How Appify Works*\n\n"
+                "1️⃣ *Submit URL:* Send us your website or web app URL.\n"
+                "2️⃣ *App Engine Compilation:* We bundle native Android APK & iOS build with push notification SDK.\n"
+                "3️⃣ *Delivery:* You receive testing APK in 3-5 days ready for Google Play & App Store upload.\n\n"
+                "Ready to transform your site into an app?"
+            )
         return (
             "⚙️ *How Growhaz Works*\n\n"
             "1️⃣ *Submit Details:* Send us your website or application URL.\n"
@@ -114,19 +182,44 @@ def run_smart_customer_support_fallback(user_prompt: str, history: Optional[List
             "Would you like us to run a preliminary check on your website today?"
         )
 
-    # 6. Greetings (Only if first interaction; never repeat if conversation is active!)
-    if any(p == w or p.startswith(w + " ") or p.endswith(" " + w) for w in ["hi", "hello", "hey", "hola", "namaste", "good morning", "good evening", "good afternoon"]):
+    has_substantive_intent = any(w in words for w in [
+        "scan", "security", "vulnerability", "audit", "alphag1", "alphag5", "alphag3",
+        "app", "appify", "apk", "android", "ios",
+        "website", "web", "develop", "development",
+        "price", "cost", "rate", "quote", "charges", "pricing"
+    ]) or has_url or any(phrase in p for phrase in ["how much", "how does it work", "how it works", "scanning options", "scanning"])
+
+    # 6. Greetings (Only if pure greeting or no substantive intent)
+    is_greeting = any(w in words for w in ["hi", "hello", "hey", "hola", "namaste"]) or any(phrase in p for phrase in ["good morning", "good evening", "good afternoon"])
+    if is_greeting and not has_substantive_intent:
         if has_history:
-            return (
-                "Hey again! 👋 How can I assist you further with your project or security audit?"
-            )
+            if has_dna_memory and top_target:
+                target_name = top_target.replace("service_", "").replace("_", " ").title()
+                return f"Hey again! 👋 Happy to continue where we left off regarding {target_name}. How can I assist you further?"
+            return "Hey again! 👋 How can I assist you further with your project or security audit?"
         return (
             "Hey there! 👋 Welcome to Growhaz.\n\n"
             "How can I help you today? Feel free to ask about our website security scanning, mobile app conversion, web development, or pricing!"
         )
 
-    # 7. Services / What do you offer
-    if any(w in p for w in ["service", "services", "provide", "providing", "offer", "offering", "solution", "solutions", "what do you do", "what can you do", "list"]):
+    # 7. Confirmation / Agreement / "Yes" / "Ok" / "Sure" / "Go ahead"
+    if any(w in words for w in ["yes", "yeah", "yep", "sure", "ok", "okay", "interested", "proceed"]) or any(phrase in p for phrase in ["go ahead", "start now"]):
+        if "appify" in top_target or any(w in words for w in ["app", "mobile"]):
+            return (
+                "Awesome! 🎉 To start your mobile app conversion, please share:\n"
+                "1. Your website or store URL\n"
+                "2. Your app name and preferred primary brand color\n\n"
+                "Our team will prepare your native Android APK demo!"
+            )
+        return (
+            "Awesome! 🎉 To get started, please share:\n"
+            "1. Your website or app URL\n"
+            "2. The best email address to send the detailed report/quote\n\n"
+            "Our technical team will review it and initiate your service right away!"
+        )
+
+    # 8. Services / What do you offer
+    if any(w in words for w in ["service", "services", "provide", "providing", "offer", "offering", "solution", "solutions"]) or any(phrase in p for phrase in ["what do you do", "what can you do", "list services"]):
         if wants_link:
             return (
                 "Here are our official service portals:\n\n"
@@ -149,13 +242,11 @@ def run_smart_customer_support_fallback(user_prompt: str, history: Optional[List
             "Which of these would you like to know more about?"
         )
 
-    # 8. Security Scans specifically
-    if any(w in p for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "alphag3", "audit", "firewall"]):
+    # 9. Security Scans specifically
+    if any(w in words for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "alphag3", "audit", "firewall", "sqli", "xss", "idor"]):
         if wants_link:
-            return (
-                "You can launch a security vulnerability scan directly on our portal here: https://www.growhaz.in/security-tools"
-            )
-        return (
+            return "You can launch a security vulnerability scan directly on our portal here: https://www.growhaz.in/security-tools"
+        reply = (
             "🛡️ *Growhaz Website Security Scans*\n\n"
             "We offer automated vulnerability scanning that discovers SQLi, XSS, IDOR, and API flaws in under 5 minutes:\n\n"
             "• *AlphaG1 (Basic Audit):* ₹1,999 per scan\n"
@@ -163,19 +254,31 @@ def run_smart_customer_support_fallback(user_prompt: str, history: Optional[List
             "• *AlphaG3 (Full Pentest):* ₹9,999 per scan\n\n"
             "Would you like us to run a scan on your website? Just send me your website URL!"
         )
+        if reply == last_bot_reply:
+            return (
+                "🛡️ We are ready to scan! Please provide your website or target IP address, "
+                "and let us know if you want the AlphaG1 (₹1,999) or AlphaG5 (₹4,999) audit tier."
+            )
+        return reply
 
-    # 9. Appify / Mobile App Conversion
-    if any(w in p for w in ["app", "appify", "apk", "android", "ios", "convert to app"]):
+    # 10. Appify / Mobile App Conversion
+    if any(w in words for w in ["app", "appify", "apk", "android", "ios"]) or any(phrase in p for phrase in ["convert to app", "mobile app"]):
         if wants_link:
             return "You can check out our Appify mobile conversion packages here: https://www.growhaz.in/development"
-        return (
+        reply = (
             "📱 *Appify by Growhaz*\n\n"
             "We convert any website or web application into fast native Android (APK) & iOS apps with push notifications, biometric login, and offline caching.\n\n"
             "Do you have an existing website URL you'd like to convert into a mobile app?"
         )
+        if reply == last_bot_reply:
+            return (
+                "📱 For your mobile app conversion: We can start with your Android APK right away. "
+                "Please share your website or store URL, and we'll review your compatibility and generate a demo preview!"
+            )
+        return reply
 
-    # 10. Web Development
-    if any(w in p for w in ["website", "develop", "web development", "design", "redesign", "full stack", "react"]):
+    # 11. Web Development
+    if any(w in words for w in ["website", "develop", "development", "design", "redesign", "react", "ecommerce", "store"]):
         if wants_link:
             return "You can explore our web development services here: https://www.growhaz.in/development"
         return (
@@ -185,27 +288,43 @@ def run_smart_customer_support_fallback(user_prompt: str, history: Optional[List
             "Tell me a little about your project requirements, and we can prepare a tailored roadmap for you!"
         )
 
-    # 11. Pricing & Quotes
-    if any(w in p for w in ["price", "cost", "rate", "quote", "how much", "charges", "estimate", "pricing"]):
-        if wants_link:
-            return "Here is our complete online pricing breakdown: https://www.growhaz.in/pricing"
+    # 12. Dynamic DNA Grounded Response (When DNA nodes are active)
+    if "service_alphag5_audit" in activated_nodes or "service_alphag1_audit" in activated_nodes or "service_alphag3_audit" in activated_nodes:
+        reply = (
+            "🛡️ Regarding website security: We can audit your platform against SQL injection, XSS, and authorization flaws with our Alpha G5 engine in under 5 minutes.\n\n"
+            "Would you like us to run a check? Send over your website or API endpoint URL to begin!"
+        )
+        if reply != last_bot_reply:
+            return reply
+
+    if "service_appify_mobile" in activated_nodes:
+        reply = (
+            "📱 Regarding mobile conversion: With Appify, we bundle your web application into high-performance native Android & iOS builds.\n\n"
+            "Feel free to share your website link, and we'll review it for mobile app conversion."
+        )
+        if reply != last_bot_reply:
+            return reply
+
+    if "service_dynamic_webapp" in activated_nodes or "service_static_website" in activated_nodes:
+        reply = (
+            "💻 Regarding web development: Whether you need an ultra-fast static site or a custom dynamic full-stack portal with payments and CRM, we can build it.\n\n"
+            "Could you share a brief summary of what your project needs?"
+        )
+        if reply != last_bot_reply:
+            return reply
         return (
-            "💰 *Growhaz Pricing Overview*\n\n"
-            "• *Security Scans:* AlphaG1 (₹1,999) | AlphaG5 (₹4,999) | AlphaG3 (₹9,999)\n"
-            "• *Web Development:* Static (₹20,000) | Dynamic (From ₹60,000)\n"
-            "• *SEO:* ₹8,000 one-time | ₹10,000/mo ongoing\n"
-            "• *Workflow Automation:* From ₹8,000\n\n"
-            "Which service do you need a customized quote for?"
+            "💻 Regarding web development: Whether you need an ultra-fast static site or a custom dynamic full-stack portal with payments and CRM, we can build it.\n\n"
+            "Could you share a brief summary of what your project needs?"
         )
 
-    # 12. Context-aware follow-up (when conversation is active)
+    # 13. Context-aware follow-up (when conversation is active)
     if has_history:
         return (
             "Got it! Could you tell me a bit more about what you're looking for, or share your website / project details? "
             "I'll help you pick the best solution right away."
         )
 
-    # 13. Default first-contact message
+    # 14. Default first-contact message
     if wants_link:
         return (
             "Here are the official Growhaz links:\n\n"
@@ -235,26 +354,33 @@ def generate_ai_reply(
     """
     start = time.time()
 
-    # 1. Retrieve Dynamic DNA Memory
-    dna_context = ""
-    if customer_id:
-        try:
-            from api.dna_service import dynamic_dna
-            dna_context = dynamic_dna.format_memory_for_ai(customer_id)
-        except Exception as e:
-            logger.debug(f"Could not load DNA memory context: {e}")
+    # -------------------------------------------------------------
+    # STEP 1 & 2: First, the message goes directly to the DNA Modal.
+    # The DNA Modal discovers related relationships and active memories.
+    # -------------------------------------------------------------
+    dna_analysis = {}
+    graph_context = ""
+    try:
+        from api.dna_service import dynamic_dna
+        dna_analysis = dynamic_dna.process_message_through_dna(
+            customer_id=customer_id or "guest",
+            message=user_prompt
+        )
+        graph_context = dna_analysis.get("graph_context", "")
+    except Exception as e:
+        logger.debug(f"DNA processing error: {e}")
 
+    # STEP 3: Inject DNA Modal's activated relationships into AI System Prompt
     system_prompt = CUSTOMER_SUPPORT_SYSTEM_PROMPT
-    if dna_context:
-        system_prompt += "\n" + dna_context
+    if graph_context:
+        system_prompt += "\n\n" + graph_context
 
-    # 2. Retrieve Multi-Turn Conversation History from Database
+    # Retrieve Multi-Turn Conversation History from Database
     conversation_history = []
     if customer_id:
         try:
             from api import db
             raw_history = db.get_messages(phone_number=customer_id, limit=8)
-            # Exclude current prompt if already inserted
             for m in raw_history:
                 text = (m.get("message") or "").strip()
                 if text and not text.startswith("📷") and not text.startswith("📄"):
@@ -329,5 +455,10 @@ def generate_ai_reply(
 
     # 5. Smart Context-Aware Fallback (Never repeats identical canned text)
     latency = round((time.time() - start) * 1000, 2)
-    reply = run_smart_customer_support_fallback(user_prompt, history=conversation_history, customer_id=customer_id)
+    reply = run_smart_customer_support_fallback(
+        user_prompt,
+        history=conversation_history,
+        customer_id=customer_id,
+        dna_analysis=dna_analysis
+    )
     return reply, max(latency, 10.0), "Customer Support Agent"

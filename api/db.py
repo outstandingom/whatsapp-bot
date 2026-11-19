@@ -338,12 +338,15 @@ def get_messages(phone_number: str = None, limit: int = 500):
         if phone_number:
             clean = str(phone_number).replace("+", "").strip()
             cursor.execute("""
-                SELECT * FROM messages 
-                WHERE phone_number = ? 
-                   OR phone_number = ? 
-                   OR REPLACE(phone_number, '+', '') = ?
-                ORDER BY created_at ASC, id ASC 
-                LIMIT ?
+                SELECT * FROM (
+                    SELECT * FROM messages 
+                    WHERE phone_number = ? 
+                       OR phone_number = ? 
+                       OR REPLACE(phone_number, '+', '') = ?
+                    ORDER BY created_at DESC, id DESC 
+                    LIMIT ?
+                )
+                ORDER BY created_at ASC, id ASC
             """, (phone_number, f"+{clean}", clean, limit))
         else:
             cursor.execute("""
