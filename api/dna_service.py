@@ -61,8 +61,8 @@ class DynamicDNAManager:
         if not self.system:
             return
 
-        # Check if already seeded with demo relationships
-        rels = self.system.relation_registry.retrieve_relations(relation_type="founded_by")
+        # Check if already seeded with updated payment & domain relationships
+        rels = self.system.relation_registry.retrieve_relations(relation_type="accepts_payment_method")
         if rels and len(rels) > 0:
             return
 
@@ -82,7 +82,7 @@ class DynamicDNAManager:
             return
 
         # If already seeded with core assemblies, skip
-        if self.system.assembly_engine.count() >= 5:
+        if "service_alphag5_audit" in self.system.assembly_engine._assemblies:
             return
 
         logger.info("Dynamically ingesting Growhaz catalog into DNA Memory System...")
@@ -254,6 +254,14 @@ class DynamicDNAManager:
         manifest = self.system.compose_product(
             name=name,
             components=feature_atoms,
+            custom_id=item_id
+        )
+
+        # 2b. Register assembly in AssemblyEngine for hierarchical spreading activation
+        self.system.assembly_engine.create_assembly(
+            assembly_type=item_type,
+            component_ids=[a.id for a in feature_atoms],
+            metadata={"name": name, "item_type": item_type},
             custom_id=item_id
         )
 
@@ -552,25 +560,42 @@ class DynamicDNAManager:
 
         # 4. Extract Relational Bonds for activated nodes
         discovered_relations = []
+        natural_facts = []
         for nid in top_node_ids:
             rels = self.system.relation_registry.retrieve_relations(subject_id=nid)
             rels += self.system.relation_registry.retrieve_relations(object_id=nid)
-            for r in rels[:3]:
+            for r in rels[:4]:
+                if r.relation_type.startswith("inverse_") or r.relation_type.startswith("is_synonym"):
+                    continue
                 rel_str = f"{r.subject_id} --[{r.relation_type}]--> {r.object_id}"
                 if rel_str not in discovered_relations:
                     discovered_relations.append(rel_str)
+                    
+                    # Also build human-natural fact string
+                    s_name = r.subject_id.replace("company_", "").replace("service_", "").replace("person_", "").replace("payment_", "").replace("_", " ").title()
+                    obj_atom = self.system.dna_registry.get(r.object_id)
+                    o_name = (obj_atom.value if obj_atom else r.object_id).replace("price_inr_", "₹").replace("_", " ").title()
+                    rel_name = r.relation_type.replace("_", " ")
+                    natural_facts.append(f"{s_name} {rel_name}: {o_name}")
 
         # 5. Analyze customer predictive intent & recurrence cadence
         prediction = self.system.predict_next_action(clean_cust_id)
 
-        # 6. Ingest current interaction into episodic memory (link customer to top activated target)
-        primary_target = prediction.get("predicted_target") or (top_node_ids[0] if top_node_ids else "general_topic")
-        self.record_interaction(
-            customer_id=clean_cust_id,
-            action="inquired",
-            target_id=primary_target,
-            attributes={"query_snippet": message[:60]}
-        )
+        # 6. Ingest current interaction into episodic memory (link customer to relevant target)
+        service_target = None
+        for nid in top_node_ids:
+            if nid.startswith("service_"):
+                service_target = nid
+                break
+        
+        primary_target = service_target or "general_inquiry"
+        if primary_target != "general_inquiry":
+            self.record_interaction(
+                customer_id=clean_cust_id,
+                action="inquired",
+                target_id=primary_target,
+                attributes={"query_snippet": message[:60]}
+            )
 
         # 7. Build Structured Graph Context for AI
         context_parts = [
@@ -584,16 +609,20 @@ class DynamicDNAManager:
                 label = k.replace("has_", "").title()
                 context_parts.append(f"  - {label}: {v}")
 
-        if activated_nodes:
-            node_desc = ", ".join(f"{n['id']} ({n['activation_score']:.2f})" for n in activated_nodes[:4])
-            context_parts.append(f"• Highly Activated Concept Nodes: {node_desc}")
-
-        if discovered_relations:
+        if natural_facts:
+            context_parts.append("• Verified Domain Knowledge (from DNA Vector Graph):")
+            for fact in natural_facts[:6]:
+                context_parts.append(f"  └─ {fact}")
+        elif discovered_relations:
             context_parts.append("• Discovered Relational Bonds:")
             for r in discovered_relations[:4]:
                 context_parts.append(f"  └─ {r}")
 
-        if prediction and prediction.get("predicted_event") != "unknown":
+        if activated_nodes:
+            node_desc = ", ".join(f"{n['id']} ({n['activation_score']:.2f})" for n in activated_nodes[:4])
+            context_parts.append(f"• Active Semantic Nodes: {node_desc}")
+
+        if service_target and prediction and prediction.get("predicted_event") != "unknown":
             context_parts.append(
                 f"• Customer Memory & Pattern: Top Preference '{prediction.get('predicted_target')}', "
                 f"Anticipated Need '{prediction.get('predicted_event')}' ({prediction.get('predicted_window')}, "
@@ -608,6 +637,7 @@ class DynamicDNAManager:
             "newly_learned_facts": newly_learned,
             "activated_nodes": activated_nodes,
             "relationships": discovered_relations,
+            "natural_facts": natural_facts,
             "prediction": prediction,
             "graph_context": "\n".join(context_parts)
         }

@@ -129,6 +129,51 @@ def run_smart_customer_support_fallback(
         role = newly_learned["has_role"]
         return f"Great to connect with a {role}! How can Growhaz assist your work today?"
 
+    # 0d. Payment Methods & Invoicing
+    if any(w in words for w in ["pay", "payment", "payments", "upi", "card", "cards", "netbanking", "stripe", "gpay", "phonepe", "paytm", "invoice", "gst"]) or any(phrase in p for phrase in ["how to pay", "how can i pay", "credit card", "debit card", "payment method", "payment methods", "payment option", "payment options", "mode of payment", "accept payment"]):
+        return (
+            "💳 *Accepted Payment Methods at Growhaz:*\n\n"
+            "• *UPI:* Instant payment via Google Pay, PhonePe, Paytm, and BHIM UPI.\n"
+            "• *Cards:* All major Credit & Debit cards (Visa, MasterCard, RuPay, Amex).\n"
+            "• *NetBanking:* Supported across all major Indian banks.\n"
+            "• *Bank Transfer (NEFT/IMPS/RTGS):* Available for corporate and milestone contracts.\n"
+            "• *International:* Stripe & Wire Transfer for global clients (USD, EUR, GBP).\n\n"
+            "We issue official GST-compliant tax invoices for all transactions."
+        )
+
+    # 0e. Founder & Leadership
+    if any(phrase in p for phrase in ["founder", "who is om uikey", "om uikey", "who started growhaz", "who founded growhaz", "who created growhaz", "who owns growhaz", "leadership", "ceo"]):
+        return (
+            "👤 *Leadership at Growhaz:*\n\n"
+            "Growhaz was founded by *Om Uikey*, who serves as the Founder and Lead AI Architect.\n\n"
+            "He leads our research in AI cognitive architectures, the proprietary DNA Memory System, and full-stack cybersecurity audit engines (AlphaG series)."
+        )
+
+    # 0f. Delivery Timeline & Turnaround
+    if any(phrase in p for phrase in ["turnaround", "how long does it take", "how long will it take", "delivery time", "when will i receive", "when do i get"]):
+        return (
+            "⏱️ *Growhaz Service Turnaround Times:*\n\n"
+            "• *AlphaG1 Basic Security Scan:* Under 5 minutes (Instant automated scan & results)\n"
+            "• *AlphaG5 Advanced Audit:* Within 24 hours (Comprehensive PDF report with remediation code fixes)\n"
+            "• *AlphaG3 Penetration Test:* 3–5 business days (In-depth manual ethical hacker testing)\n"
+            "• *Appify Mobile Conversion:* 3–5 business days (Production-ready Android APK & iOS build)\n"
+            "• *Static Website:* 5–7 business days (100% Google Lighthouse score)\n"
+            "• *Custom Dynamic Web App:* 2–4 weeks based on milestone scope\n\n"
+            "Which project do you need estimated?"
+        )
+
+    # 0g. Company Background & Contact
+    if any(phrase in p for phrase in ["about growhaz", "what is growhaz", "where are you located", "contact details", "contact email", "headquarters"]):
+        return (
+            "🏢 *About Growhaz Technologies:*\n\n"
+            "Growhaz is a technology and cybersecurity solutions firm based in India, founded by Om Uikey.\n\n"
+            "• *Core Solutions:* AlphaG security scanning, Appify mobile app conversion, custom full-stack web platforms, and blockchain verification.\n"
+            "• *Headquarters:* India\n"
+            "• *Official Website:* https://www.growhaz.in\n"
+            "• *Official Email:* info.growhaz@gmail.com\n"
+            "• *WhatsApp Support:* Available directly here 24/7!"
+        )
+
     # 1. Human Handover Request
     if any(w in words for w in ["human", "agent", "person", "representative", "specialist"]) or any(phrase in p for phrase in ["talk to someone", "call me"]):
         res = (
@@ -333,6 +378,23 @@ def run_smart_customer_support_fallback(
         )
 
     # 12. Dynamic DNA Grounded Response (When DNA nodes are active)
+    if any(n in activated_nodes for n in ["payment_upi", "payment_credit_debit_cards", "payment_netbanking", "payment_methods"]):
+        return (
+            "💳 *Accepted Payment Methods at Growhaz:*\n\n"
+            "• *UPI:* Instant payment via Google Pay, PhonePe, Paytm, and BHIM UPI.\n"
+            "• *Cards:* All major Credit & Debit cards (Visa, MasterCard, RuPay, Amex).\n"
+            "• *NetBanking:* Supported across all major Indian banks.\n"
+            "• *Bank Transfer (NEFT/IMPS/RTGS):* Available for corporate and milestone contracts.\n"
+            "• *International:* Stripe & Wire Transfer for global clients (USD, EUR, GBP).\n\n"
+            "We issue official GST-compliant tax invoices for all transactions."
+        )
+
+    if "person_om_uikey" in activated_nodes:
+        return (
+            "👤 Growhaz was founded by *Om Uikey*, Lead AI Architect & Founder.\n\n"
+            "He leads our research in AI cognitive architectures, the proprietary DNA Memory System, and full-stack cybersecurity audit engines."
+        )
+
     if "service_alphag5_audit" in activated_nodes or "service_alphag1_audit" in activated_nodes or "service_alphag3_audit" in activated_nodes:
         reply = (
             "🛡️ Regarding website security: We can audit your platform against SQL injection, XSS, and authorization flaws with our Alpha G5 engine in under 5 minutes.\n\n"
