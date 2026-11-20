@@ -90,6 +90,45 @@ def run_smart_customer_support_fallback(
             last_bot_reply = (h.get("message") or "").strip()
             break
 
+    customer_facts = dna.get("customer_facts", {})
+    newly_learned = dna.get("newly_learned_facts", {})
+    customer_name = customer_facts.get("has_name") or ""
+
+    # 0a. User asks for their name / identity from long-term memory
+    asks_for_name = any(phrase in p for phrase in [
+        "what is my name", "what's my name", "who am i", "do you know my name",
+        "do you remember my name", "tell me my name", "my name?", "my name is what", "what was my name"
+    ])
+    if asks_for_name:
+        if customer_name:
+            first = customer_name.split()[0]
+            return f"Your name is {customer_name}! 😊 I have it remembered in my long-term memory. How can I assist you today, {first}?"
+        return "I don't think you've told me your name yet! What should I call you?"
+
+    # 0b. User asks for their company / website from memory
+    if any(phrase in p for phrase in ["what is my company", "what's my company", "where do i work", "my company?"]):
+        comp = customer_facts.get("has_company")
+        if comp:
+            return f"You're with {comp}! How can I assist with your company's technical requirements?"
+        return "You haven't mentioned your company yet! What organization are you with?"
+
+    if any(phrase in p for phrase in ["what is my website", "what's my website", "what website did i give you", "my website?"]):
+        site = customer_facts.get("has_website")
+        if site:
+            return f"Your website is {site}! Would you like us to run a security vulnerability scan on it?"
+        return "You haven't shared your website URL yet! Feel free to send it over anytime."
+
+    # 0c. User just stated their profile facts in this message
+    if "has_name" in newly_learned:
+        name = newly_learned["has_name"]
+        return f"Nice to meet you, {name}! 😊 I've saved that in my long-term memory. How can I assist you with Growhaz services today?"
+    if "has_company" in newly_learned:
+        comp = newly_learned["has_company"]
+        return f"Noted that you're with {comp}! 🏢 How can Growhaz help support your team and business today?"
+    if "has_role" in newly_learned:
+        role = newly_learned["has_role"]
+        return f"Great to connect with a {role}! How can Growhaz assist your work today?"
+
     # 1. Human Handover Request
     if any(w in words for w in ["human", "agent", "person", "representative", "specialist"]) or any(phrase in p for phrase in ["talk to someone", "call me"]):
         res = (
@@ -192,6 +231,11 @@ def run_smart_customer_support_fallback(
     # 6. Greetings (Only if pure greeting or no substantive intent)
     is_greeting = any(w in words for w in ["hi", "hello", "hey", "hola", "namaste"]) or any(phrase in p for phrase in ["good morning", "good evening", "good afternoon"])
     if is_greeting and not has_substantive_intent:
+        if customer_name:
+            first = customer_name.split()[0]
+            if has_history:
+                return f"Hey {first}! 👋 Happy to have you back. How can I assist you further today?"
+            return f"Hey {first}! 👋 Welcome to Growhaz. How can I help you today?"
         if has_history:
             if has_dna_memory and top_target:
                 target_name = top_target.replace("service_", "").replace("_", " ").title()
