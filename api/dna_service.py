@@ -364,152 +364,32 @@ class DynamicDNAManager:
 
     def extract_and_encode_user_facts(self, customer_id: str, message: str) -> Dict[str, str]:
         """
-        DNA Fact Learning Algorithm:
-        Extracts entities and relational facts from incoming user dialogue,
-        encodes them into Atomic DNA units, binds them via holographic Relation DNA (R_ABC),
-        and dynamically updates the Customer's Long-Term Memory Profile Assembly.
+        Universal DNA Fact Extraction & Encoding:
+        Uses the core UniversalUserMemory engine to learn user identities and traits into Relational DNA.
         """
         if not self.system:
             return {}
-
         clean_cust_id = customer_id.strip()
-        learned = {}
-        m = message.strip()
-
-        # 1. User Name Extraction
-        # Matches "my name is Om Uikey", "I am Om Uikey", "myself Om Uikey", "call me Om", "this is Om Uikey", etc.
-        name_match = re.search(
-            r'(?:my name is|i am|i\'m|myself|call me|name is|this is)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',
-            m,
-            re.IGNORECASE
-        )
-        if name_match:
-            candidate = name_match.group(1).strip()
-            # Filter out non-names
-            stopwords = {
-                "looking", "interested", "here", "ready", "fine", "good", "a", "an", "the",
-                "not", "just", "trying", "wondering", "asking", "happy", "new", "website",
-                "app", "customer", "user", "client", "human", "specialist", "agent", "person",
-                "having", "getting", "facing", "experiencing", "reporting"
-            }
-            words = candidate.lower().split()
-            if candidate and not any(w in stopwords for w in words) and len(candidate) > 1:
-                clean_name = " ".join(w.capitalize() for w in words)
-                learned["has_name"] = clean_name
-
-        # 2. Company / Business Extraction
-        comp_match = re.search(
-            r'(?:my company is|i work at|my startup is|my business is|our company is)\s+([A-Za-z0-9\.\-_ ]+?)(?:\.|\,|$|\n)',
-            m,
-            re.IGNORECASE
-        )
-        if comp_match:
-            candidate_comp = comp_match.group(1).strip()
-            if len(candidate_comp) > 1:
-                learned["has_company"] = candidate_comp
-
-        # 3. Website Extraction
-        url_match = re.search(
-            r'(https?://[^\s]+|[a-zA-Z0-9-]+\.(com|in|org|net|io|co|ai|app)[^\s]*)',
-            m,
-            re.IGNORECASE
-        )
-        if url_match:
-            learned["has_website"] = url_match.group(1).strip()
-
-        # 4. Email Extraction
-        email_match = re.search(
-            r'([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)',
-            m
-        )
-        if email_match:
-            learned["has_email"] = email_match.group(1).strip()
-
-        # 5. Role Extraction
-        role_match = re.search(
-            r'(?:i am a|i am the|i\'m a|i\'m the)\s+(founder|co-founder|developer|engineer|ceo|cto|owner|manager|designer|director)',
-            m,
-            re.IGNORECASE
-        )
-        if role_match:
-            learned["has_role"] = role_match.group(1).capitalize()
-
-        # Encode each learned fact into DNA vector memory
+        learned = self.system.extract_and_remember(clean_cust_id, message)
         if learned:
-            # Ensure customer atom exists
-            self.system.register_concept(
-                value=clean_cust_id,
-                concept_type="customer",
-                source="interaction_stream",
-                custom_id=clean_cust_id
-            )
-
-            for rel_type, val in learned.items():
-                slug = re.sub(r'[^a-z0-9_]', '', val.lower().replace(' ', '_'))[:30]
-                fact_atom_id = f"fact_{rel_type}_{slug}"
-
-                # Register concept atom
-                atom = self.system.register_concept(
-                    value=str(val),
-                    concept_type="customer_attribute",
-                    source="dialogue_extraction",
-                    custom_id=fact_atom_id
-                )
-
-                # Bind holographic relation S --[R]--> O
-                self.system.relation_registry.create_relation(
-                    subject_id=clean_cust_id,
-                    relation_type=rel_type,
-                    object_id=atom.id,
-                    confidence=1.0,
-                    strength=1.0
-                )
-
-                # Bind reciprocal relation O --[R^-1]--> S
-                self.system.relation_registry.create_relation(
-                    subject_id=atom.id,
-                    relation_type=f"is_{rel_type}_of",
-                    object_id=clean_cust_id,
-                    confidence=1.0,
-                    strength=0.9
-                )
-
-                # If name was learned, sync with database contact
-                if rel_type == "has_name":
-                    try:
-                        from api import db
-                        db.save_contact(phone_number=clean_cust_id, name=val)
-                    except Exception as e:
-                        logger.debug(f"Could not sync contact name to DB: {e}")
-
-            self.system.sync_index()
+            # Sync contact name to DB if learned
+            if "has_name" in learned:
+                try:
+                    from api import db
+                    db.save_contact(phone_number=clean_cust_id, name=learned["has_name"])
+                except Exception:
+                    pass
             self.save()
-            logger.info(f"DNA Fact Learning Algorithm learned for {clean_cust_id}: {learned}")
-
         return learned
 
     def decode_customer_facts(self, customer_id: str) -> Dict[str, str]:
         """
-        DNA Fact Decoding Algorithm:
-        Given customer ID, queries relational bonds in DNA memory,
-        resolves bound object concepts, and retrieves all known long-term memory facts.
+        Pillar 3: Universal Lossless Profile Reconstruction from the core DNA Model.
         """
         if not self.system:
             return {}
-
         clean_cust_id = customer_id.strip()
-        facts = {}
-
-        # 1. Query all relations where customer is subject (latest updates first)
-        rels = self.system.relation_registry.retrieve_relations(subject_id=clean_cust_id)
-        for r in reversed(rels):
-            if r.relation_type in ["has_name", "has_company", "has_website", "has_email", "has_role", "prefers", "inquired_about"]:
-                if r.relation_type not in facts:
-                    obj_atom = self.system.dna_registry.get(r.object_id)
-                    val = obj_atom.value if obj_atom else r.object_id
-                    facts[r.relation_type] = str(val)
-
-        # 2. If name not in relations, check if database has contact name
+        facts = self.system.reconstruct_user_profile(clean_cust_id)
         if "has_name" not in facts:
             try:
                 from api import db
@@ -517,29 +397,25 @@ class DynamicDNAManager:
                 if contact and contact.get("name") and contact["name"] != clean_cust_id:
                     name_val = contact["name"]
                     facts["has_name"] = name_val
-                    # Seed into DNA memory so it becomes a permanent relation
-                    atom = self.system.register_concept(value=name_val, concept_type="customer_attribute")
-                    self.system.relation_registry.create_relation(clean_cust_id, "has_name", atom.id)
+                    self.system.remember_user_fact(clean_cust_id, "has_name", name_val)
             except Exception:
                 pass
-
         return facts
 
     def process_message_through_dna(self, customer_id: str, message: str) -> Dict[str, Any]:
         """
-        Step 1 & 2 of the DNA Architecture:
-        1. Fact Extraction & Dynamic DNA Encoding from incoming message.
-        2. Customer Long-Term Memory Profile Decoding.
-        3. Spreading Activation over vector memory for semantic retrieval.
-        4. Extracts related relationship bonds (R_ABC).
-        5. Analyzes customer cadence and predicted behavior.
-        6. Packages structured knowledge graph context ready for the AI.
+        Universal Cognitive Memory Pipeline:
+        1. Fact Extraction into Relational DNA (R_ABC).
+        2. User Profile Reconstruction (Pillar 3).
+        3. Spreading Activation & Query Grounding (Pillar 1 & 2).
+        4. Synthesizes Agent Grounding Context for any downstream LLM or agent.
         """
         if not self.system:
             return {
                 "customer_id": customer_id,
                 "customer_facts": {},
                 "newly_learned_facts": {},
+                "direct_answers": {},
                 "activated_nodes": [],
                 "relationships": [],
                 "prediction": {},
@@ -548,98 +424,38 @@ class DynamicDNAManager:
 
         clean_cust_id = customer_id.strip()
 
-        # 1. Extract and encode new facts from incoming message
+        # 1. Learn any new facts from message into core DNA memory
         newly_learned = self.extract_and_encode_user_facts(clean_cust_id, message)
 
-        # 2. Decode known customer long-term memory facts
-        customer_facts = self.decode_customer_facts(clean_cust_id)
+        # 2. Universal Agent Context Synthesis via Core DNA Architecture
+        agent_ctx = self.system.synthesize_agent_context(clean_cust_id, message, top_k=5)
 
-        # 3. Spreading Activation: Find related concepts/assemblies in vector memory
-        activated_nodes = self.system.search_memory(message, top_k=5)
-        top_node_ids = [n["id"] for n in activated_nodes]
-
-        # 4. Extract Relational Bonds for activated nodes
-        discovered_relations = []
-        natural_facts = []
-        for nid in top_node_ids:
-            rels = self.system.relation_registry.retrieve_relations(subject_id=nid)
-            rels += self.system.relation_registry.retrieve_relations(object_id=nid)
-            for r in rels[:4]:
-                if r.relation_type.startswith("inverse_") or r.relation_type.startswith("is_synonym"):
-                    continue
-                rel_str = f"{r.subject_id} --[{r.relation_type}]--> {r.object_id}"
-                if rel_str not in discovered_relations:
-                    discovered_relations.append(rel_str)
-                    
-                    # Also build human-natural fact string
-                    s_name = r.subject_id.replace("company_", "").replace("service_", "").replace("person_", "").replace("payment_", "").replace("_", " ").title()
-                    obj_atom = self.system.dna_registry.get(r.object_id)
-                    o_name = (obj_atom.value if obj_atom else r.object_id).replace("price_inr_", "₹").replace("_", " ").title()
-                    rel_name = r.relation_type.replace("_", " ")
-                    natural_facts.append(f"{s_name} {rel_name}: {o_name}")
-
-        # 5. Analyze customer predictive intent & recurrence cadence
+        # 3. Analyze customer cadence & predictions
         prediction = self.system.predict_next_action(clean_cust_id)
 
-        # 6. Ingest current interaction into episodic memory (link customer to relevant target)
+        # 4. Ingest interaction if service is referenced
         service_target = None
-        for nid in top_node_ids:
+        for nid in agent_ctx.active_concepts:
             if nid.startswith("service_"):
                 service_target = nid
                 break
-        
-        primary_target = service_target or "general_inquiry"
-        if primary_target != "general_inquiry":
+        if service_target:
             self.record_interaction(
                 customer_id=clean_cust_id,
                 action="inquired",
-                target_id=primary_target,
+                target_id=service_target,
                 attributes={"query_snippet": message[:60]}
             )
 
-        # 7. Build Structured Graph Context for AI
-        context_parts = [
-            f"[DNA KNOWLEDGE GRAPH ACTIVATION FOR CUSTOMER: {clean_cust_id}]",
-            f"• User Message: \"{message}\"",
-        ]
-
-        if customer_facts:
-            context_parts.append("• Customer Long-Term Memory Profile (Decoded from DNA):")
-            for k, v in customer_facts.items():
-                label = k.replace("has_", "").title()
-                context_parts.append(f"  - {label}: {v}")
-
-        if natural_facts:
-            context_parts.append("• Verified Domain Knowledge (from DNA Vector Graph):")
-            for fact in natural_facts[:6]:
-                context_parts.append(f"  └─ {fact}")
-        elif discovered_relations:
-            context_parts.append("• Discovered Relational Bonds:")
-            for r in discovered_relations[:4]:
-                context_parts.append(f"  └─ {r}")
-
-        if activated_nodes:
-            node_desc = ", ".join(f"{n['id']} ({n['activation_score']:.2f})" for n in activated_nodes[:4])
-            context_parts.append(f"• Active Semantic Nodes: {node_desc}")
-
-        if service_target and prediction and prediction.get("predicted_event") != "unknown":
-            context_parts.append(
-                f"• Customer Memory & Pattern: Top Preference '{prediction.get('predicted_target')}', "
-                f"Anticipated Need '{prediction.get('predicted_event')}' ({prediction.get('predicted_window')}, "
-                f"Cadence {prediction.get('estimated_interval_days')}d, Conf {prediction.get('confidence', 0)*100:.0f}%)"
-            )
-
-        context_parts.append("• INSTRUCTION: When responding, address the customer by their known name (if present) and recall their saved details naturally. Never output raw IDs; speak like a human expert.")
-
         return {
             "customer_id": clean_cust_id,
-            "customer_facts": customer_facts,
+            "customer_facts": agent_ctx.user_profile,
             "newly_learned_facts": newly_learned,
-            "activated_nodes": activated_nodes,
-            "relationships": discovered_relations,
-            "natural_facts": natural_facts,
+            "direct_answers": agent_ctx.direct_answers,
+            "activated_nodes": [{"id": c} for c in agent_ctx.active_concepts],
+            "relationships": agent_ctx.relevant_domain_facts,
             "prediction": prediction,
-            "graph_context": "\n".join(context_parts)
+            "graph_context": agent_ctx.prompt_context_string
         }
 
     def save(self):

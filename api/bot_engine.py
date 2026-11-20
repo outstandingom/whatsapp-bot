@@ -94,31 +94,9 @@ def run_smart_customer_support_fallback(
     newly_learned = dna.get("newly_learned_facts", {})
     customer_name = customer_facts.get("has_name") or ""
 
-    # 0a. User asks for their name / identity from long-term memory
-    asks_for_name = any(phrase in p for phrase in [
-        "what is my name", "what's my name", "who am i", "do you know my name",
-        "do you remember my name", "tell me my name", "my name?", "my name is what", "what was my name"
-    ])
-    if asks_for_name:
-        if customer_name:
-            first = customer_name.split()[0]
-            return f"Your name is {customer_name}! 😊 I have it remembered in my long-term memory. How can I assist you today, {first}?"
-        return "I don't think you've told me your name yet! What should I call you?"
+    direct_answers = dna.get("direct_answers", {})
 
-    # 0b. User asks for their company / website from memory
-    if any(phrase in p for phrase in ["what is my company", "what's my company", "where do i work", "my company?"]):
-        comp = customer_facts.get("has_company")
-        if comp:
-            return f"You're with {comp}! How can I assist with your company's technical requirements?"
-        return "You haven't mentioned your company yet! What organization are you with?"
-
-    if any(phrase in p for phrase in ["what is my website", "what's my website", "what website did i give you", "my website?"]):
-        site = customer_facts.get("has_website")
-        if site:
-            return f"Your website is {site}! Would you like us to run a security vulnerability scan on it?"
-        return "You haven't shared your website URL yet! Feel free to send it over anytime."
-
-    # 0c. User just stated their profile facts in this message
+    # 0a. User just stated profile facts in this dialogue turn (Immediate Learning Acknowledgment)
     if "has_name" in newly_learned:
         name = newly_learned["has_name"]
         return f"Nice to meet you, {name}! 😊 I've saved that in my long-term memory. How can I assist you with Growhaz services today?"
@@ -129,40 +107,40 @@ def run_smart_customer_support_fallback(
         role = newly_learned["has_role"]
         return f"Great to connect with a {role}! How can Growhaz assist your work today?"
 
-    # 0d. Payment Methods & Invoicing
-    if any(w in words for w in ["pay", "payment", "payments", "upi", "card", "cards", "netbanking", "stripe", "gpay", "phonepe", "paytm", "invoice", "gst"]) or any(phrase in p for phrase in ["how to pay", "how can i pay", "credit card", "debit card", "payment method", "payment methods", "payment option", "payment options", "mode of payment", "accept payment"]):
+    # 0b. Direct Relational DNA Knowledge Resolution (Pillars 1, 2, 3)
+    if "user_name" in direct_answers:
+        name = direct_answers["user_name"]
+        first = name.split()[0]
+        return f"Your name is {name}! 😊 I have it remembered in my long-term memory. How can I assist you today, {first}?"
+    if "user_company" in direct_answers:
+        comp = direct_answers["user_company"]
+        return f"You're with {comp}! How can I assist with your company's technical requirements?"
+    if "user_website" in direct_answers:
+        site = direct_answers["user_website"]
+        return f"Your website is {site}! Would you like us to run a security vulnerability scan on it?"
+    if "founder" in direct_answers:
+        founder = direct_answers["founder"]
         return (
-            "💳 *Accepted Payment Methods at Growhaz:*\n\n"
-            "• *UPI:* Instant payment via Google Pay, PhonePe, Paytm, and BHIM UPI.\n"
-            "• *Cards:* All major Credit & Debit cards (Visa, MasterCard, RuPay, Amex).\n"
-            "• *NetBanking:* Supported across all major Indian banks.\n"
-            "• *Bank Transfer (NEFT/IMPS/RTGS):* Available for corporate and milestone contracts.\n"
-            "• *International:* Stripe & Wire Transfer for global clients (USD, EUR, GBP).\n\n"
-            "We issue official GST-compliant tax invoices for all transactions."
+            f"👤 *Leadership at Growhaz:*\n\n"
+            f"Growhaz was founded by *{founder}*, who serves as the Founder and Lead AI Architect.\n\n"
+            f"He leads our research in AI cognitive architectures, the proprietary DNA Memory System, and full-stack cybersecurity audit engines."
         )
-
-    # 0e. Founder & Leadership
-    if any(phrase in p for phrase in ["founder", "who is om uikey", "om uikey", "who started growhaz", "who founded growhaz", "who created growhaz", "who owns growhaz", "leadership", "ceo"]):
+    if "payment_methods" in direct_answers:
         return (
-            "👤 *Leadership at Growhaz:*\n\n"
-            "Growhaz was founded by *Om Uikey*, who serves as the Founder and Lead AI Architect.\n\n"
-            "He leads our research in AI cognitive architectures, the proprietary DNA Memory System, and full-stack cybersecurity audit engines (AlphaG series)."
+            f"💳 *Accepted Payment Methods at Growhaz:*\n\n"
+            f"• *UPI:* Instant payment via Google Pay, PhonePe, Paytm, and BHIM UPI.\n"
+            f"• *Cards:* All major Credit & Debit cards (Visa, MasterCard, RuPay, Amex).\n"
+            f"• *NetBanking:* Supported across all major Indian banks.\n"
+            f"• *Bank Transfer (NEFT/IMPS/RTGS):* Available for corporate and milestone contracts.\n"
+            f"• *International:* Stripe & Wire Transfer for global clients (USD, EUR, GBP).\n\n"
+            f"We issue official GST-compliant tax invoices for all transactions."
         )
+    if "turnaround_times" in direct_answers:
+        times = direct_answers["turnaround_times"]
+        lines = [f"• *{s.replace('_', ' ').title()}:* {t.replace('_', ' ').title()}" for s, t in times.items()]
+        return "⏱️ *Growhaz Service Turnaround Times:*\n\n" + "\n".join(lines) + "\n\nWhich project do you need estimated?"
 
-    # 0f. Delivery Timeline & Turnaround
-    if any(phrase in p for phrase in ["turnaround", "how long does it take", "how long will it take", "delivery time", "when will i receive", "when do i get"]):
-        return (
-            "⏱️ *Growhaz Service Turnaround Times:*\n\n"
-            "• *AlphaG1 Basic Security Scan:* Under 5 minutes (Instant automated scan & results)\n"
-            "• *AlphaG5 Advanced Audit:* Within 24 hours (Comprehensive PDF report with remediation code fixes)\n"
-            "• *AlphaG3 Penetration Test:* 3–5 business days (In-depth manual ethical hacker testing)\n"
-            "• *Appify Mobile Conversion:* 3–5 business days (Production-ready Android APK & iOS build)\n"
-            "• *Static Website:* 5–7 business days (100% Google Lighthouse score)\n"
-            "• *Custom Dynamic Web App:* 2–4 weeks based on milestone scope\n\n"
-            "Which project do you need estimated?"
-        )
-
-    # 0g. Company Background & Contact
+    # 0c. General company info request
     if any(phrase in p for phrase in ["about growhaz", "what is growhaz", "where are you located", "contact details", "contact email", "headquarters"]):
         return (
             "🏢 *About Growhaz Technologies:*\n\n"
@@ -378,23 +356,6 @@ def run_smart_customer_support_fallback(
         )
 
     # 12. Dynamic DNA Grounded Response (When DNA nodes are active)
-    if any(n in activated_nodes for n in ["payment_upi", "payment_credit_debit_cards", "payment_netbanking", "payment_methods"]):
-        return (
-            "💳 *Accepted Payment Methods at Growhaz:*\n\n"
-            "• *UPI:* Instant payment via Google Pay, PhonePe, Paytm, and BHIM UPI.\n"
-            "• *Cards:* All major Credit & Debit cards (Visa, MasterCard, RuPay, Amex).\n"
-            "• *NetBanking:* Supported across all major Indian banks.\n"
-            "• *Bank Transfer (NEFT/IMPS/RTGS):* Available for corporate and milestone contracts.\n"
-            "• *International:* Stripe & Wire Transfer for global clients (USD, EUR, GBP).\n\n"
-            "We issue official GST-compliant tax invoices for all transactions."
-        )
-
-    if "person_om_uikey" in activated_nodes:
-        return (
-            "👤 Growhaz was founded by *Om Uikey*, Lead AI Architect & Founder.\n\n"
-            "He leads our research in AI cognitive architectures, the proprietary DNA Memory System, and full-stack cybersecurity audit engines."
-        )
-
     if "service_alphag5_audit" in activated_nodes or "service_alphag1_audit" in activated_nodes or "service_alphag3_audit" in activated_nodes:
         reply = (
             "🛡️ Regarding website security: We can audit your platform against SQL injection, XSS, and authorization flaws with our Alpha G5 engine in under 5 minutes.\n\n"
