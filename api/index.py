@@ -314,10 +314,34 @@ async def get_messages(phone: str = Query(None), limit: int = Query(200)):
 
 @app.get("/api/dashboard/dna/{phone}")
 async def get_customer_dna(phone: str):
-    """Retrieves customer's dynamic DNA predictions, top preferences, and recurrence cadence."""
+    """Retrieves customer's dynamic DNA predictions, decoded long-term facts, and relational bonds."""
     try:
-        pred = dynamic_dna.predict_customer_behavior(phone)
-        return JSONResponse({"success": True, "dna": pred})
+        clean_phone = phone.strip()
+        pred = dynamic_dna.predict_customer_behavior(clean_phone)
+        facts = dynamic_dna.decode_customer_facts(clean_phone)
+
+        rels_data = []
+        if dynamic_dna.system:
+            rels = dynamic_dna.system.relation_registry.retrieve_relations(subject_id=clean_phone)
+            for r in rels:
+                rels_data.append({
+                    "id": r.id,
+                    "subject": r.subject_id,
+                    "relation_type": r.relation_type,
+                    "object": r.object_id,
+                    "confidence": r.confidence,
+                    "strength": r.strength,
+                    "timestamp": r.timestamp
+                })
+
+        return JSONResponse({
+            "success": True,
+            "dna": {
+                "prediction": pred,
+                "facts": facts,
+                "relations": rels_data
+            }
+        })
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
