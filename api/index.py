@@ -808,15 +808,120 @@ async def direct_chat(request: Request):
 async def bulk_broadcast(request: Request):
     """
     Send WhatsApp messages to multiple leads/numbers with rate limiting and logging.
+    Supports both:
+    1. Static broadcast: { "phone_numbers": [...], "message": "..." }
+    2. Hyper-personalized AI campaign: { "personalized_messages": [ { "phone": "...", "message": "...", "name": "...", "category": "...", "area": "..." } ] }
     """
     data = await request.json()
+    personalized_items = data.get("personalized_messages", [])
     numbers_raw = data.get("phone_numbers", [])
-    message = (data.get("message") or "").strip()
+    default_message = (data.get("message") or "").strip()
     send_via_meta = data.get("send_via_meta", True)
     add_as_leads = data.get("add_as_leads", True)
     lead_source = (data.get("lead_source") or "Bulk Broadcast").strip()
     
-    if not message:
+    # -------------------------------------------------------------
+    # Case 1: Hyper-Personalized Broadcast (Each business has custom message)
+    # -------------------------------------------------------------
+    if personalized_items and isinstance(personalized_items, list):
+        results = []
+        sent_count = 0
+        failed_count = 0
+        
+        for item in personalized_items:
+            raw_phone = item.get("phone") or item.get("contact_number") or ""
+            digits = re.sub(r'[^0-9]', '', str(raw_phone))
+            if len(digits) == 10:
+                digits = "91" + digits
+                
+            lead_name = (item.get("name") or item.get("business_name") or "Business Lead").strip()
+            item_msg = (item.get("message") or item.get("personalized_message") or default_message).strip()
+            item_category = (item.get("category") or item.get("business_category") or "").strip()
+            item_area = (item.get("area") or item.get("area_or_locality") or "").strip()
+            
+            if not digits or len(digits) < 10:
+                failed_count += 1
+                results.append({
+                    "phone": raw_phone or "N/A",
+                    "name": lead_name,
+                    "status": "failed",
+                    "error": "Missing or invalid phone number (requires 10+ digits with country code)"
+                })
+                continue
+                
+            if not item_msg:
+                failed_count += 1
+                results.append({
+                    "phone": digits,
+                    "name": lead_name,
+                    "status": "failed",
+                    "error": "Message content was empty for this lead"
+                })
+                continue
+
+            status = "sent"
+            err_msg = None
+            meta_res = {}
+            
+            if send_via_meta:
+                success, meta_res = send_meta_whatsapp_message(digits, item_msg)
+                if success:
+                    status = "sent"
+                    sent_count += 1
+                else:
+                    status = "failed"
+                    failed_count += 1
+                    err_msg = str(meta_res.get("error", {}).get("message") if isinstance(meta_res.get("error"), dict) else meta_res.get("error", "Meta send failed"))
+            else:
+                status = "simulated"
+                sent_count += 1
+                
+            # Record to message history under the contact's phone
+            db.save_message(
+                phone_number=digits,
+                sender_name=lead_name,
+                message=item_msg,
+                direction="outbound",
+                channel="ai_campaign" if send_via_meta else "simulator",
+                status=status,
+                raw_payload={"campaign": True, "lead_name": lead_name, "meta_response": meta_res}
+            )
+            
+            # Save or update in leads CRM
+            if add_as_leads:
+                lead_notes = f"{item_category} • {item_area}".strip(" •")
+                db.add_or_update_lead(
+                    phone_number=digits,
+                    name=lead_name,
+                    source=lead_source,
+                    notes=lead_notes,
+                    status="Contacted" if status in ["sent", "simulated"] else "New"
+                )
+                db.record_lead_messaged(digits, status="Contacted" if status in ["sent", "simulated"] else "Failed")
+                
+            results.append({
+                "phone": digits,
+                "name": lead_name,
+                "status": status,
+                "error": err_msg
+            })
+            
+            if send_via_meta and len(personalized_items) > 1:
+                await asyncio.sleep(0.2)
+                
+        return JSONResponse({
+            "success": True,
+            "mode": "personalized",
+            "total": len(personalized_items),
+            "sent": sent_count,
+            "failed": failed_count,
+            "results": results
+        })
+
+    # -------------------------------------------------------------
+    # Case 2: Standard Single-Message Broadcast to Phone Numbers
+    # -------------------------------------------------------------
+    if not default_message:
         return JSONResponse({"error": "Message content cannot be empty"}, status_code=400)
     
     # If string was passed (newline or comma separated), split it
@@ -826,9 +931,7 @@ async def bulk_broadcast(request: Request):
     clean_numbers = []
     seen = set()
     for raw in numbers_raw:
-        # Keep only digits
         digits = re.sub(r'[^0-9]', '', str(raw))
-        # Handle 10-digit Indian numbers without country code
         if len(digits) == 10:
             digits = "91" + digits
         if len(digits) >= 10 and digits not in seen:
@@ -848,7 +951,7 @@ async def bulk_broadcast(request: Request):
         meta_res = {}
         
         if send_via_meta:
-            success, meta_res = send_meta_whatsapp_message(phone, message)
+            success, meta_res = send_meta_whatsapp_message(phone, default_message)
             if success:
                 status = "sent"
                 sent_count += 1
@@ -864,7 +967,7 @@ async def bulk_broadcast(request: Request):
         db.save_message(
             phone_number=phone,
             sender_name="Growhaz Support",
-            message=message,
+            message=default_message,
             direction="outbound",
             channel="bulk_broadcast" if send_via_meta else "simulator",
             status=status,
@@ -887,17 +990,84 @@ async def bulk_broadcast(request: Request):
             "error": err_msg
         })
         
-        # Throttling delay to avoid Meta WhatsApp Cloud API rate limits
         if send_via_meta and len(clean_numbers) > 1:
             await asyncio.sleep(0.2)
             
     return JSONResponse({
         "success": True,
+        "mode": "standard",
         "total": len(clean_numbers),
         "sent": sent_count,
         "failed": failed_count,
         "results": results
     })
+
+
+@app.post("/api/dashboard/ai-personalize-campaign")
+async def ai_personalize_campaign(request: Request):
+    """
+    Generate customized AI outreach messages for each business/client in a list.
+    Takes a list of businesses (name, category, locality), an outreach goal, and tone.
+    Uses DeepSeek AI / Groq AI with intelligent category template fallback.
+    """
+    try:
+        from api.bot_engine import generate_personalized_campaign_pitch
+        
+        data = await request.json()
+        leads = data.get("leads", [])
+        campaign_goal = (data.get("campaign_goal") or "Website security scan, website & app development, and automated WhatsApp booking assistant").strip()
+        tone = (data.get("tone") or "friendly_warm").strip()
+        custom_notes = (data.get("custom_notes") or "").strip()
+        
+        if not leads or not isinstance(leads, list):
+            return JSONResponse({"error": "A list of leads/businesses is required."}, status_code=400)
+            
+        deepseek_key = get_env_var("DEEPSEEK_API_KEY")
+        deepseek_model = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
+        groq_key = get_env_var("GROQ_API_KEY")
+        groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
+        
+        personalized_leads = []
+        engine_used = "AI Engine"
+        
+        for idx, lead in enumerate(leads):
+            b_name = (lead.get("business_name") or lead.get("name") or lead.get("Business_Name") or f"Business #{idx+1}").strip()
+            b_cat = (lead.get("category") or lead.get("business_category") or lead.get("Business_Category") or "").strip()
+            b_area = (lead.get("area") or lead.get("area_or_locality") or lead.get("Area_or_Locality") or "").strip()
+            b_phone = (lead.get("phone") or lead.get("contact_number") or lead.get("Contact_Number") or "").strip()
+            
+            pitch, eng = generate_personalized_campaign_pitch(
+                business_name=b_name,
+                category=b_cat,
+                area=b_area,
+                campaign_goal=campaign_goal,
+                tone=tone,
+                custom_notes=custom_notes,
+                deepseek_api_key=deepseek_key,
+                deepseek_model=deepseek_model,
+                groq_api_key=groq_key,
+                groq_model=groq_model
+            )
+            engine_used = eng
+            
+            updated_lead = dict(lead)
+            updated_lead["business_name"] = b_name
+            updated_lead["category"] = b_cat
+            updated_lead["area"] = b_area
+            updated_lead["phone"] = b_phone
+            updated_lead["personalized_message"] = pitch
+            updated_lead["engine_used"] = eng
+            personalized_leads.append(updated_lead)
+            
+        return JSONResponse({
+            "success": True,
+            "total": len(personalized_leads),
+            "engine_used": engine_used,
+            "leads": personalized_leads
+        })
+    except Exception as e:
+        logger.error(f"[Campaign AI] Error in personalize campaign: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/api/dashboard/leads")
 async def get_all_leads():

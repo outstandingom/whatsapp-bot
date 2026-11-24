@@ -529,3 +529,102 @@ def generate_ai_reply(
         dna_analysis=dna_analysis
     )
     return reply, max(latency, 10.0), "Customer Support Agent"
+
+
+def generate_personalized_campaign_pitch(
+    business_name: str,
+    category: str = "",
+    area: str = "",
+    campaign_goal: str = "",
+    tone: str = "friendly_warm",
+    custom_notes: str = "",
+    deepseek_api_key: str = "",
+    deepseek_model: str = "deepseek-chat",
+    groq_api_key: str = "",
+    groq_model: str = "llama-3.3-70b-versatile"
+) -> tuple[str, str]:
+    """
+    Generate an authentic, highly personalized WhatsApp outreach message tailored specifically to a business lead.
+    Tries DeepSeek AI, Groq AI, and falls back to our intelligent category template engine.
+    """
+    clean_name = (business_name or "Valued Business").strip().strip('"').strip("'")
+    clean_category = (category or "Business").strip().strip('"').strip("'")
+    clean_area = (area or "your area").strip().strip('"').strip("'")
+    clean_goal = (campaign_goal or "Website security scan, web & app development, and automated WhatsApp customer booking").strip()
+
+    prompt = (
+        f"Write a concise, high-converting WhatsApp outreach message for this business:\n"
+        f"- Business Name: {clean_name}\n"
+        f"- Category / Industry: {clean_category}\n"
+        f"- City / Locality: {clean_area}\n"
+        f"- Outreach Offer / Value Proposition: {clean_goal}\n"
+        f"- Tone: {tone}\n"
+        f"- Custom Notes: {custom_notes}\n\n"
+        f"Instructions:\n"
+        f"1. Greet them warmly by business name.\n"
+        f"2. Mention their category and locality naturally.\n"
+        f"3. Explain the practical benefit to their specific business (e.g. 24/7 automated orders, appointments, or website security).\n"
+        f"4. Include 2-3 relevant emojis.\n"
+        f"5. End with a polite, non-pushy question asking if they would like a quick 2-minute demo on WhatsApp.\n"
+        f"6. Return ONLY the message text. Do not wrap in quotes or add metadata."
+    )
+
+    llm_messages = [
+        {"role": "system", "content": "You are an expert WhatsApp marketing copywriter who creates personalized, authentic, polite, and effective B2B outreach messages for local business owners."},
+        {"role": "user", "content": prompt}
+    ]
+
+    # Try DeepSeek
+    if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
+        try:
+            m = deepseek_model.strip() if deepseek_model else "deepseek-chat"
+            with httpx.Client(timeout=18.0) as client:
+                res = client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    headers={"Authorization": f"Bearer {deepseek_api_key.strip()}", "Content-Type": "application/json"},
+                    json={"model": m, "messages": llm_messages, "temperature": 0.7, "max_tokens": 500}
+                )
+                if res.status_code == 200:
+                    ans = res.json()["choices"][0]["message"]["content"].strip()
+                    if ans:
+                        return ans, f"DeepSeek ({m})"
+        except Exception as e:
+            logger.warning(f"[Campaign AI] DeepSeek failed: {e}")
+
+    # Try Groq
+    if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
+        try:
+            m = groq_model.strip() if groq_model else "llama-3.3-70b-versatile"
+            with httpx.Client(timeout=18.0) as client:
+                res = client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {groq_api_key.strip()}", "Content-Type": "application/json"},
+                    json={"model": m, "messages": llm_messages, "temperature": 0.7, "max_tokens": 500}
+                )
+                if res.status_code == 200:
+                    ans = res.json()["choices"][0]["message"]["content"].strip()
+                    if ans:
+                        return ans, f"Groq ({m})"
+        except Exception as e:
+            logger.warning(f"[Campaign AI] Groq failed: {e}")
+
+    # Smart Category-Driven Fallback Engine
+    cat_lower = clean_category.lower()
+    if any(k in cat_lower for k in ["bakery", "cake", "sweet", "pastry"]):
+        msg = f"Namaste {clean_name} team! 🍰 Hope everything is sweet in {clean_area}. We know how popular your bakery delights are with local customers! Growhaz helps food & bakery businesses in {clean_area} receive cake orders and inquiries 24/7 directly on WhatsApp without manual typing. Would you like a quick 2-minute demo of how this can boost your festive orders? 😊"
+    elif any(k in cat_lower for k in ["cafe", "restaurant", "dhaba", "pizza", "food", "dining", "fast food", "bites", "biryani"]):
+        msg = f"Hi {clean_name} team! 🍽️✨ Hope business is flourishing in {clean_area}. As a favorite dining spot, managing table reservations and weekend customer rush can get overwhelming. Growhaz provides an automated WhatsApp assistant that shares menus, books tables, and gathers reviews 24/7. May I share a quick 1-minute preview with you?"
+    elif any(k in cat_lower for k in ["salon", "beauty", "makeup", "parlour", "spa"]):
+        msg = f"Hi {clean_name} team! 💇‍♀️ Greetings from Growhaz. As a premier salon & beauty hub in {clean_area}, weekend appointment requests can be hard to manage manually. Our WhatsApp booking assistant lets clients reserve slots 24/7 without waiting. Would you be open to seeing a quick 2-minute demo?"
+    elif any(k in cat_lower for k in ["coaching", "classes", "academy", "library", "school", "education"]):
+        msg = f"Namaste {clean_name} team! 📚 As a reputed coaching center in {clean_area}, answering student & parent inquiries about batches and fees takes hours. Our automated WhatsApp bot answers queries 24/7 and records admissions leads. Shall I share a quick sample with you?"
+    elif any(k in cat_lower for k in ["doctor", "clinic", "hospital", "medical", "health", "dental"]):
+        msg = f"Namaste {clean_name} team! 🩺 Greetings from Growhaz. For healthcare practices in {clean_area}, streamlining patient appointments and timings is essential. Our WhatsApp assistant manages schedules and updates patients automatically. Would you be open to a quick 2-minute walkthrough?"
+    elif any(k in cat_lower for k in ["mobile", "electronics", "repair", "computer"]):
+        msg = f"Hello {clean_name} team! 📱 Greetings from Growhaz. As a trusted electronics & mobile shop in {clean_area}, customers frequently ask for repair status and gadget prices. Our WhatsApp bot automatically responds to product inquiries and price lists 24/7. Would you like to see a quick sample?"
+    elif any(k in cat_lower for k in ["mart", "supermarket", "grocery", "bazaar", "store", "hardware", "plywood", "clothing", "dairy"]):
+        msg = f"Hello {clean_name} team! 🛒 Hope business is thriving in {clean_area}. Growhaz helps retail & store owners stay connected with customers via automated WhatsApp product catalogs and quick order updates. Would you be interested in a quick 2-minute demo?"
+    else:
+        msg = f"Hello {clean_name} team! 👋 Greetings from Growhaz. We admire your work as a leading {clean_category} in {clean_area}. We help local businesses automate customer inquiries, appointments, and marketing directly on WhatsApp. Would you be open to a quick 2-minute preview of how this can help grow your business? Cheers!"
+
+    return msg, "AI Category Engine"

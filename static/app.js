@@ -132,6 +132,7 @@ function deleteChatFromMenu() {
             if (tab === 'bookings') fetchBookings();
             if (tab === 'webhooks') fetchWebhooks();
             if (tab === 'broadcast') {
+                if (typeof initCampaignDefaults === 'function') initCampaignDefaults();
                 populateBroadcastTemplateDropdown();
                 loadLeadsTable();
                 updateBroadcastContactsCount();
@@ -1656,6 +1657,524 @@ function deleteChatFromMenu() {
         function escapeHtml(str) {
             if (!str) return '';
             return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+
+        // ==================== AI PERSONALIZED CAMPAIGN ENGINE ====================
+        let currentCampaignMode = 'ai';
+        let campaignLeads = [];
+
+        const CAMPAIGN_PRESET_GOALS = {
+            security: "Offer an exclusive 20% discount on Growhaz Alpha G5 Advanced Website Security Vulnerability Scan and modern custom app development to protect their online business.",
+            booking: "Introduce the Growhaz 24/7 automated WhatsApp customer booking assistant and auto-reply bot that captures leads and schedules bookings without manual typing.",
+            bakery: "Offer an automated WhatsApp menu catalog and festive cake ordering assistant so customers can place orders and inquiries 24/7 directly on WhatsApp.",
+            salon: "Introduce a 24/7 WhatsApp appointment scheduling assistant so clients can view available time slots and book haircuts or salon packages instantly.",
+            custom: ""
+        };
+
+        function switchCampaignMode(mode) {
+            currentCampaignMode = mode;
+            const tabAi = document.getElementById('campaign-tab-ai');
+            const tabStatic = document.getElementById('campaign-tab-static');
+            const panelAi = document.getElementById('panel-campaign-ai');
+            const panelStatic = document.getElementById('panel-campaign-static');
+
+            if (mode === 'ai') {
+                if (tabAi) {
+                    tabAi.className = 'px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 text-white shadow-xs transition flex items-center space-x-2';
+                }
+                if (tabStatic) {
+                    tabStatic.className = 'px-3.5 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center space-x-1.5';
+                }
+                if (panelAi) panelAi.classList.remove('hidden');
+                if (panelStatic) panelStatic.classList.add('hidden');
+            } else {
+                if (tabAi) {
+                    tabAi.className = 'px-3.5 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center space-x-2';
+                }
+                if (tabStatic) {
+                    tabStatic.className = 'px-3.5 py-1.5 rounded-xl bg-slate-800 text-white shadow-xs transition flex items-center space-x-1.5';
+                }
+                if (panelAi) panelAi.classList.add('hidden');
+                if (panelStatic) panelStatic.classList.remove('hidden');
+            }
+        }
+
+        function initCampaignDefaults() {
+            const goalInput = document.getElementById('campaign-goal-input');
+            const presetSelect = document.getElementById('campaign-preset-select');
+            if (goalInput && !goalInput.value.trim()) {
+                const val = presetSelect ? presetSelect.value : 'security';
+                goalInput.value = CAMPAIGN_PRESET_GOALS[val] || CAMPAIGN_PRESET_GOALS.security;
+            }
+        }
+
+        function handleCampaignPresetChange() {
+            const presetSelect = document.getElementById('campaign-preset-select');
+            const goalInput = document.getElementById('campaign-goal-input');
+            if (!presetSelect || !goalInput) return;
+            const val = presetSelect.value;
+            if (val === 'custom') {
+                goalInput.value = '';
+                goalInput.placeholder = 'Type your custom campaign pitch, offer details, and value proposition here...';
+                goalInput.focus();
+            } else {
+                goalInput.value = CAMPAIGN_PRESET_GOALS[val] || '';
+            }
+        }
+
+        function toggleCampaignPasteBox() {
+            const el = document.getElementById('campaign-paste-container');
+            if (el) el.classList.toggle('hidden');
+        }
+
+        function parseCSVToObjects(text) {
+            if (!text || !text.trim()) return [];
+            const lines = [];
+            let curLine = '';
+            let inQuotes = false;
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                    curLine += char;
+                } else if ((char === '\n' || char === '\r') && !inQuotes) {
+                    if (char === '\r' && text[i+1] === '\n') i++;
+                    if (curLine.trim()) lines.push(curLine);
+                    curLine = '';
+                } else {
+                    curLine += char;
+                }
+            }
+            if (curLine.trim()) lines.push(curLine);
+            if (lines.length < 2) return [];
+
+            function parseCSVLine(line) {
+                const cells = [];
+                let curCell = '';
+                let inside = false;
+                for (let i = 0; i < line.length; i++) {
+                    const c = line[i];
+                    if (c === '"') {
+                        if (inside && line[i+1] === '"') {
+                            curCell += '"';
+                            i++;
+                        } else {
+                            inside = !inside;
+                        }
+                    } else if (c === ',' && !inside) {
+                        cells.push(curCell.trim());
+                        curCell = '';
+                    } else {
+                        curCell += c;
+                    }
+                }
+                cells.push(curCell.trim());
+                return cells;
+            }
+
+            const rawHeaders = parseCSVLine(lines[0]);
+            const headers = rawHeaders.map(h => h.trim().toLowerCase().replace(/[\s_-]+/g, ''));
+            const rows = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = parseCSVLine(lines[i]);
+                if (!values || values.every(v => !v)) continue;
+                const row = {};
+                headers.forEach((h, idx) => {
+                    row[h] = values[idx] || '';
+                });
+                
+                const name = row['businessname'] || row['name'] || row['company'] || row['client'] || `Lead #${i}`;
+                const category = row['businesscategory'] || row['category'] || row['industry'] || row['type'] || 'Business';
+                const area = row['areaorlocality'] || row['area'] || row['locality'] || row['city'] || 'Betul';
+                let phone = row['contactnumber'] || row['phone'] || row['phonenumber'] || row['mobile'] || '';
+                phone = phone.replace(/[^0-9]/g, '');
+                if (phone.length === 10) phone = '91' + phone;
+
+                rows.push({
+                    id: i,
+                    business_name: name,
+                    category: category,
+                    area: area,
+                    phone: phone,
+                    personalized_message: '',
+                    selected: true,
+                    status: 'ready'
+                });
+            }
+            return rows;
+        }
+
+        async function loadSampleBetulLeads() {
+            try {
+                const res = await fetch('/static/sample_leads.csv');
+                if (!res.ok) throw new Error('Sample CSV file not found on server');
+                const text = await res.text();
+                const parsed = parseCSVToObjects(text);
+                if (parsed.length === 0) throw new Error('Failed to parse sample CSV');
+                campaignLeads = parsed;
+                renderCampaignLeadsTable();
+                alert(`Loaded ${parsed.length} Betul businesses successfully! Next, review or edit the campaign goal and click "Generate AI Personalized Messages".`);
+            } catch (err) {
+                console.error("Error loading sample leads:", err);
+                alert("Error loading sample CSV: " + err.message);
+            }
+        }
+
+        function handleCampaignFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const text = e.target.result;
+                    const parsed = parseCSVToObjects(text);
+                    if (parsed.length === 0) {
+                        alert('Could not find business columns in the file. Make sure your file has headers like Business_Name, Category, Area, Contact_Number.');
+                        return;
+                    }
+                    campaignLeads = parsed;
+                    renderCampaignLeadsTable();
+                    alert(`Loaded ${parsed.length} businesses from ${file.name}!`);
+                } catch (err) {
+                    alert('Error parsing CSV file: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function handleCampaignPasteData() {
+            const input = document.getElementById('campaign-paste-input');
+            if (!input || !input.value.trim()) return;
+            const parsed = parseCSVToObjects(input.value);
+            if (parsed.length === 0) {
+                alert('Could not parse table data. Ensure the first line contains column headers (e.g. Business_Name, Category, Area, Contact_Number).');
+                return;
+            }
+            campaignLeads = parsed;
+            renderCampaignLeadsTable();
+            toggleCampaignPasteBox();
+            alert(`Parsed ${parsed.length} businesses from pasted data!`);
+        }
+
+        function renderCampaignLeadsTable() {
+            const tbody = document.getElementById('campaign-leads-tbody');
+            const badge = document.getElementById('campaign-leads-badge');
+            const search = (document.getElementById('campaign-search-input')?.value || '').toLowerCase().trim();
+
+            if (badge) badge.innerText = `${campaignLeads.length} leads loaded`;
+            updateCampaignSelectionStats();
+
+            if (!tbody) return;
+
+            if (campaignLeads.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="p-12 text-center text-slate-400">
+                            <i class="fas fa-file-csv text-3xl mb-2 opacity-50 block"></i>
+                            <p class="font-bold text-xs">No businesses loaded yet.</p>
+                            <p class="text-[11px] text-slate-400 mt-1">Upload a CSV or click <button type="button" onclick="loadSampleBetulLeads()" class="text-indigo-600 font-bold hover:underline">"Load Sample Betul Directory"</button> above to start.</p>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            const filtered = campaignLeads.filter(l => {
+                if (!search) return true;
+                return (l.business_name || '').toLowerCase().includes(search) ||
+                       (l.category || '').toLowerCase().includes(search) ||
+                       (l.area || '').toLowerCase().includes(search) ||
+                       (l.phone || '').includes(search);
+            });
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 text-xs">No businesses match "${escapeHtml(search)}".</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(lead => {
+                const isValidPhone = lead.phone && lead.phone.length >= 10;
+                const statusBadges = {
+                    ready: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">Ready</span>',
+                    generating: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 animate-pulse">Writing...</span>',
+                    sent: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">✅ Sent</span>',
+                    failed: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">❌ Failed</span>'
+                };
+                const statusBadge = statusBadges[lead.status] || statusBadges.ready;
+
+                return `
+                    <tr class="hover:bg-slate-50/70 transition border-b border-slate-100 ${lead.selected ? '' : 'opacity-60 bg-slate-50/40'}">
+                        <td class="p-3 text-center">
+                            <input type="checkbox" ${lead.selected ? 'checked' : ''} onchange="toggleCampaignLeadSelect(${lead.id}, this.checked)" class="rounded text-emerald-600 cursor-pointer">
+                        </td>
+                        <td class="p-3">
+                            <span class="font-extrabold text-slate-900 block leading-tight text-xs">${escapeHtml(lead.business_name)}</span>
+                            <span class="inline-block mt-0.5 px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">${escapeHtml(lead.category)}</span>
+                        </td>
+                        <td class="p-3 text-slate-600 text-xs font-medium">
+                            <i class="fas fa-location-dot text-slate-400 mr-1 text-[10px]"></i>${escapeHtml(lead.area)}
+                        </td>
+                        <td class="p-3">
+                            <div class="relative">
+                                <input type="text"
+                                       value="${escapeHtml(lead.phone || '')}"
+                                       placeholder="Enter 10-digit phone"
+                                       onchange="updateCampaignLeadPhone(${lead.id}, this.value)"
+                                       class="w-full font-mono text-[11px] px-2.5 py-1 rounded-lg border ${isValidPhone ? 'border-emerald-300 bg-emerald-50/40 text-emerald-900' : 'border-amber-300 bg-amber-50/40 text-amber-900'} focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                ${!isValidPhone ? '<span class="text-[9px] text-amber-700 font-semibold block mt-0.5">⚠️ Missing phone</span>' : ''}
+                            </div>
+                        </td>
+                        <td class="p-3">
+                            <div class="space-y-1">
+                                <textarea rows="2"
+                                          placeholder="Click 'Generate AI Messages' or type custom message..."
+                                          onchange="updateCampaignLeadMessage(${lead.id}, this.value)"
+                                          class="w-full text-xs p-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-sans resize-y leading-relaxed">${escapeHtml(lead.personalized_message || '')}</textarea>
+                                <div class="flex items-center justify-between text-[10px] text-slate-400">
+                                    <span>${(lead.personalized_message || '').length} chars</span>
+                                    <button type="button" onclick="regenerateSingleLeadMessage(${lead.id})" title="Regenerate this specific message with AI" class="text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1">
+                                        <i class="fas fa-rotate"></i><span>AI Rewrite</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="p-3 text-right">
+                            ${statusBadge}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function toggleCampaignLeadSelect(id, checked) {
+            const lead = campaignLeads.find(l => l.id === id);
+            if (lead) lead.selected = checked;
+            updateCampaignSelectionStats();
+        }
+
+        function campaignSelectAll(state) {
+            campaignLeads.forEach(l => l.selected = state);
+            const headerCheck = document.getElementById('campaign-header-check');
+            if (headerCheck) headerCheck.checked = state;
+            renderCampaignLeadsTable();
+        }
+
+        function toggleCampaignHeaderCheck(checked) {
+            campaignSelectAll(checked);
+        }
+
+        function updateCampaignLeadPhone(id, val) {
+            const lead = campaignLeads.find(l => l.id === id);
+            if (lead) {
+                let digits = val.replace(/[^0-9]/g, '');
+                if (digits.length === 10) digits = '91' + digits;
+                lead.phone = digits;
+            }
+            renderCampaignLeadsTable();
+        }
+
+        function updateCampaignLeadMessage(id, val) {
+            const lead = campaignLeads.find(l => l.id === id);
+            if (lead) lead.personalized_message = val.trim();
+        }
+
+        function filterCampaignTable() {
+            renderCampaignLeadsTable();
+        }
+
+        function clearCampaignLeads() {
+            if (campaignLeads.length === 0) return;
+            if (!confirm('Clear all loaded campaign leads?')) return;
+            campaignLeads = [];
+            renderCampaignLeadsTable();
+        }
+
+        function updateCampaignSelectionStats() {
+            const selected = campaignLeads.filter(l => l.selected);
+            const valid = selected.filter(l => l.phone && l.phone.length >= 10);
+            const badge = document.getElementById('campaign-selected-count-badge');
+            const validBadge = document.getElementById('campaign-valid-phone-count');
+            const sendLabel = document.getElementById('campaign-send-label');
+            const sendBtn = document.getElementById('campaign-send-btn');
+            const genBtn = document.getElementById('campaign-generate-btn');
+            const genLabel = document.getElementById('campaign-generate-label');
+
+            if (badge) badge.innerText = `${selected.length} of ${campaignLeads.length} selected`;
+            if (validBadge) validBadge.innerText = valid.length;
+            if (sendLabel) sendLabel.innerText = `Send Personalized Messages (${valid.length} Businesses)`;
+            if (sendBtn) sendBtn.disabled = valid.length === 0;
+            if (genLabel) genLabel.innerText = `Generate AI Personalized Messages for All (${campaignLeads.length} Businesses)`;
+            if (genBtn) genBtn.disabled = campaignLeads.length === 0;
+        }
+
+        async function generateAllPersonalizedMessages() {
+            if (campaignLeads.length === 0) {
+                alert('Please upload or load businesses first.');
+                return;
+            }
+
+            const goal = (document.getElementById('campaign-goal-input')?.value || '').trim();
+            const tone = document.getElementById('campaign-tone-select')?.value || 'friendly_warm';
+            const genBtn = document.getElementById('campaign-generate-btn');
+            const genLabel = document.getElementById('campaign-generate-label');
+
+            if (genBtn) genBtn.disabled = true;
+            if (genLabel) genLabel.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> AI Writing Personalized Messages for ${campaignLeads.length} Businesses...`;
+
+            try {
+                const res = await fetch('/api/dashboard/ai-personalize-campaign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        leads: campaignLeads,
+                        campaign_goal: goal,
+                        tone: tone
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to generate personalized messages');
+                }
+
+                // Update leads in memory
+                const updatedList = data.leads || [];
+                updatedList.forEach(item => {
+                    const found = campaignLeads.find(l => l.id === item.id);
+                    if (found) {
+                        found.personalized_message = item.personalized_message;
+                    }
+                });
+
+                renderCampaignLeadsTable();
+                alert(`✨ Successfully generated personalized pitches for ${updatedList.length} businesses using ${data.engine_used}! You can review or edit any message before sending.`);
+            } catch (err) {
+                console.error("AI campaign generation error:", err);
+                alert("AI generation failed: " + err.message);
+            } finally {
+                if (genBtn) genBtn.disabled = false;
+                if (genLabel) genLabel.innerText = `Generate AI Personalized Messages for All (${campaignLeads.length} Businesses)`;
+            }
+        }
+
+        async function regenerateSingleLeadMessage(leadId) {
+            const lead = campaignLeads.find(l => l.id === leadId);
+            if (!lead) return;
+
+            const goal = (document.getElementById('campaign-goal-input')?.value || '').trim();
+            const tone = document.getElementById('campaign-tone-select')?.value || 'friendly_warm';
+            lead.status = 'generating';
+            renderCampaignLeadsTable();
+
+            try {
+                const res = await fetch('/api/dashboard/ai-personalize-campaign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        leads: [lead],
+                        campaign_goal: goal,
+                        tone: tone
+                    })
+                });
+                const data = await res.json();
+                if (res.ok && data.leads && data.leads.length > 0) {
+                    lead.personalized_message = data.leads[0].personalized_message;
+                }
+            } catch (err) {
+                console.error("Single lead rewrite error:", err);
+            } finally {
+                lead.status = 'ready';
+                renderCampaignLeadsTable();
+            }
+        }
+
+        async function executeCampaignSend() {
+            const selected = campaignLeads.filter(l => l.selected);
+            const valid = selected.filter(l => l.phone && l.phone.length >= 10 && (l.personalized_message || '').trim());
+
+            if (valid.length === 0) {
+                alert('No valid leads ready to send. Ensure leads are selected, have valid 10+ digit phone numbers, and have personalized messages generated.');
+                return;
+            }
+
+            const sendMeta = document.getElementById('campaign-send-meta')?.checked ?? true;
+            const saveLeads = document.getElementById('campaign-save-leads')?.checked ?? true;
+            const presetSelect = document.getElementById('campaign-preset-select');
+            const campaignTitle = presetSelect ? presetSelect.options[presetSelect.selectedIndex].text : 'AI Campaign';
+
+            const confirmMsg = `Send tailored WhatsApp messages to ${valid.length} businesses via ${sendMeta ? 'official Meta WhatsApp Cloud API' : 'simulated WhatsApp'}?`;
+            if (!confirm(confirmMsg)) return;
+
+            const sendBtn = document.getElementById('campaign-send-btn');
+            const progBox = document.getElementById('campaign-progress-box');
+            const progText = document.getElementById('campaign-progress-text');
+            const progPct = document.getElementById('campaign-progress-pct');
+            const progBar = document.getElementById('campaign-progress-bar');
+            const logBox = document.getElementById('campaign-log-box');
+
+            if (sendBtn) sendBtn.disabled = true;
+            if (progBox) progBox.classList.remove('hidden');
+            if (progText) progText.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Sending to ${valid.length} businesses...`;
+            if (progBar) progBar.style.width = '20%';
+            if (progPct) progPct.innerText = '20%';
+            if (logBox) logBox.innerHTML = `<div>🚀 Starting AI Personalized WhatsApp Campaign (${valid.length} recipients)...</div>`;
+
+            try {
+                const payload = {
+                    personalized_messages: valid.map(l => ({
+                        phone: l.phone,
+                        name: l.business_name,
+                        message: l.personalized_message,
+                        category: l.category,
+                        area: l.area
+                    })),
+                    send_via_meta: sendMeta,
+                    add_as_leads: saveLeads,
+                    lead_source: `Campaign: ${campaignTitle}`
+                };
+
+                const res = await fetch('/api/dashboard/broadcast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to dispatch campaign');
+                }
+
+                if (progBar) progBar.style.width = '100%';
+                if (progPct) progPct.innerText = '100%';
+                if (progText) progText.innerHTML = `<i class="fas fa-check-circle text-emerald-600 mr-1"></i> Campaign Finished!`;
+
+                // Update lead row statuses
+                if (data.results && Array.isArray(data.results)) {
+                    data.results.forEach(r => {
+                        const lead = campaignLeads.find(l => l.phone === r.phone || (l.business_name === r.name));
+                        if (lead) {
+                            lead.status = r.status === 'sent' || r.status === 'simulated' ? 'sent' : 'failed';
+                        }
+                        if (logBox) {
+                            const icon = (r.status === 'sent' || r.status === 'simulated') ? '✅' : '❌';
+                            logBox.innerHTML += `<div>${icon} ${escapeHtml(r.name || r.phone)}: ${r.status} ${r.error ? `(${escapeHtml(r.error)})` : ''}</div>`;
+                        }
+                    });
+                }
+
+                renderCampaignLeadsTable();
+                if (typeof fetchData === 'function') fetchData();
+                if (typeof loadLeadsTable === 'function') loadLeadsTable();
+
+                alert(`🎉 Campaign completed! ${data.sent || 0} messages sent successfully, ${data.failed || 0} failed. All conversations and leads have been updated in your CRM.`);
+            } catch (err) {
+                console.error("Campaign send error:", err);
+                if (progText) progText.innerHTML = `<i class="fas fa-circle-exclamation text-rose-600 mr-1"></i> Dispatch failed`;
+                if (logBox) logBox.innerHTML += `<div class="text-rose-600 font-bold">❌ Error: ${escapeHtml(err.message)}</div>`;
+                alert("Campaign send failed: " + err.message);
+            } finally {
+                if (sendBtn) sendBtn.disabled = false;
+            }
         }
 
         // ==================== BULK BROADCAST & LEADS CRM ====================

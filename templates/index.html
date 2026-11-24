@@ -688,27 +688,214 @@
         </div>
 
         <!-- ================= TAB 7: BULK BROADCAST & LEADS ================= -->
-        <div id="view-broadcast" class="hidden bg-white border border-slate-200 rounded-2xl p-5 md:p-6 shadow-sm flex flex-col space-y-6 flex-1 min-h-0 overflow-y-auto">
+        <div id="view-broadcast" class="hidden bg-white border border-slate-200 rounded-2xl p-4 md:p-6 shadow-sm flex flex-col space-y-5 flex-1 min-h-0 overflow-y-auto">
             <!-- Header -->
             <div class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                        <i class="fas fa-bullhorn text-indigo-600"></i><span>Bulk Broadcast & Lead Messaging</span>
+                        <i class="fas fa-bullhorn text-indigo-600"></i><span>Bulk Broadcast & AI Lead Campaigns</span>
                     </h2>
-                    <p class="text-xs text-slate-500 mt-0.5">Send custom announcements, offers, or notifications to multiple phone numbers at once</p>
+                    <p class="text-xs text-slate-500 mt-0.5">Upload client lists, generate AI-tailored WhatsApp messages for each business, and broadcast at scale</p>
                 </div>
                 <div class="flex items-center space-x-2">
                     <button type="button" onclick="loadExistingContactsToBroadcast()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center space-x-1.5">
-                        <i class="fas fa-users text-slate-500"></i><span>Import Existing Chats (<span id="broadcast-contacts-count">0</span>)</span>
+                        <i class="fas fa-users text-slate-500"></i><span>Import Active Chats (<span id="broadcast-contacts-count">0</span>)</span>
                     </button>
                     <button type="button" onclick="loadLeadsTable()" class="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition flex items-center space-x-1.5">
-                        <i class="fas fa-rotate text-indigo-500"></i><span>Refresh Leads</span>
+                        <i class="fas fa-rotate text-indigo-500"></i><span>Refresh CRM Leads</span>
                     </button>
                 </div>
             </div>
 
-            <!-- Two-column grid -->
-            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <!-- Campaign Mode Navigation Pills -->
+            <div class="flex items-center space-x-2 bg-slate-100/80 p-1 rounded-2xl border border-slate-200 max-w-fit text-xs font-bold">
+                <button type="button" id="campaign-tab-ai" onclick="switchCampaignMode('ai')" class="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 text-white shadow-xs transition flex items-center space-x-2">
+                    <i class="fas fa-wand-magic-sparkles text-amber-300"></i>
+                    <span>AI Personalized Campaign</span>
+                    <span class="px-1.5 py-0.2 rounded-full text-[9px] bg-white/20 text-white font-extrabold">CSV Upload</span>
+                </button>
+                <button type="button" id="campaign-tab-static" onclick="switchCampaignMode('static')" class="px-3.5 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center space-x-1.5">
+                    <i class="fas fa-paper-plane text-slate-400"></i>
+                    <span>Quick Static Broadcast</span>
+                </button>
+            </div>
+
+            <!-- ================= MODE 1: AI HYPER-PERSONALIZED CAMPAIGN ================= -->
+            <div id="panel-campaign-ai" class="flex flex-col space-y-5">
+                <!-- Two Cards: Step 1 (Upload CSV) & Step 2 (Campaign Goal) -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                    <!-- Left: CSV / Client Upload Box (6 cols) -->
+                    <div class="lg:col-span-6 p-4 md:p-5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-3">
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <label class="text-xs font-extrabold text-slate-800 flex items-center space-x-1.5">
+                                    <i class="fas fa-file-csv text-emerald-600"></i>
+                                    <span>1. Upload Business / Client List</span>
+                                </label>
+                                <span id="campaign-leads-badge" class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-200 text-slate-700">0 leads loaded</span>
+                            </div>
+                            <p class="text-[11px] text-slate-500">Upload CSV with <code class="bg-white px-1 py-0.5 rounded border border-slate-200 font-mono text-emerald-700">Business_Name</code>, <code class="bg-white px-1 py-0.5 rounded border border-slate-200 font-mono text-emerald-700">Category</code>, <code class="bg-white px-1 py-0.5 rounded border border-slate-200 font-mono text-emerald-700">Area</code>, and <code class="bg-white px-1 py-0.5 rounded border border-slate-200 font-mono text-emerald-700">Phone</code>.</p>
+                        </div>
+
+                        <!-- Dropzone Area -->
+                        <div onclick="document.getElementById('campaign-csv-file').click()" class="border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/40 rounded-2xl p-4 text-center cursor-pointer transition group">
+                            <input type="file" id="campaign-csv-file" accept=".csv,.txt" onchange="handleCampaignFileUpload(event)" class="hidden">
+                            <div class="w-10 h-10 rounded-xl bg-white border border-slate-200 text-emerald-600 flex items-center justify-center mx-auto mb-2 group-hover:scale-105 transition shadow-xs">
+                                <i class="fas fa-cloud-arrow-up text-base"></i>
+                            </div>
+                            <span class="text-xs font-bold text-slate-700 group-hover:text-emerald-700 block">Click to Browse or Drag &amp; Drop CSV File</span>
+                            <span class="text-[10px] text-slate-400">Supports .csv and text directory lists</span>
+                        </div>
+
+                        <!-- Quick Action & Sample Loader -->
+                        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/80">
+                            <button type="button" onclick="loadSampleBetulLeads()" class="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-extrabold transition flex items-center space-x-1.5 shadow-xs">
+                                <i class="fas fa-store text-emerald-600"></i>
+                                <span>Load Sample Betul Directory (88 Businesses)</span>
+                            </button>
+                            <button type="button" onclick="toggleCampaignPasteBox()" class="text-[11px] text-indigo-600 hover:underline font-bold">
+                                Or Paste Raw Table
+                            </button>
+                        </div>
+
+                        <!-- Collapsible Paste Box -->
+                        <div id="campaign-paste-container" class="hidden pt-2">
+                            <textarea id="campaign-paste-input" rows="3" placeholder="Paste CSV or comma/tab separated rows here..." class="w-full text-xs font-mono p-2.5 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"></textarea>
+                            <div class="flex justify-end pt-1">
+                                <button type="button" onclick="handleCampaignPasteData()" class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-bold text-[11px]">Parse Pasted Text</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Campaign Goal & Tone Selector (6 cols) -->
+                    <div class="lg:col-span-6 p-4 md:p-5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-3">
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <label class="text-xs font-extrabold text-slate-800 flex items-center space-x-1.5">
+                                    <i class="fas fa-bullseye text-indigo-600"></i>
+                                    <span>2. Campaign Offer &amp; AI Goal</span>
+                                </label>
+                                <span class="text-[11px] text-slate-400 font-semibold">Campaign Presets</span>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <select id="campaign-preset-select" onchange="handleCampaignPresetChange()" class="text-xs bg-white border border-slate-300 rounded-xl px-2.5 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <option value="security">🛡️ Website Security &amp; App Development</option>
+                                    <option value="booking">🤖 WhatsApp 24/7 Booking Bot &amp; CRM</option>
+                                    <option value="bakery">🍰 Bakery &amp; Food Festive Orders</option>
+                                    <option value="salon">💇 Salon &amp; Spa 24/7 Appointment System</option>
+                                    <option value="custom">🎯 Custom Outreach Offer</option>
+                                </select>
+                                <select id="campaign-tone-select" class="text-xs bg-white border border-slate-300 rounded-xl px-2.5 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <option value="friendly_warm">Tone: Friendly &amp; Respectful (Default)</option>
+                                    <option value="professional">Tone: Professional B2B Executive</option>
+                                    <option value="direct_sales">Tone: High-Converting &amp; Direct</option>
+                                    <option value="festive_promo">Tone: Festive Celebration Offer</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-600 mb-1">Value Proposition / Offer Description:</label>
+                            <textarea id="campaign-goal-input" rows="3" class="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white resize-y" placeholder="What value or offer are you providing to these businesses?"></textarea>
+                        </div>
+
+                        <!-- Generate Button -->
+                        <div class="pt-1">
+                            <button type="button" id="campaign-generate-btn" onclick="generateAllPersonalizedMessages()" class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-extrabold text-xs shadow-md shadow-indigo-500/20 transition flex items-center justify-center space-x-2">
+                                <i class="fas fa-wand-magic-sparkles text-amber-300"></i>
+                                <span id="campaign-generate-label">Generate AI Personalized Messages for All Businesses</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Interactive Personalized Messages Review Table -->
+                <div class="p-4 md:p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
+                        <div class="flex items-center space-x-3">
+                            <h3 class="text-xs font-extrabold text-slate-900 flex items-center space-x-1.5">
+                                <i class="fas fa-list-check text-emerald-600"></i>
+                                <span>3. Review &amp; Edit Personalized Messages</span>
+                            </h3>
+                            <span id="campaign-selected-count-badge" class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">0 selected</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input type="text" id="campaign-search-input" oninput="filterCampaignTable()" placeholder="Search businesses or areas..." class="text-xs px-3 py-1.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white w-48 sm:w-60">
+                            <button type="button" onclick="campaignSelectAll(true)" class="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100">Select All</button>
+                            <button type="button" onclick="campaignSelectAll(false)" class="px-2.5 py-1 text-[11px] font-bold text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-100">Clear</button>
+                        </div>
+                    </div>
+
+                    <!-- Scrollable Leads Container -->
+                    <div class="max-h-[500px] overflow-y-auto rounded-xl border border-slate-200 bg-white">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-100/80 border-b border-slate-200 sticky top-0 text-[10px] uppercase font-extrabold text-slate-500 z-10">
+                                <tr>
+                                    <th class="p-3 w-10 text-center"><input type="checkbox" id="campaign-header-check" onchange="toggleCampaignHeaderCheck(this.checked)" checked class="rounded text-emerald-600"></th>
+                                    <th class="p-3 w-56">Business &amp; Category</th>
+                                    <th class="p-3 w-32">Locality</th>
+                                    <th class="p-3 w-40">Contact Phone</th>
+                                    <th class="p-3">AI Customized Message</th>
+                                    <th class="p-3 w-24 text-right">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="campaign-leads-tbody" class="divide-y divide-slate-100">
+                                <tr>
+                                    <td colspan="6" class="p-12 text-center text-slate-400">
+                                        <i class="fas fa-file-csv text-3xl mb-2 opacity-50 block"></i>
+                                        <p class="font-bold text-xs">No businesses loaded yet.</p>
+                                        <p class="text-[11px] text-slate-400 mt-1">Upload a CSV or click <button type="button" onclick="loadSampleBetulLeads()" class="text-indigo-600 font-bold hover:underline">"Load Sample Betul Directory"</button> above to start.</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Dispatch & Send Controls -->
+                    <div class="p-4 bg-white rounded-xl border border-slate-200 space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
+                            <div class="flex items-center space-x-4">
+                                <label class="flex items-center space-x-2 cursor-pointer font-bold text-slate-700">
+                                    <input type="checkbox" id="campaign-send-meta" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4">
+                                    <span>Send via Meta WhatsApp Cloud API (if configured)</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer font-semibold text-slate-600">
+                                    <input type="checkbox" id="campaign-save-leads" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4">
+                                    <span>Save as CRM Leads</span>
+                                </label>
+                            </div>
+                            <div class="text-[11px] text-slate-500">
+                                <span id="campaign-valid-phone-count" class="font-bold text-emerald-700">0</span> valid numbers ready to receive
+                            </div>
+                        </div>
+
+                        <!-- Progress Bar (shown when sending) -->
+                        <div id="campaign-progress-box" class="hidden space-y-2 pt-2 border-t border-slate-100">
+                            <div class="flex items-center justify-between text-xs font-bold">
+                                <span id="campaign-progress-text" class="text-indigo-700"><i class="fas fa-spinner fa-spin mr-1"></i> Dispatching personalized messages...</span>
+                                <span id="campaign-progress-pct" class="font-mono text-slate-700">0%</span>
+                            </div>
+                            <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                <div id="campaign-progress-bar" class="bg-gradient-to-r from-emerald-500 to-teal-500 h-full w-0 transition-all duration-300"></div>
+                            </div>
+                            <div id="campaign-log-box" class="text-[11px] font-mono text-slate-600 max-h-28 overflow-y-auto bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-1"></div>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-1">
+                            <button type="button" onclick="clearCampaignLeads()" class="px-3 py-2 text-xs font-bold text-slate-500 hover:text-red-600 transition">
+                                Reset / Clear All
+                            </button>
+                            <button type="button" id="campaign-send-btn" onclick="executeCampaignSend()" class="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-sm shadow-md shadow-emerald-500/20 transition flex items-center space-x-2">
+                                <i class="fas fa-paper-plane"></i>
+                                <span id="campaign-send-label">Send Personalized Messages (0 Businesses)</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= MODE 2: QUICK STATIC BROADCAST ================= -->
+            <div id="panel-campaign-static" class="hidden grid grid-cols-1 lg:grid-cols-12 gap-6">
                 <!-- LEFT COLUMN: Input Numbers & Message (7 cols) -->
                 <div class="lg:col-span-7 flex flex-col space-y-4">
                     <!-- Numbers Input Card -->
@@ -837,6 +1024,7 @@
                     </div>
                 </div>
             </div>
+        </div>
         </div>
 
     </main>
