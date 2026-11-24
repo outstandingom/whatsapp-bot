@@ -578,7 +578,7 @@ def generate_personalized_campaign_pitch(
     if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
         try:
             m = deepseek_model.strip() if deepseek_model else "deepseek-chat"
-            with httpx.Client(timeout=18.0) as client:
+            with httpx.Client(timeout=8.0) as client:
                 res = client.post(
                     "https://api.deepseek.com/chat/completions",
                     headers={"Authorization": f"Bearer {deepseek_api_key.strip()}", "Content-Type": "application/json"},
@@ -595,7 +595,7 @@ def generate_personalized_campaign_pitch(
     if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
         try:
             m = groq_model.strip() if groq_model else "llama-3.3-70b-versatile"
-            with httpx.Client(timeout=18.0) as client:
+            with httpx.Client(timeout=8.0) as client:
                 res = client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {groq_api_key.strip()}", "Content-Type": "application/json"},

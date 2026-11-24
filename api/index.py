@@ -871,7 +871,18 @@ async def bulk_broadcast(request: Request):
                 else:
                     status = "failed"
                     failed_count += 1
-                    err_msg = str(meta_res.get("error", {}).get("message") if isinstance(meta_res.get("error"), dict) else meta_res.get("error", "Meta send failed"))
+                    err_msg = str(meta_res)
+                    try:
+                        if isinstance(meta_res, str) and meta_res.strip().startswith("{"):
+                            parsed = json.loads(meta_res)
+                            if isinstance(parsed, dict) and "error" in parsed:
+                                err_info = parsed["error"]
+                                err_msg = str(err_info.get("message") if isinstance(err_info, dict) else err_info)
+                        elif isinstance(meta_res, dict):
+                            err_info = meta_res.get("error", meta_res)
+                            err_msg = str(err_info.get("message") if isinstance(err_info, dict) else err_info)
+                    except Exception:
+                        pass
             else:
                 status = "simulated"
                 sent_count += 1
@@ -958,7 +969,18 @@ async def bulk_broadcast(request: Request):
             else:
                 status = "failed"
                 failed_count += 1
-                err_msg = str(meta_res.get("error", {}).get("message") if isinstance(meta_res.get("error"), dict) else meta_res.get("error", "Meta send failed"))
+                err_msg = str(meta_res)
+                try:
+                    if isinstance(meta_res, str) and meta_res.strip().startswith("{"):
+                        parsed = json.loads(meta_res)
+                        if isinstance(parsed, dict) and "error" in parsed:
+                            err_info = parsed["error"]
+                            err_msg = str(err_info.get("message") if isinstance(err_info, dict) else err_info)
+                    elif isinstance(meta_res, dict):
+                        err_info = meta_res.get("error", meta_res)
+                        err_msg = str(err_info.get("message") if isinstance(err_info, dict) else err_info)
+                except Exception:
+                    pass
         else:
             status = "simulated"
             sent_count += 1
@@ -1036,19 +1058,24 @@ async def ai_personalize_campaign(request: Request):
             b_area = (lead.get("area") or lead.get("area_or_locality") or lead.get("Area_or_Locality") or "").strip()
             b_phone = (lead.get("phone") or lead.get("contact_number") or lead.get("Contact_Number") or "").strip()
             
-            pitch, eng = generate_personalized_campaign_pitch(
-                business_name=b_name,
-                category=b_cat,
-                area=b_area,
-                campaign_goal=campaign_goal,
-                tone=tone,
-                custom_notes=custom_notes,
-                deepseek_api_key=deepseek_key,
-                deepseek_model=deepseek_model,
-                groq_api_key=groq_key,
-                groq_model=groq_model
-            )
-            engine_used = eng
+            try:
+                pitch, eng = generate_personalized_campaign_pitch(
+                    business_name=b_name,
+                    category=b_cat,
+                    area=b_area,
+                    campaign_goal=campaign_goal,
+                    tone=tone,
+                    custom_notes=custom_notes,
+                    deepseek_api_key=deepseek_key,
+                    deepseek_model=deepseek_model,
+                    groq_api_key=groq_key,
+                    groq_model=groq_model
+                )
+                engine_used = eng
+            except Exception as item_err:
+                logger.warning(f"[Campaign AI] Error generating pitch for {b_name}: {item_err}")
+                pitch = f"Hello {b_name} team! 👋 Greetings from Growhaz in {b_area or 'your area'}. We help local {b_cat or 'businesses'} automate customer orders and inquiries directly on WhatsApp. Would you like a quick 2-minute demo?"
+                eng = "Fallback Template"
             
             updated_lead = dict(lead)
             updated_lead["business_name"] = b_name

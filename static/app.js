@@ -2007,6 +2007,32 @@ function deleteChatFromMenu() {
             if (genBtn) genBtn.disabled = campaignLeads.length === 0;
         }
 
+        function quickFillTestPhone() {
+            const selected = campaignLeads.filter(l => l.selected);
+            if (selected.length === 0) {
+                alert('Please select at least one business in the table first.');
+                return;
+            }
+
+            const defaultNum = '918815081605';
+            const input = prompt(`Enter WhatsApp Phone Number to assign to ${selected.length} selected businesses:\n(e.g., 918815081605 or 10-digit number)`, defaultNum);
+            if (!input) return;
+
+            let digits = input.replace(/[^0-9]/g, '');
+            if (digits.length === 10) digits = '91' + digits;
+            if (digits.length < 10) {
+                alert('Invalid phone number. Please enter at least 10 digits.');
+                return;
+            }
+
+            selected.forEach(lead => {
+                lead.phone = digits;
+            });
+
+            renderCampaignLeadsTable();
+            alert(`✅ Filled phone ${digits} across ${selected.length} selected businesses!`);
+        }
+
         async function generateAllPersonalizedMessages() {
             if (campaignLeads.length === 0) {
                 alert('Please upload or load businesses first.');
@@ -2019,41 +2045,58 @@ function deleteChatFromMenu() {
             const genLabel = document.getElementById('campaign-generate-label');
 
             if (genBtn) genBtn.disabled = true;
-            if (genLabel) genLabel.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> AI Writing Personalized Messages for ${campaignLeads.length} Businesses...`;
+
+            const CHUNK_SIZE = 6;
+            let totalUpdated = 0;
+            let lastEngine = 'Groq/DeepSeek';
 
             try {
-                const res = await fetch('/api/dashboard/ai-personalize-campaign', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        leads: campaignLeads,
-                        campaign_goal: goal,
-                        tone: tone
-                    })
-                });
+                for (let i = 0; i < campaignLeads.length; i += CHUNK_SIZE) {
+                    const chunk = campaignLeads.slice(i, i + CHUNK_SIZE);
+                    const processed = Math.min(i + CHUNK_SIZE, campaignLeads.length);
+                    if (genLabel) {
+                        genLabel.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> AI Writing Pitches (${processed}/${campaignLeads.length} Businesses)...`;
+                    }
 
-                const data = await res.json();
-                if (!res.ok || data.error) {
-                    throw new Error(data.error || 'Failed to generate personalized messages');
+                    try {
+                        const res = await fetch('/api/dashboard/ai-personalize-campaign', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                leads: chunk,
+                                campaign_goal: goal,
+                                tone: tone
+                            })
+                        });
+
+                        const data = await res.json();
+                        if (res.ok && data.leads) {
+                            if (data.engine_used) lastEngine = data.engine_used;
+                            data.leads.forEach(item => {
+                                const found = campaignLeads.find(l => l.id === item.id);
+                                if (found) {
+                                    found.personalized_message = item.personalized_message;
+                                    totalUpdated++;
+                                }
+                            });
+                        }
+                    } catch (chunkErr) {
+                        console.warn("Chunk AI generation warning:", chunkErr);
+                    }
+
+                    // Update the table dynamically after each batch
+                    renderCampaignLeadsTable();
+                    await new Promise(r => setTimeout(r, 100));
                 }
 
-                // Update leads in memory
-                const updatedList = data.leads || [];
-                updatedList.forEach(item => {
-                    const found = campaignLeads.find(l => l.id === item.id);
-                    if (found) {
-                        found.personalized_message = item.personalized_message;
-                    }
-                });
-
-                renderCampaignLeadsTable();
-                alert(`✨ Successfully generated personalized pitches for ${updatedList.length} businesses using ${data.engine_used}! You can review or edit any message before sending.`);
+                alert(`✨ Successfully generated personalized pitches for ${totalUpdated} businesses using ${lastEngine}! You can review, edit, or regenerate any message before sending.`);
             } catch (err) {
                 console.error("AI campaign generation error:", err);
-                alert("AI generation failed: " + err.message);
+                alert("AI generation encountered an issue: " + err.message);
             } finally {
                 if (genBtn) genBtn.disabled = false;
                 if (genLabel) genLabel.innerText = `Generate AI Personalized Messages for All (${campaignLeads.length} Businesses)`;
+                renderCampaignLeadsTable();
             }
         }
 
@@ -2102,7 +2145,7 @@ function deleteChatFromMenu() {
             const presetSelect = document.getElementById('campaign-preset-select');
             const campaignTitle = presetSelect ? presetSelect.options[presetSelect.selectedIndex].text : 'AI Campaign';
 
-            const confirmMsg = `Send tailored WhatsApp messages to ${valid.length} businesses via ${sendMeta ? 'official Meta WhatsApp Cloud API' : 'simulated WhatsApp'}?`;
+            const confirmMsg = `Send tailored WhatsApp messages to ${valid.length} businesses via ${sendMeta ? 'official Meta WhatsApp Cloud API' : 'simulated WhatsApp'} in safe batches?`;
             if (!confirm(confirmMsg)) return;
 
             const sendBtn = document.getElementById('campaign-send-btn');
@@ -2114,64 +2157,104 @@ function deleteChatFromMenu() {
 
             if (sendBtn) sendBtn.disabled = true;
             if (progBox) progBox.classList.remove('hidden');
-            if (progText) progText.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Sending to ${valid.length} businesses...`;
-            if (progBar) progBar.style.width = '20%';
-            if (progPct) progPct.innerText = '20%';
-            if (logBox) logBox.innerHTML = `<div>🚀 Starting AI Personalized WhatsApp Campaign (${valid.length} recipients)...</div>`;
+            if (progText) progText.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Initializing campaign for ${valid.length} businesses...`;
+            if (progBar) progBar.style.width = '5%';
+            if (progPct) progPct.innerText = '5%';
+            if (logBox) logBox.innerHTML = `<div>🚀 Starting AI Personalized WhatsApp Campaign (${valid.length} recipients, batch size: 5)...</div>`;
+
+            let totalSent = 0;
+            let totalFailed = 0;
+            const SEND_CHUNK_SIZE = 5;
+            const totalValid = valid.length;
 
             try {
-                const payload = {
-                    personalized_messages: valid.map(l => ({
-                        phone: l.phone,
-                        name: l.business_name,
-                        message: l.personalized_message,
-                        category: l.category,
-                        area: l.area
-                    })),
-                    send_via_meta: sendMeta,
-                    add_as_leads: saveLeads,
-                    lead_source: `Campaign: ${campaignTitle}`
-                };
+                for (let i = 0; i < totalValid; i += SEND_CHUNK_SIZE) {
+                    const chunk = valid.slice(i, i + SEND_CHUNK_SIZE);
+                    const batchNum = Math.floor(i / SEND_CHUNK_SIZE) + 1;
+                    const totalBatches = Math.ceil(totalValid / SEND_CHUNK_SIZE);
 
-                const res = await fetch('/api/dashboard/broadcast', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+                    const pct = Math.round((i / totalValid) * 100);
+                    if (progBar) progBar.style.width = `${pct}%`;
+                    if (progPct) progPct.innerText = `${pct}%`;
+                    if (progText) progText.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Sending batch ${batchNum}/${totalBatches} (${i}/${totalValid} dispatched)...`;
 
-                const data = await res.json();
-                if (!res.ok || data.error) {
-                    throw new Error(data.error || 'Failed to dispatch campaign');
+                    try {
+                        const payload = {
+                            personalized_messages: chunk.map(l => ({
+                                phone: l.phone,
+                                name: l.business_name,
+                                message: l.personalized_message,
+                                category: l.category,
+                                area: l.area
+                            })),
+                            send_via_meta: sendMeta,
+                            add_as_leads: saveLeads,
+                            lead_source: `Campaign: ${campaignTitle}`
+                        };
+
+                        const res = await fetch('/api/dashboard/broadcast', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        const data = await res.json();
+                        if (!res.ok || data.error) {
+                            throw new Error(data.error || `HTTP ${res.status} on batch ${batchNum}`);
+                        }
+
+                        totalSent += (data.sent || 0);
+                        totalFailed += (data.failed || 0);
+
+                        if (data.results && Array.isArray(data.results)) {
+                            data.results.forEach(r => {
+                                const lead = campaignLeads.find(l => l.phone === r.phone || (l.business_name && l.business_name === r.name));
+                                if (lead) {
+                                    lead.status = (r.status === 'sent' || r.status === 'simulated') ? 'sent' : 'failed';
+                                }
+                                if (logBox) {
+                                    const isSuccess = (r.status === 'sent' || r.status === 'simulated');
+                                    const icon = isSuccess ? '✅' : '❌';
+                                    const color = isSuccess ? 'text-emerald-700' : 'text-rose-600';
+                                    logBox.innerHTML += `<div class="${color}">${icon} [${r.status.toUpperCase()}] ${escapeHtml(r.name || r.phone)}: ${escapeHtml(r.status)} ${r.error ? `(${escapeHtml(r.error)})` : ''}</div>`;
+                                }
+                            });
+                        }
+                    } catch (batchErr) {
+                        console.error(`Batch ${batchNum} error:`, batchErr);
+                        chunk.forEach(l => {
+                            l.status = 'failed';
+                            if (logBox) {
+                                logBox.innerHTML += `<div class="text-rose-600 font-bold">❌ [FAILED] ${escapeHtml(l.business_name || l.phone)}: ${escapeHtml(batchErr.message)}</div>`;
+                            }
+                        });
+                        totalFailed += chunk.length;
+                    }
+
+                    if (logBox) logBox.scrollTop = logBox.scrollHeight;
+                    renderCampaignLeadsTable();
+                    // Short pause between batches for smooth network and browser performance
+                    await new Promise(r => setTimeout(r, 250));
                 }
 
                 if (progBar) progBar.style.width = '100%';
                 if (progPct) progPct.innerText = '100%';
                 if (progText) progText.innerHTML = `<i class="fas fa-check-circle text-emerald-600 mr-1"></i> Campaign Finished!`;
-
-                // Update lead row statuses
-                if (data.results && Array.isArray(data.results)) {
-                    data.results.forEach(r => {
-                        const lead = campaignLeads.find(l => l.phone === r.phone || (l.business_name === r.name));
-                        if (lead) {
-                            lead.status = r.status === 'sent' || r.status === 'simulated' ? 'sent' : 'failed';
-                        }
-                        if (logBox) {
-                            const icon = (r.status === 'sent' || r.status === 'simulated') ? '✅' : '❌';
-                            logBox.innerHTML += `<div>${icon} ${escapeHtml(r.name || r.phone)}: ${r.status} ${r.error ? `(${escapeHtml(r.error)})` : ''}</div>`;
-                        }
-                    });
+                if (logBox) {
+                    logBox.innerHTML += `<div class="text-emerald-700 font-bold border-t border-slate-200 pt-1 mt-1">🏁 Campaign Complete: ${totalSent} delivered, ${totalFailed} failed.</div>`;
+                    logBox.scrollTop = logBox.scrollHeight;
                 }
 
                 renderCampaignLeadsTable();
                 if (typeof fetchData === 'function') fetchData();
                 if (typeof loadLeadsTable === 'function') loadLeadsTable();
 
-                alert(`🎉 Campaign completed! ${data.sent || 0} messages sent successfully, ${data.failed || 0} failed. All conversations and leads have been updated in your CRM.`);
+                alert(`🎉 Campaign completed! ${totalSent} messages dispatched successfully, ${totalFailed} failed. All conversations and leads have been updated in your CRM.`);
             } catch (err) {
-                console.error("Campaign send error:", err);
-                if (progText) progText.innerHTML = `<i class="fas fa-circle-exclamation text-rose-600 mr-1"></i> Dispatch failed`;
+                console.error("Campaign send fatal error:", err);
+                if (progText) progText.innerHTML = `<i class="fas fa-circle-exclamation text-rose-600 mr-1"></i> Dispatch encountered an issue`;
                 if (logBox) logBox.innerHTML += `<div class="text-rose-600 font-bold">❌ Error: ${escapeHtml(err.message)}</div>`;
-                alert("Campaign send failed: " + err.message);
+                alert("Campaign send encountered an issue: " + err.message);
             } finally {
                 if (sendBtn) sendBtn.disabled = false;
             }

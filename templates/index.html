@@ -819,10 +819,14 @@
                             </h3>
                             <span id="campaign-selected-count-badge" class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">0 selected</span>
                         </div>
-                        <div class="flex items-center space-x-2">
-                            <input type="text" id="campaign-search-input" oninput="filterCampaignTable()" placeholder="Search businesses or areas..." class="text-xs px-3 py-1.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white w-48 sm:w-60">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <input type="text" id="campaign-search-input" oninput="filterCampaignTable()" placeholder="Search businesses or areas..." class="text-xs px-3 py-1.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white w-44 sm:w-56">
                             <button type="button" onclick="campaignSelectAll(true)" class="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100">Select All</button>
                             <button type="button" onclick="campaignSelectAll(false)" class="px-2.5 py-1 text-[11px] font-bold text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-100">Clear</button>
+                            <button type="button" onclick="quickFillTestPhone()" title="Quickly set a test WhatsApp number on selected businesses" class="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 flex items-center space-x-1 shadow-sm">
+                                <i class="fas fa-bolt text-amber-500"></i>
+                                <span>Quick-Fill Test Phone</span>
+                            </button>
                         </div>
                     </div>
 
