@@ -1131,6 +1131,123 @@
         </div>
     </div>
 
+    <!-- ================= MODAL: BULK TEMPLATE RECIPIENT SELECTION ================= -->
+    <div id="template-bulk-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] hidden flex items-center justify-center p-4">
+        <div class="bg-white border border-slate-200 rounded-3xl max-w-2xl w-full p-6 shadow-2xl max-h-[90vh] flex flex-col">
+            <!-- Header -->
+            <div class="flex items-center justify-between pb-3.5 border-b border-slate-100 flex-shrink-0">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg shadow-sm">
+                        <i class="fas fa-users-rectangle"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-extrabold text-slate-900 text-base" id="tpl-bulk-modal-title">Send Template to Contacts</h3>
+                        <p class="text-xs text-slate-500">Select multiple contacts or broadcast this template across your customer base</p>
+                    </div>
+                </div>
+                <button type="button" onclick="closeTemplateBulkModal()" class="text-slate-400 hover:text-slate-700 w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center transition">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto pr-1 mt-4 space-y-4">
+                <!-- Template Content Preview & Edit -->
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <label class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                            <i class="fas fa-file-lines text-emerald-600"></i> Message Content
+                        </label>
+                        <span id="tpl-bulk-char-count" class="text-[10px] font-semibold text-slate-400">0 chars</span>
+                    </div>
+                    <textarea id="tpl-bulk-content" rows="3" class="w-full text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-sans resize-y bg-slate-50/50" placeholder="Template message content..."></textarea>
+                    <p class="text-[11px] text-slate-400 mt-1">Variables like <code class="bg-slate-100 px-1 py-0.5 rounded text-emerald-700 font-mono">{{name}}</code> will auto-resolve per contact or fallback to "Customer".</p>
+                </div>
+
+                <!-- Recipient Selection Toolbar -->
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center space-x-2">
+                            <label class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                                <i class="fas fa-address-book text-emerald-600"></i> Select Recipients
+                            </label>
+                            <span id="tpl-bulk-selected-badge" class="text-[11px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">0 selected</span>
+                        </div>
+                        <div class="flex items-center space-x-1.5">
+                            <button type="button" onclick="tplBulkSelectAll()" class="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg transition">Select All</button>
+                            <button type="button" onclick="tplBulkClearAll()" class="text-[11px] font-bold text-slate-500 hover:text-red-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition">Clear</button>
+                        </div>
+                    </div>
+
+                    <!-- Filter Search -->
+                    <div class="relative mb-2.5">
+                        <i class="fas fa-search absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+                        <input type="text" id="tpl-bulk-search" oninput="filterTemplateBulkContacts()" placeholder="Search contacts by name or phone..." class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white" />
+                    </div>
+
+                    <!-- Scrollable Contact Checkbox List -->
+                    <div id="tpl-bulk-contacts-list" class="max-h-56 overflow-y-auto space-y-1.5 border border-slate-200 rounded-xl p-2 bg-slate-50/50 text-xs divide-y divide-slate-100">
+                        <!-- Rendered dynamically -->
+                    </div>
+                </div>
+
+                <!-- Additional Custom Numbers (optional) -->
+                <div>
+                    <details class="group">
+                        <summary class="text-xs font-bold text-slate-600 cursor-pointer hover:text-emerald-700 select-none flex items-center justify-between p-2 rounded-lg bg-slate-100">
+                            <span><i class="fas fa-plus-circle mr-1 text-emerald-600"></i> Add custom phone numbers manually</span>
+                            <i class="fas fa-chevron-down text-[10px] group-open:rotate-180 transition-transform"></i>
+                        </summary>
+                        <div class="pt-2">
+                            <textarea id="tpl-bulk-custom-numbers" rows="2" placeholder="Paste extra phone numbers separated by comma, space or newline (e.g. 919876543210, +1234567890)" class="w-full text-xs p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white" oninput="updateTemplateBulkCount()"></textarea>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Delivery Options -->
+                <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
+                    <label class="flex items-center space-x-2 cursor-pointer font-medium text-slate-700">
+                        <input type="checkbox" id="tpl-bulk-meta-api" checked class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>Send via Official Meta WhatsApp Cloud API (if credentials configured)</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer font-medium text-slate-700">
+                        <input type="checkbox" id="tpl-bulk-save-leads" checked class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>Auto-record recipients as Leads in CRM</span>
+                    </label>
+                </div>
+
+                <!-- Send Progress / Alert Box -->
+                <div id="tpl-bulk-progress-box" class="hidden p-3 rounded-xl border border-blue-200 bg-blue-50 text-xs space-y-2">
+                    <div class="flex items-center justify-between font-bold text-blue-900">
+                        <span id="tpl-bulk-progress-text"><i class="fas fa-spinner fa-spin mr-1"></i> Sending template messages...</span>
+                        <span id="tpl-bulk-progress-pct">0%</span>
+                    </div>
+                    <div class="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
+                        <div id="tpl-bulk-progress-bar" class="bg-emerald-500 h-full w-0 transition-all duration-300"></div>
+                    </div>
+                    <div id="tpl-bulk-result-log" class="text-[11px] text-blue-800 font-mono max-h-24 overflow-y-auto space-y-1"></div>
+                </div>
+            </div>
+
+            <!-- Footer Buttons -->
+            <div class="mt-4 pt-3.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
+                <div>
+                    <button type="button" onclick="tplBulkSendToActiveChatOnly()" class="px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:text-emerald-700 hover:bg-emerald-50 transition border border-slate-200" title="Switch to chats view with this template loaded">
+                        <i class="fas fa-comment-dots mr-1"></i> Use for Active Chat Only
+                    </button>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button type="button" onclick="closeTemplateBulkModal()" class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition">
+                        Cancel
+                    </button>
+                    <button type="button" id="tpl-bulk-send-btn" onclick="executeTemplateBulkSend()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center space-x-1.5 shadow-sm transition">
+                        <i class="fas fa-paper-plane"></i>
+                        <span id="tpl-bulk-send-label">Send to Selected (0)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ================= MODAL: SETTINGS ================= -->
     <div id="settings-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] hidden flex items-center justify-center p-4">
         <div class="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">

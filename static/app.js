@@ -714,8 +714,8 @@ function deleteChatFromMenu() {
                         <p class="text-xs text-slate-600 whitespace-pre-wrap mt-2.5 leading-relaxed bg-white p-3 rounded-xl border border-slate-200">${escapeHtml(t.content)}</p>
                     </div>
                     <div class="flex items-center justify-between pt-2 border-t border-slate-200/80">
-                        <button onclick="applyTemplate('${escapeHtml(t.content)}'); switchTab('chats');" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition">
-                            <i class="fas fa-paper-plane mr-1"></i> Use Template
+                        <button onclick="openTemplateBulkModal(${t.id})" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5">
+                            <i class="fas fa-paper-plane"></i> Use Template
                         </button>
                         <button onclick="deleteTemplate(${t.id})" class="text-slate-400 hover:text-red-500 p-1 transition"><i class="fas fa-trash"></i></button>
                     </div>
@@ -775,6 +775,317 @@ function deleteChatFromMenu() {
 
         function openTemplateSelectorModal() { document.getElementById('template-picker-modal').classList.remove('hidden'); }
         function closeTemplateSelectorModal() { document.getElementById('template-picker-modal').classList.add('hidden'); }
+
+        // ==================== TEMPLATE MULTI-USER BULK SEND ====================
+        let tplBulkSelectedPhones = new Set();
+        let currentBulkTemplateTitle = '';
+        let currentBulkTemplateId = null;
+
+        function openTemplateBulkModal(templateIdOrTitle, rawContent) {
+            let title = 'Message Template';
+            let content = '';
+
+            if (typeof templateIdOrTitle === 'number' || (typeof templateIdOrTitle === 'string' && /^\d+$/.test(templateIdOrTitle))) {
+                const found = (allTemplates || []).find(t => t.id == templateIdOrTitle);
+                if (found) {
+                    currentBulkTemplateId = found.id;
+                    title = found.title;
+                    content = found.content;
+                }
+            } else if (typeof templateIdOrTitle === 'string') {
+                title = templateIdOrTitle || 'Message Template';
+                content = rawContent || '';
+            }
+
+            currentBulkTemplateTitle = title;
+
+            const modalTitleEl = document.getElementById('tpl-bulk-modal-title');
+            if (modalTitleEl) modalTitleEl.innerText = `Send Template: ${title}`;
+
+            const contentEl = document.getElementById('tpl-bulk-content');
+            if (contentEl) {
+                contentEl.value = content;
+                contentEl.oninput = () => {
+                    const countEl = document.getElementById('tpl-bulk-char-count');
+                    if (countEl) countEl.innerText = `${contentEl.value.length} chars`;
+                };
+            }
+            const countEl = document.getElementById('tpl-bulk-char-count');
+            if (countEl) countEl.innerText = `${content.length} chars`;
+
+            // Reset search & custom inputs
+            const searchInput = document.getElementById('tpl-bulk-search');
+            if (searchInput) searchInput.value = '';
+
+            const customInput = document.getElementById('tpl-bulk-custom-numbers');
+            if (customInput) customInput.value = '';
+
+            // Reset progress
+            const progBox = document.getElementById('tpl-bulk-progress-box');
+            if (progBox) progBox.classList.add('hidden');
+            const logBox = document.getElementById('tpl-bulk-result-log');
+            if (logBox) logBox.innerHTML = '';
+
+            // Reset selected contacts
+            tplBulkSelectedPhones.clear();
+            // Pre-select current active contact if available
+            if (currentPhone) {
+                tplBulkSelectedPhones.add(currentPhone);
+            }
+
+            populateTemplateBulkContacts('');
+            updateTemplateBulkCount();
+
+            const modal = document.getElementById('template-bulk-modal');
+            if (modal) modal.classList.remove('hidden');
+        }
+
+        function closeTemplateBulkModal() {
+            const modal = document.getElementById('template-bulk-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        function populateTemplateBulkContacts(filter = '') {
+            const listEl = document.getElementById('tpl-bulk-contacts-list');
+            if (!listEl) return;
+
+            const filterLower = (filter || '').toLowerCase().trim();
+            const convs = (allConversations || []).filter(c => {
+                if (!filterLower) return true;
+                const name = (c.sender_name || '').toLowerCase();
+                const phone = (c.phone_number || '').toLowerCase();
+                return name.includes(filterLower) || phone.includes(filterLower);
+            });
+
+            if (convs.length === 0) {
+                if ((allConversations || []).length === 0) {
+                    listEl.innerHTML = `
+                        <div class="p-6 text-center text-slate-400">
+                            <i class="fas fa-address-book text-2xl mb-2 opacity-50"></i>
+                            <p class="font-medium text-xs">No active chat contacts found.</p>
+                            <p class="text-[11px] text-slate-400 mt-1">You can add numbers manually using "Add custom phone numbers" below.</p>
+                        </div>
+                    `;
+                } else {
+                    listEl.innerHTML = `
+                        <div class="p-6 text-center text-slate-400 text-xs">
+                            No contacts match "${escapeHtml(filter)}".
+                        </div>
+                    `;
+                }
+                return;
+            }
+
+            listEl.innerHTML = convs.map(c => {
+                const isSelected = tplBulkSelectedPhones.has(c.phone_number);
+                const safeName = escapeHtml(c.sender_name || 'Customer');
+                const safePhone = escapeHtml(c.phone_number || '');
+                const previewMsg = escapeHtml(c.last_message || 'No prior message');
+                const isFreeWindow = c.free_window_active === true;
+
+                return `
+                    <div class="flex items-center justify-between p-2.5 rounded-xl hover:bg-emerald-50/60 cursor-pointer transition select-none ${isSelected ? 'bg-emerald-50/80 border border-emerald-200' : 'bg-white border border-slate-100'}"
+                         onclick="tplBulkToggleContact('${safePhone}', event)">
+                        <div class="flex items-center space-x-3 overflow-hidden">
+                            <input type="checkbox"
+                                   id="tpl-contact-check-${safePhone}"
+                                   ${isSelected ? 'checked' : ''}
+                                   onclick="event.stopPropagation(); tplBulkToggleContact('${safePhone}')"
+                                   class="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer">
+                            <div class="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                                ${safeName.charAt(0).toUpperCase()}
+                            </div>
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="font-bold text-slate-900 truncate">${safeName}</span>
+                                    <span class="text-[11px] font-mono text-slate-500">(+${safePhone})</span>
+                                    ${isFreeWindow ? '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-700">24h Free</span>' : ''}
+                                </div>
+                                <p class="text-[11px] text-slate-500 truncate max-w-xs">${previewMsg}</p>
+                            </div>
+                        </div>
+                        <span class="text-[10px] text-slate-400 font-medium whitespace-nowrap pl-2">
+                            ${c.last_time ? escapeHtml(c.last_time) : ''}
+                        </span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function tplBulkToggleContact(phone, event) {
+            if (!phone) return;
+            if (tplBulkSelectedPhones.has(phone)) {
+                tplBulkSelectedPhones.delete(phone);
+            } else {
+                tplBulkSelectedPhones.add(phone);
+            }
+
+            const searchInput = document.getElementById('tpl-bulk-search');
+            populateTemplateBulkContacts(searchInput ? searchInput.value : '');
+            updateTemplateBulkCount();
+        }
+
+        function tplBulkSelectAll() {
+            const searchInput = document.getElementById('tpl-bulk-search');
+            const filterLower = (searchInput?.value || '').toLowerCase().trim();
+            (allConversations || []).forEach(c => {
+                if (!filterLower ||
+                    (c.sender_name || '').toLowerCase().includes(filterLower) ||
+                    (c.phone_number || '').toLowerCase().includes(filterLower)) {
+                    if (c.phone_number) tplBulkSelectedPhones.add(c.phone_number);
+                }
+            });
+            populateTemplateBulkContacts(filterLower);
+            updateTemplateBulkCount();
+        }
+
+        function tplBulkClearAll() {
+            tplBulkSelectedPhones.clear();
+            const searchInput = document.getElementById('tpl-bulk-search');
+            populateTemplateBulkContacts(searchInput ? searchInput.value : '');
+            updateTemplateBulkCount();
+        }
+
+        function filterTemplateBulkContacts() {
+            const searchInput = document.getElementById('tpl-bulk-search');
+            populateTemplateBulkContacts(searchInput ? searchInput.value : '');
+        }
+
+        function getTemplateBulkAllRecipients() {
+            const numbers = new Set();
+            tplBulkSelectedPhones.forEach(p => {
+                if (p) numbers.add(String(p).replace(/\D/g, ''));
+            });
+
+            const customArea = document.getElementById('tpl-bulk-custom-numbers');
+            if (customArea && customArea.value) {
+                const parseFn = typeof parseBroadcastNumbers === 'function' 
+                    ? parseBroadcastNumbers 
+                    : (txt) => txt.split(/[\n,;]+/).map(t => t.replace(/\D/g, '')).filter(t => t.length >= 10);
+                const parsed = parseFn(customArea.value);
+                parsed.forEach(p => numbers.add(p));
+            }
+
+            return Array.from(numbers).filter(n => n.length >= 10);
+        }
+
+        function updateTemplateBulkCount() {
+            const recipients = getTemplateBulkAllRecipients();
+            const badge = document.getElementById('tpl-bulk-selected-badge');
+            if (badge) {
+                badge.innerText = `${recipients.length} selected`;
+                if (recipients.length > 0) {
+                    badge.className = 'text-[11px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full';
+                } else {
+                    badge.className = 'text-[11px] font-extrabold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full';
+                }
+            }
+
+            const sendLabel = document.getElementById('tpl-bulk-send-label');
+            if (sendLabel) {
+                sendLabel.innerText = `Send to Selected (${recipients.length})`;
+            }
+
+            const sendBtn = document.getElementById('tpl-bulk-send-btn');
+            if (sendBtn) {
+                sendBtn.disabled = recipients.length === 0;
+            }
+        }
+
+        function tplBulkSendToActiveChatOnly() {
+            const contentEl = document.getElementById('tpl-bulk-content');
+            const message = contentEl ? contentEl.value : '';
+            if (!message.trim()) {
+                alert('Please enter template message content first.');
+                return;
+            }
+            closeTemplateBulkModal();
+            applyTemplate(message);
+            switchTab('chats');
+        }
+
+        async function executeTemplateBulkSend() {
+            const recipients = getTemplateBulkAllRecipients();
+            const contentEl = document.getElementById('tpl-bulk-content');
+            const message = (contentEl?.value || '').trim();
+            const sendMeta = document.getElementById('tpl-bulk-meta-api')?.checked ?? true;
+            const saveLeads = document.getElementById('tpl-bulk-save-leads')?.checked ?? true;
+
+            if (recipients.length === 0) {
+                alert('Please select at least one recipient or enter custom phone numbers.');
+                return;
+            }
+            if (!message) {
+                alert('Please enter template message content.');
+                return;
+            }
+
+            const confirmMsg = `Send this template to ${recipients.length} contact(s)${sendMeta ? ' via official Meta WhatsApp' : ' (simulated)'}?`;
+            if (!confirm(confirmMsg)) return;
+
+            const sendBtn = document.getElementById('tpl-bulk-send-btn');
+            const progBox = document.getElementById('tpl-bulk-progress-box');
+            const progText = document.getElementById('tpl-bulk-progress-text');
+            const progPct = document.getElementById('tpl-bulk-progress-pct');
+            const progBar = document.getElementById('tpl-bulk-progress-bar');
+            const logBox = document.getElementById('tpl-bulk-result-log');
+
+            if (sendBtn) sendBtn.disabled = true;
+            if (progBox) progBox.classList.remove('hidden');
+            if (progText) progText.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Sending to ${recipients.length} recipients...`;
+            if (progBar) progBar.style.width = '30%';
+            if (progPct) progPct.innerText = '30%';
+            if (logBox) logBox.innerHTML = `<div>🚀 Starting template dispatch to ${recipients.length} recipient(s)...</div>`;
+
+            try {
+                const res = await fetch('/api/dashboard/broadcast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone_numbers: recipients,
+                        message: message,
+                        send_via_meta: sendMeta,
+                        add_as_leads: saveLeads,
+                        lead_source: `Template: ${currentBulkTemplateTitle || 'Direct Send'}`
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Failed to dispatch template messages');
+                }
+
+                if (progBar) progBar.style.width = '100%';
+                if (progPct) progPct.innerText = '100%';
+                if (progText) progText.innerHTML = `<i class="fas fa-check-circle text-emerald-600 mr-1"></i> Completed!`;
+                if (logBox) {
+                    logBox.innerHTML += `
+                        <div class="text-emerald-700 font-bold mt-1">
+                            ✅ Finished: ${data.sent || 0} sent, ${data.failed || 0} failed (Total: ${data.total || recipients.length})
+                        </div>
+                    `;
+                }
+
+                // Refresh data in background
+                if (typeof fetchData === 'function') fetchData();
+                if (typeof loadLeadsTable === 'function') loadLeadsTable();
+
+                setTimeout(() => {
+                    alert(`Template successfully sent to ${data.sent || recipients.length} recipients!`);
+                    closeTemplateBulkModal();
+                }, 1200);
+
+            } catch (err) {
+                console.error('Template bulk send error:', err);
+                if (progText) progText.innerHTML = `<i class="fas fa-circle-exclamation text-rose-600 mr-1"></i> Send failed`;
+                if (logBox) {
+                    logBox.innerHTML += `<div class="text-rose-600 font-bold mt-1">❌ Error: ${escapeHtml(err.message)}</div>`;
+                }
+                alert('Template send failed: ' + err.message);
+            } finally {
+                if (sendBtn) sendBtn.disabled = false;
+            }
+        }
 
         // Bookings
         async function fetchBookings() {
