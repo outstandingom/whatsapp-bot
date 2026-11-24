@@ -317,12 +317,6 @@ function deleteChatFromMenu() {
             const activeConv = (allConversations || []).find(c => c.phone_number === phone);
             updateActiveFreeWindowUI(activeConv);
 
-            document.getElementById('select-mode-btn')?.classList.remove('hidden');
-            document.getElementById('delete-chat-btn')?.classList.remove('hidden');
-            document.getElementById('book-lead-btn')?.classList.remove('hidden');
-            document.getElementById('bot-toggle-container')?.classList.remove('hidden');
-            document.getElementById('ai-reply-btn')?.classList.remove('hidden');
-
             const menuBtn = document.getElementById('chat-actions-menu-btn');
             if (menuBtn) menuBtn.classList.remove('hidden');
 
@@ -1391,15 +1385,12 @@ function deleteChatFromMenu() {
             selectedMessageIds.clear();
             updateSelectionBar();
 
-            const selectBtn = document.getElementById('select-mode-btn');
             const selectionBar = document.getElementById('selection-bar');
 
             if (isSelectMode) {
                 if (selectionBar) selectionBar.classList.remove('hidden');
-                if (selectBtn) selectBtn.classList.add('bg-emerald-100', 'text-emerald-800', 'border-emerald-300');
             } else {
                 if (selectionBar) selectionBar.classList.add('hidden');
-                if (selectBtn) selectBtn.classList.remove('bg-emerald-100', 'text-emerald-800', 'border-emerald-300');
             }
 
             loadMessages(false);
@@ -1516,11 +1507,6 @@ function deleteChatFromMenu() {
                                 <p class="text-xs text-slate-500 max-w-sm mt-1">Select a customer or type below to test chatting with the AI Support Bot.</p>
                             </div>
                         `;
-                        document.getElementById('select-mode-btn')?.classList.add('hidden');
-                        document.getElementById('delete-chat-btn')?.classList.add('hidden');
-                        document.getElementById('book-lead-btn')?.classList.add('hidden');
-                        document.getElementById('bot-toggle-container')?.classList.add('hidden');
-                        document.getElementById('ai-reply-btn')?.classList.add('hidden');
                         const menuBtn = document.getElementById('chat-actions-menu-btn');
                         if (menuBtn) menuBtn.classList.add('hidden');
                         closeChatActionsMenu();
