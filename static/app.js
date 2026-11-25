@@ -1662,6 +1662,7 @@ function deleteChatFromMenu() {
         // ==================== AI PERSONALIZED CAMPAIGN ENGINE ====================
         let currentCampaignMode = 'ai';
         let campaignLeads = [];
+        let campaignRawTable = null;
 
         const CAMPAIGN_PRESET_GOALS = {
             security: "Offer an exclusive 20% discount on Growhaz Alpha G5 Advanced Website Security Vulnerability Scan and modern custom app development to protect their online business.",
@@ -1727,18 +1728,374 @@ function deleteChatFromMenu() {
             if (el) el.classList.toggle('hidden');
         }
 
-        function parseCSVToObjects(text) {
+        const EXCLUDED_PHONE_HEADERS = new Set([
+            'leadid', 'id', 'srno', 'sno', 'serialno', 'serialnumber',
+            'pincode', 'pin', 'zip', 'zipcode', 'postalcode',
+            'gst', 'gstno', 'gstin', 'gstnumber', 'pan', 'panno',
+            'rating', 'ratings', 'reviews', 'reviewcount',
+            'lat', 'lng', 'latitude', 'longitude',
+            'date', 'createdat', 'updatedat', 'price', 'amount',
+            'outreachstatus', 'verificationstatus', 'status', 'source',
+            'orderid', 'invoice', 'invoiceno', 'rollno', 'regno'
+        ]);
+
+        function cleanRawPhoneString(rawValue) {
+            if (rawValue === null || rawValue === undefined) return '';
+            return String(rawValue)
+                .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF]/g, '')
+                .replace(/\u00A0/g, ' ')
+                .replace(/[\u0966-\u096F]/g, ch => String(ch.charCodeAt(0) - 0x0966))
+                .trim();
+        }
+
+        function hasTruncatedScientificPhone(rawValue) {
+            const s = cleanRawPhoneString(rawValue);
+            const m = s.match(/^\+?(\d+)(?:\.(\d+))?[eE]\+?(\d+)$/);
+            if (!m) return false;
+            const exp = parseInt(m[3], 10);
+            if (exp < 9 || exp > 14) return false;
+            const sigDigits = (m[1] + (m[2] || '')).replace(/^0+/, '').length;
+            return sigDigits < 10;
+        }
+
+        function normalizePhoneDigits(digits, strict = false, explicitIntl = false) {
+            if (!digits || /^0+$/.test(digits)) return '';
+            let d = digits;
+            if (d.startsWith('00') && d.length >= 12 && d.length <= 17) {
+                d = d.slice(2);
+            }
+            if (d.length === 13 && d.startsWith('091') && /^[6-9]/.test(d[3])) {
+                return d.slice(1);
+            }
+            if (d.length === 11 && d.startsWith('0') && /^[6-9]/.test(d[1])) {
+                return '91' + d.slice(1);
+            }
+            if (d.length === 10) {
+                if (/^[6-9]/.test(d)) return '91' + d;
+                return !strict ? ('91' + d) : '';
+            }
+            if (d.length === 12 && d.startsWith('91') && /^[6-9]/.test(d[2])) {
+                return d;
+            }
+            if (d.length >= 11 && d.length <= 15) {
+                if (!strict || explicitIntl) return d;
+                return '';
+            }
+            return '';
+        }
+
+        function extractPhoneNumber(rawValue, options = {}) {
+            const strict = Boolean(options.strict);
+            let s = cleanRawPhoneString(rawValue);
+            if (!s) return '';
+
+            // Skip ISO dates (YYYY-MM-DD / YYYY/MM/DD)
+            if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T\s].*)?$/.test(s)) return '';
+
+            // Strip trailing decimal zeros from Excel/pandas floats (e.g. 9826112345.0)
+            if (/^\+?\d+\.0+$/.test(s)) {
+                s = s.replace(/\.0+$/, '');
+            }
+
+            // Handle scientific notation (e.g. 9.18815081605E+11 vs truncated 9.18815E+11)
+            const sciMatch = s.match(/^\+?(\d+)(?:\.(\d+))?[eE]\+?(\d+)$/);
+            if (sciMatch) {
+                if (hasTruncatedScientificPhone(s)) return '';
+                const exp = parseInt(sciMatch[3], 10);
+                if (exp >= 9 && exp <= 14) {
+                    const numDigits = String(Math.round(Number(s)));
+                    return normalizePhoneDigits(numDigits, strict, s.startsWith('+'));
+                }
+                return '';
+            }
+
+            // Check WhatsApp / tel URLs first
+            const urlPatterns = [
+                /wa\.me\/(\+?\d{10,15})/i,
+                /[?&]phone=(\+?\d{10,15})/i,
+                /tel:(\+?[\d\s\-().]{10,20})/i
+            ];
+            for (const pat of urlPatterns) {
+                const m = s.match(pat);
+                if (m && m[1]) {
+                    const rawUrlPhone = m[1].trim();
+                    const urlDigits = rawUrlPhone.replace(/[^0-9]/g, '');
+                    const normUrl = normalizePhoneDigits(urlDigits, false, rawUrlPhone.startsWith('+') || rawUrlPhone.startsWith('00'));
+                    if (normUrl) return normUrl;
+                }
+            }
+
+            const candidates = [];
+            const addCandidate = (rawMatch) => {
+                if (!rawMatch) return;
+                const trimmed = rawMatch.trim();
+                const explicitIntl = trimmed.startsWith('+') || trimmed.startsWith('00');
+                const digits = trimmed.replace(/[^0-9]/g, '');
+                const normalized = normalizePhoneDigits(digits, strict, explicitIntl);
+                if (!normalized) return;
+
+                const isStdLandlinePattern = /^0\d{2,4}[\s\-.]\d{6,8}$/.test(trimmed);
+                const isIndianMobile = /^91[6-9]\d{9}$/.test(normalized);
+                let score = 2;
+                if (isIndianMobile && !isStdLandlinePattern && !trimmed.startsWith('0')) {
+                    score = 4;
+                } else if (isIndianMobile && !isStdLandlinePattern) {
+                    score = 3;
+                } else if (isStdLandlinePattern) {
+                    score = 1;
+                }
+                candidates.push({ normalized, score });
+            };
+
+            if (!strict) {
+                const segments = s.split(/[/,;|&\n]+|\bor\b/i);
+                for (let seg of segments) {
+                    seg = seg.trim();
+                    if (!seg) continue;
+                    if (/^\+?\d+\.0+$/.test(seg)) seg = seg.replace(/\.0+$/, '');
+
+                    const phoneRegex = /(?:\(?\+?\d{1,3}\)?[\s\-.]?)?(?:\(0?\d{2,5}\)[\s\-.]?|0)?\d(?:[\s\-().]?\d){8,14}/g;
+                    let foundInSeg = false;
+                    let m;
+                    while ((m = phoneRegex.exec(seg)) !== null) {
+                        foundInSeg = true;
+                        addCandidate(m[0]);
+                    }
+
+                    if (!foundInSeg) {
+                        const strippedLabels = seg.replace(/\b(?:ph|phone|mob|mobile|tel|wa|whatsapp|call|no|num|ext|fax|office|shop|home)\b/gi, '');
+                        if (!/[a-zA-Z]/.test(strippedLabels)) {
+                            const segDigits = seg.replace(/[^0-9]/g, '');
+                            if (segDigits.length >= 10 && segDigits.length <= 15) {
+                                addCandidate(seg);
+                            }
+                        }
+                    }
+                }
+            } else {
+                const strictIndianRegex = /(?:^|[^0-9A-Za-z])((?:\(?\+?91\)?[\s\-.]*|0091[\s\-.]*|0)?[6-9](?:[\s\-.]?\d){9})(?![0-9A-Za-z])/g;
+                let m;
+                while ((m = strictIndianRegex.exec(s)) !== null) {
+                    addCandidate(m[1]);
+                }
+
+                const strictIntlRegex = /(?:^|[^0-9A-Za-z])(\+[1-9]\d{0,2}[\s\-().]?\d(?:[\s\-().]?\d){8,13})(?![0-9A-Za-z])/g;
+                while ((m = strictIntlRegex.exec(s)) !== null) {
+                    addCandidate(m[1]);
+                }
+            }
+
+            if (candidates.length === 0) return '';
+            candidates.sort((a, b) => b.score - a.score);
+            return candidates[0].normalized;
+        }
+
+        function normalizeCsvHeader(h) {
+            return String(h || '').replace(/^\uFEFF/, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        }
+
+        function isExcludedPhoneHeader(norm) {
+            if (!norm) return false;
+            if (EXCLUDED_PHONE_HEADERS.has(norm)) return true;
+            return norm.includes('aadhaar') || norm.includes('aadhar') || norm.includes('gstin') || norm.includes('pincode') || norm.includes('zipcode');
+        }
+
+        function getPhoneHeaderScore(norm) {
+            if (!norm || isExcludedPhoneHeader(norm)) return norm ? -100 : 0;
+            const strongKeywords = ['whatsapp', 'wano', 'wanumber', 'phone', 'mobile', 'contactnumber', 'contactno', 'contactnum', 'telephone', 'cell', 'phno', 'mobno', 'phnum', 'mobnum', 'phonenum', 'mobilenum', 'phoneno', 'mobileno'];
+            if (norm === 'mob' || norm === 'ph' || norm === 'tel' || strongKeywords.some(k => norm.includes(k))) {
+                return 100;
+            }
+            if (norm.includes('contact') && !norm.includes('person') && !norm.includes('name') && !norm.includes('email') && !norm.includes('status') && !norm.includes('date')) {
+                return 70;
+            }
+            if (norm.includes('number') || norm === 'num' || norm.includes('call')) {
+                return 70;
+            }
+            if (norm.endsWith('no') && norm.length >= 4) {
+                return 60;
+            }
+            return 0;
+        }
+
+        function isKnownCsvHeaderRow(cells) {
+            if (!cells || cells.length === 0) return false;
+            if (cells.some(c => extractPhoneNumber(c, { strict: true }))) return false;
+            const knownTokens = ['business', 'name', 'company', 'client', 'shop', 'store', 'category', 'industry', 'type', 'area', 'locality', 'city', 'address', 'location', 'phone', 'mobile', 'contact', 'whatsapp', 'tel', 'mob', 'number', 'email', 'source', 'status', 'leadid', 'srno', 'website', 'firm', 'merchant', 'outlet'];
+            let hits = 0;
+            for (const c of cells) {
+                const norm = normalizeCsvHeader(c);
+                if (norm && norm.length <= 30 && knownTokens.some(t => norm.includes(t))) {
+                    hits++;
+                }
+            }
+            return hits >= 2;
+        }
+
+        function detectCampaignColumns(rawHeaders, dataRows) {
+            const normHeaders = rawHeaders.map(normalizeCsvHeader);
+            const colCount = rawHeaders.length;
+            const sampleRows = dataRows.slice(0, 100);
+            const headerPhoneScores = normHeaders.map(getPhoneHeaderScore);
+            const phoneCounts = new Array(colCount).fill(0);
+            let scientificWarningCount = 0;
+
+            for (let colIdx = 0; colIdx < colCount; colIdx++) {
+                if (headerPhoneScores[colIdx] < 0) continue;
+                const isHeaderPhone = headerPhoneScores[colIdx] >= 60;
+                const strictScan = !isHeaderPhone;
+                let hasWhatsappLink = false;
+
+                for (const row of sampleRows) {
+                    const cell = row[colIdx] || '';
+                    if (!cell) continue;
+                    const lowerCell = String(cell).toLowerCase();
+                    if (lowerCell.includes('wa.me/') || lowerCell.includes('whatsapp.com/')) {
+                        hasWhatsappLink = true;
+                    }
+                    if (hasTruncatedScientificPhone(cell)) {
+                        const rawCleaned = cleanRawPhoneString(cell);
+                        if (isHeaderPhone || /^\+?9\.1/.test(rawCleaned)) {
+                            scientificWarningCount++;
+                        }
+                    }
+                    if (extractPhoneNumber(cell, { strict: strictScan })) {
+                        phoneCounts[colIdx]++;
+                    }
+                }
+
+                if (hasWhatsappLink) {
+                    headerPhoneScores[colIdx] += 30;
+                }
+            }
+
+            // Pick best Phone column using header score + actual valid-phone data voting
+            let phoneIdx = -1;
+            let bestPhoneScore = 0;
+            for (let colIdx = 0; colIdx < colCount; colIdx++) {
+                if (headerPhoneScores[colIdx] < 0) continue;
+                const dataScore = phoneCounts[colIdx] > 0 ? (1000 + phoneCounts[colIdx] * 10) : 0;
+                const totalScore = headerPhoneScores[colIdx] + dataScore;
+                if (totalScore > bestPhoneScore) {
+                    bestPhoneScore = totalScore;
+                    phoneIdx = colIdx;
+                }
+            }
+
+            const findHeaderByKeywords = (orderedKeywords, rejectSubstrings = []) => {
+                for (const kw of orderedKeywords) {
+                    const idx = normHeaders.findIndex((h, i) =>
+                        h && i !== phoneIdx && h.includes(kw) && !rejectSubstrings.some(r => h.includes(r))
+                    );
+                    if (idx !== -1) return idx;
+                }
+                return -1;
+            };
+
+            let nameIdx = findHeaderByKeywords(
+                ['businessname', 'shopname', 'storename', 'companyname', 'clientname', 'customername', 'outletname', 'firmname', 'organization', 'merchant', 'title', 'business', 'company', 'client', 'fullname', 'ownername', 'owner', 'name'],
+                ['filename', 'username', 'columnname', 'categoryname', 'areaname', 'cityname']
+            );
+            if (nameIdx === -1) {
+                nameIdx = normHeaders.findIndex((h, colIdx) => {
+                    if (colIdx === phoneIdx || isExcludedPhoneHeader(h)) return false;
+                    return sampleRows.some(r => {
+                        const v = (r[colIdx] || '').trim();
+                        return v && !/^\d+$/.test(v) && !extractPhoneNumber(v, { strict: true });
+                    });
+                });
+            }
+
+            const categoryIdx = findHeaderByKeywords(
+                ['businesscategory', 'category', 'industry', 'businesstype', 'segment', 'niche', 'sector', 'subcategory', 'vertical', 'profession', 'service', 'type']
+            );
+            const areaIdx = findHeaderByKeywords(
+                ['areaorlocality', 'locality', 'area', 'fulladdress', 'address', 'location', 'city', 'town', 'place', 'market', 'ward', 'district', 'state', 'region', 'street', 'neighborhood', 'neighbourhood']
+            );
+
+            return {
+                mapping: {
+                    phone: phoneIdx >= 0 ? phoneIdx : 'auto',
+                    name: nameIdx,
+                    category: categoryIdx,
+                    area: areaIdx
+                },
+                phoneCounts,
+                headerPhoneScores,
+                scientificWarningCount
+            };
+        }
+
+        function buildCampaignLeadsFromRawTable(rawTable, preserveMessages = false) {
+            if (!rawTable || !Array.isArray(rawTable.rows)) return [];
+            const { mapping, rows, phoneCounts, headerPhoneScores } = rawTable;
+            const prevById = new Map();
+            if (preserveMessages && Array.isArray(campaignLeads)) {
+                campaignLeads.forEach(l => prevById.set(l.id, l));
+            }
+
+            const populatedPhoneCols = [];
+            for (let c = 0; c < rawTable.headers.length; c++) {
+                if (c === mapping.phone) continue;
+                if ((phoneCounts && phoneCounts[c] > 0) || (headerPhoneScores && headerPhoneScores[c] >= 60)) {
+                    populatedPhoneCols.push(c);
+                }
+            }
+
+            return rows.map((row, idx) => {
+                const rowNum = idx + 1;
+                const rawName = (mapping.name >= 0 ? row[mapping.name] : '') || '';
+                const rawCategory = (mapping.category >= 0 ? row[mapping.category] : '') || '';
+                const rawArea = (mapping.area >= 0 ? row[mapping.area] : '') || '';
+
+                let phone = '';
+                if (mapping.phone !== 'auto' && typeof mapping.phone === 'number' && mapping.phone >= 0) {
+                    phone = extractPhoneNumber(row[mapping.phone] || '', { strict: false });
+                }
+                if (!phone) {
+                    for (const colIdx of populatedPhoneCols) {
+                        const isExplicitPhoneCol = headerPhoneScores && headerPhoneScores[colIdx] >= 60;
+                        phone = extractPhoneNumber(row[colIdx] || '', { strict: !isExplicitPhoneCol });
+                        if (phone) break;
+                    }
+                }
+                if (!phone) {
+                    for (let colIdx = 0; colIdx < row.length; colIdx++) {
+                        if (colIdx === mapping.phone || isExcludedPhoneHeader(normalizeCsvHeader(rawTable.headers[colIdx]))) continue;
+                        phone = extractPhoneNumber(row[colIdx] || '', { strict: true });
+                        if (phone) break;
+                    }
+                }
+
+                const prev = prevById.get(rowNum);
+                return {
+                    id: rowNum,
+                    business_name: rawName.trim() || `Lead #${rowNum}`,
+                    category: rawCategory.trim() || 'Business',
+                    area: rawArea.trim() || 'Betul',
+                    phone: phone,
+                    personalized_message: prev ? prev.personalized_message : '',
+                    selected: prev ? prev.selected : true,
+                    status: prev ? prev.status : 'ready'
+                };
+            });
+        }
+
+        function parseCSVToObjects(text, sourceName = 'CSV') {
+            campaignRawTable = null;
             if (!text || !text.trim()) return [];
+            const cleanText = String(text).replace(/^\uFEFF/, '');
+
             const lines = [];
             let curLine = '';
             let inQuotes = false;
-            for (let i = 0; i < text.length; i++) {
-                const char = text[i];
+            for (let i = 0; i < cleanText.length; i++) {
+                const char = cleanText[i];
                 if (char === '"') {
                     inQuotes = !inQuotes;
                     curLine += char;
                 } else if ((char === '\n' || char === '\r') && !inQuotes) {
-                    if (char === '\r' && text[i+1] === '\n') i++;
+                    if (char === '\r' && cleanText[i + 1] === '\n') i++;
                     if (curLine.trim()) lines.push(curLine);
                     curLine = '';
                 } else {
@@ -1746,22 +2103,46 @@ function deleteChatFromMenu() {
                 }
             }
             if (curLine.trim()) lines.push(curLine);
-            if (lines.length < 2) return [];
+            if (lines.length === 0) return [];
 
-            function parseCSVLine(line) {
+            // Auto-detect delimiter across first 5 non-empty lines (outside quotes)
+            const sampleLines = lines.slice(0, Math.min(5, lines.length));
+            let commaCount = 0;
+            let semiCount = 0;
+            let tabCount = 0;
+            for (const line of sampleLines) {
+                let inside = false;
+                for (let i = 0; i < line.length; i++) {
+                    const c = line[i];
+                    if (c === '"') inside = !inside;
+                    else if (!inside) {
+                        if (c === ',') commaCount++;
+                        else if (c === ';') semiCount++;
+                        else if (c === '\t') tabCount++;
+                    }
+                }
+            }
+            let delimiter = ',';
+            if (tabCount > 0 && tabCount >= commaCount && tabCount >= semiCount) {
+                delimiter = '\t';
+            } else if (semiCount > 0 && semiCount > commaCount && semiCount >= sampleLines.length) {
+                delimiter = ';';
+            }
+
+            function parseCSVLine(line, sep) {
                 const cells = [];
                 let curCell = '';
                 let inside = false;
                 for (let i = 0; i < line.length; i++) {
                     const c = line[i];
                     if (c === '"') {
-                        if (inside && line[i+1] === '"') {
+                        if (inside && line[i + 1] === '"') {
                             curCell += '"';
                             i++;
                         } else {
                             inside = !inside;
                         }
-                    } else if (c === ',' && !inside) {
+                    } else if (c === sep && !inside) {
                         cells.push(curCell.trim());
                         curCell = '';
                     } else {
@@ -1772,36 +2153,130 @@ function deleteChatFromMenu() {
                 return cells;
             }
 
-            const rawHeaders = parseCSVLine(lines[0]);
-            const headers = rawHeaders.map(h => h.trim().toLowerCase().replace(/[\s_-]+/g, ''));
-            const rows = [];
-            for (let i = 1; i < lines.length; i++) {
-                const values = parseCSVLine(lines[i]);
-                if (!values || values.every(v => !v)) continue;
-                const row = {};
-                headers.forEach((h, idx) => {
-                    row[h] = values[idx] || '';
-                });
-                
-                const name = row['businessname'] || row['name'] || row['company'] || row['client'] || `Lead #${i}`;
-                const category = row['businesscategory'] || row['category'] || row['industry'] || row['type'] || 'Business';
-                const area = row['areaorlocality'] || row['area'] || row['locality'] || row['city'] || 'Betul';
-                let phone = row['contactnumber'] || row['phone'] || row['phonenumber'] || row['mobile'] || '';
-                phone = phone.replace(/[^0-9]/g, '');
-                if (phone.length === 10) phone = '91' + phone;
+            const parsedGrid = lines
+                .map(l => parseCSVLine(l, delimiter))
+                .filter(cells => cells && cells.some(c => c !== ''));
+            if (parsedGrid.length === 0) return [];
 
-                rows.push({
-                    id: i,
-                    business_name: name,
-                    category: category,
-                    area: area,
-                    phone: phone,
-                    personalized_message: '',
-                    selected: true,
-                    status: 'ready'
-                });
+            // Detect header row vs banner row vs headerless table
+            let headerIdx = 0;
+            let isHeaderless = false;
+            const row0IsHeader = isKnownCsvHeaderRow(parsedGrid[0]);
+            const row0NonEmpty = parsedGrid[0].filter(Boolean).length;
+
+            if (!row0IsHeader || row0NonEmpty <= 1) {
+                let foundHeaderIdx = -1;
+                for (let i = 1; i < Math.min(4, parsedGrid.length); i++) {
+                    if (isKnownCsvHeaderRow(parsedGrid[i])) {
+                        foundHeaderIdx = i;
+                        break;
+                    }
+                }
+                if (foundHeaderIdx !== -1) {
+                    headerIdx = foundHeaderIdx;
+                } else if (!row0IsHeader && parsedGrid[0].some(c => extractPhoneNumber(c, { strict: true }))) {
+                    isHeaderless = true;
+                }
             }
-            return rows;
+
+            let rawHeaders;
+            let dataRows;
+            if (isHeaderless) {
+                const maxCols = parsedGrid.reduce((m, r) => Math.max(m, r.length), 0);
+                rawHeaders = Array.from({ length: maxCols }, (_, i) => `Column ${i + 1}`);
+                dataRows = parsedGrid;
+            } else {
+                if (parsedGrid.length <= headerIdx + 1) return [];
+                rawHeaders = [...parsedGrid[headerIdx]];
+                dataRows = parsedGrid.slice(headerIdx + 1);
+                const maxCols = dataRows.reduce((m, r) => Math.max(m, r.length), rawHeaders.length);
+                while (rawHeaders.length < maxCols) {
+                    rawHeaders.push(`Column ${rawHeaders.length + 1}`);
+                }
+            }
+
+            const detected = detectCampaignColumns(rawHeaders, dataRows);
+            campaignRawTable = {
+                headers: rawHeaders,
+                rows: dataRows,
+                mapping: detected.mapping,
+                phoneCounts: detected.phoneCounts,
+                headerPhoneScores: detected.headerPhoneScores,
+                scientificWarningCount: detected.scientificWarningCount,
+                sourceName: sourceName
+            };
+
+            return buildCampaignLeadsFromRawTable(campaignRawTable, false);
+        }
+
+        function renderCampaignCsvMapper() {
+            const box = document.getElementById('campaign-csv-mapper');
+            if (!box) return;
+            if (!campaignRawTable || !campaignRawTable.headers || campaignRawTable.headers.length === 0) {
+                box.classList.add('hidden');
+                return;
+            }
+
+            box.classList.remove('hidden');
+            const summaryEl = document.getElementById('campaign-csv-summary');
+            const validCount = campaignLeads.filter(l => l.phone && l.phone.length >= 10).length;
+            const totalCount = campaignLeads.length;
+
+            if (summaryEl) {
+                if (validCount > 0) {
+                    summaryEl.className = 'text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1.5';
+                    summaryEl.innerHTML = `<i class="fas fa-check-circle text-emerald-600"></i> <span>Detected <b>${validCount}</b> of <b>${totalCount}</b> valid phone numbers</span>`;
+                } else {
+                    summaryEl.className = 'text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 flex items-start gap-1.5';
+                    if (campaignRawTable.scientificWarningCount > 0) {
+                        summaryEl.innerHTML = `<i class="fas fa-triangle-exclamation text-amber-600 mt-0.5"></i> <span>0 valid numbers: detected ${campaignRawTable.scientificWarningCount} Excel-truncated number(s) like <code>9.18815E+11</code> (last digits lost). Format Phone column as Text/Number in Excel and re-export CSV.</span>`;
+                    } else {
+                        summaryEl.innerHTML = `<i class="fas fa-triangle-exclamation text-amber-600 mt-0.5"></i> <span>0 phone numbers found in CSV columns. Select the right <b>Phone Column</b> below or click <b>Quick-Fill Test Phone</b>.</span>`;
+                    }
+                }
+            }
+
+            const fillSelect = (id, selectedVal, includeAutoOption) => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                let opts = '';
+                if (includeAutoOption) {
+                    opts += `<option value="auto">Auto-Scan All Columns</option>`;
+                } else {
+                    opts += `<option value="-1">(None / Default)</option>`;
+                }
+                campaignRawTable.headers.forEach((h, idx) => {
+                    const count = campaignRawTable.phoneCounts ? (campaignRawTable.phoneCounts[idx] || 0) : 0;
+                    const countTag = (id === 'campaign-map-phone' && count > 0) ? ` (${count} phones)` : '';
+                    opts += `<option value="${idx}">${escapeHtml(h || `Column ${idx + 1}`)}${countTag}</option>`;
+                });
+                sel.innerHTML = opts;
+                sel.value = String(selectedVal);
+            };
+
+            fillSelect('campaign-map-phone', campaignRawTable.mapping.phone, true);
+            fillSelect('campaign-map-name', campaignRawTable.mapping.name, false);
+            fillSelect('campaign-map-category', campaignRawTable.mapping.category, false);
+            fillSelect('campaign-map-area', campaignRawTable.mapping.area, false);
+        }
+
+        function applyCampaignColumnMapping() {
+            if (!campaignRawTable) return;
+            const phoneVal = document.getElementById('campaign-map-phone')?.value;
+            const nameVal = document.getElementById('campaign-map-name')?.value;
+            const catVal = document.getElementById('campaign-map-category')?.value;
+            const areaVal = document.getElementById('campaign-map-area')?.value;
+
+            campaignRawTable.mapping = {
+                phone: phoneVal === 'auto' ? 'auto' : parseInt(phoneVal, 10),
+                name: nameVal !== undefined ? parseInt(nameVal, 10) : campaignRawTable.mapping.name,
+                category: catVal !== undefined ? parseInt(catVal, 10) : campaignRawTable.mapping.category,
+                area: areaVal !== undefined ? parseInt(areaVal, 10) : campaignRawTable.mapping.area
+            };
+
+            campaignLeads = buildCampaignLeadsFromRawTable(campaignRawTable, true);
+            renderCampaignCsvMapper();
+            renderCampaignLeadsTable();
         }
 
         async function loadSampleBetulLeads() {
@@ -1809,9 +2284,10 @@ function deleteChatFromMenu() {
                 const res = await fetch('/static/sample_leads.csv');
                 if (!res.ok) throw new Error('Sample CSV file not found on server');
                 const text = await res.text();
-                const parsed = parseCSVToObjects(text);
+                const parsed = parseCSVToObjects(text, 'sample_leads.csv');
                 if (parsed.length === 0) throw new Error('Failed to parse sample CSV');
                 campaignLeads = parsed;
+                renderCampaignCsvMapper();
                 renderCampaignLeadsTable();
                 alert(`Loaded ${parsed.length} Betul businesses successfully! Next, review or edit the campaign goal and click "Generate AI Personalized Messages".`);
             } catch (err) {
@@ -1821,20 +2297,36 @@ function deleteChatFromMenu() {
         }
 
         function handleCampaignFileUpload(event) {
-            const file = event.target.files[0];
+            const file = event?.target?.files?.[0] || (event instanceof File ? event : null);
             if (!file) return;
+            if (event && event.target && 'value' in event.target) {
+                event.target.value = '';
+            }
             const reader = new FileReader();
             reader.onload = function(e) {
                 try {
-                    const text = e.target.result;
-                    const parsed = parseCSVToObjects(text);
+                    const text = e.target.result || '';
+                    if (text.startsWith('PK\x03\x04')) {
+                        alert('Excel (.xlsx) binary files cannot be read directly. Please use "Save As -> CSV (Comma delimited)" in Excel and upload the .csv file.');
+                        return;
+                    }
+                    const parsed = parseCSVToObjects(text, file.name);
                     if (parsed.length === 0) {
-                        alert('Could not find business columns in the file. Make sure your file has headers like Business_Name, Category, Area, Contact_Number.');
+                        alert('Could not find business rows in the file. Make sure your file is a valid CSV/TSV with columns like Business_Name, Category, Area, Phone.');
                         return;
                     }
                     campaignLeads = parsed;
+                    renderCampaignCsvMapper();
                     renderCampaignLeadsTable();
-                    alert(`Loaded ${parsed.length} businesses from ${file.name}!`);
+                    const phoneCount = parsed.filter(l => l.phone && l.phone.length >= 10).length;
+                    const missingCount = parsed.length - phoneCount;
+                    if (phoneCount > 0) {
+                        alert(`Loaded ${parsed.length} businesses from ${file.name}! Detected ${phoneCount} valid phone numbers (${missingCount} missing).`);
+                    } else if (campaignRawTable && campaignRawTable.scientificWarningCount > 0) {
+                        alert(`Loaded ${parsed.length} businesses from ${file.name}, but Excel truncated the phone numbers to scientific notation (e.g. 9.18815E+11). Please format the column as Text in Excel and re-export CSV.`);
+                    } else {
+                        alert(`Loaded ${parsed.length} businesses from ${file.name}, but 0 valid phone numbers were detected. Check the "CSV Column Mapping" dropdown above the table or click "Quick-Fill Test Phone".`);
+                    }
                 } catch (err) {
                     alert('Error parsing CSV file: ' + err.message);
                 }
@@ -1842,18 +2334,30 @@ function deleteChatFromMenu() {
             reader.readAsText(file);
         }
 
+        function handleCampaignFileDrop(event) {
+            event.preventDefault();
+            const dropzone = document.getElementById('campaign-dropzone');
+            if (dropzone) dropzone.classList.remove('border-emerald-500', 'bg-emerald-50/50');
+            const file = event?.dataTransfer?.files?.[0];
+            if (file) {
+                handleCampaignFileUpload({ target: { files: [file] } });
+            }
+        }
+
         function handleCampaignPasteData() {
             const input = document.getElementById('campaign-paste-input');
             if (!input || !input.value.trim()) return;
-            const parsed = parseCSVToObjects(input.value);
+            const parsed = parseCSVToObjects(input.value, 'Pasted Table');
             if (parsed.length === 0) {
-                alert('Could not parse table data. Ensure the first line contains column headers (e.g. Business_Name, Category, Area, Contact_Number).');
+                alert('Could not parse table data. Ensure rows contain columns like Business_Name, Category, Area, Phone.');
                 return;
             }
             campaignLeads = parsed;
+            renderCampaignCsvMapper();
             renderCampaignLeadsTable();
             toggleCampaignPasteBox();
-            alert(`Parsed ${parsed.length} businesses from pasted data!`);
+            const phoneCount = parsed.filter(l => l.phone && l.phone.length >= 10).length;
+            alert(`Parsed ${parsed.length} businesses from pasted data! Detected ${phoneCount} valid phone numbers.`);
         }
 
         function renderCampaignLeadsTable() {
@@ -1966,10 +2470,16 @@ function deleteChatFromMenu() {
         function updateCampaignLeadPhone(id, val) {
             const lead = campaignLeads.find(l => l.id === id);
             if (lead) {
-                let digits = val.replace(/[^0-9]/g, '');
-                if (digits.length === 10) digits = '91' + digits;
-                lead.phone = digits;
+                const extracted = extractPhoneNumber(val, { strict: false });
+                if (extracted) {
+                    lead.phone = extracted;
+                } else {
+                    let digits = String(val || '').replace(/[^0-9]/g, '');
+                    if (digits.length === 10) digits = '91' + digits;
+                    lead.phone = digits;
+                }
             }
+            renderCampaignCsvMapper();
             renderCampaignLeadsTable();
         }
 
@@ -1986,6 +2496,8 @@ function deleteChatFromMenu() {
             if (campaignLeads.length === 0) return;
             if (!confirm('Clear all loaded campaign leads?')) return;
             campaignLeads = [];
+            campaignRawTable = null;
+            renderCampaignCsvMapper();
             renderCampaignLeadsTable();
         }
 
@@ -2029,6 +2541,7 @@ function deleteChatFromMenu() {
                 lead.phone = digits;
             });
 
+            renderCampaignCsvMapper();
             renderCampaignLeadsTable();
             alert(`✅ Filled phone ${digits} across ${selected.length} selected businesses!`);
         }

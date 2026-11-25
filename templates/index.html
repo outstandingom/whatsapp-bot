@@ -738,13 +738,18 @@
                         </div>
 
                         <!-- Dropzone Area -->
-                        <div onclick="document.getElementById('campaign-csv-file').click()" class="border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/40 rounded-2xl p-4 text-center cursor-pointer transition group">
-                            <input type="file" id="campaign-csv-file" accept=".csv,.txt" onchange="handleCampaignFileUpload(event)" class="hidden">
+                        <div id="campaign-dropzone"
+                             onclick="document.getElementById('campaign-csv-file').click()"
+                             ondragover="event.preventDefault(); this.classList.add('border-emerald-500','bg-emerald-50/50')"
+                             ondragleave="this.classList.remove('border-emerald-500','bg-emerald-50/50')"
+                             ondrop="handleCampaignFileDrop(event)"
+                             class="border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/40 rounded-2xl p-4 text-center cursor-pointer transition group">
+                            <input type="file" id="campaign-csv-file" accept=".csv,.tsv,.txt" onchange="handleCampaignFileUpload(event)" class="hidden">
                             <div class="w-10 h-10 rounded-xl bg-white border border-slate-200 text-emerald-600 flex items-center justify-center mx-auto mb-2 group-hover:scale-105 transition shadow-xs">
                                 <i class="fas fa-cloud-arrow-up text-base"></i>
                             </div>
                             <span class="text-xs font-bold text-slate-700 group-hover:text-emerald-700 block">Click to Browse or Drag &amp; Drop CSV File</span>
-                            <span class="text-[10px] text-slate-400">Supports .csv and text directory lists</span>
+                            <span class="text-[10px] text-slate-400">Supports .csv, .tsv and text directory lists</span>
                         </div>
 
                         <!-- Quick Action & Sample Loader -->
@@ -827,6 +832,29 @@
                                 <i class="fas fa-bolt text-amber-500"></i>
                                 <span>Quick-Fill Test Phone</span>
                             </button>
+                        </div>
+                    </div>
+
+                    <!-- CSV Column Mapping & Phone Detection Bar -->
+                    <div id="campaign-csv-mapper" class="hidden p-3 bg-white rounded-xl border border-slate-200 space-y-2.5">
+                        <div id="campaign-csv-summary" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-50 text-slate-700 border border-slate-200"></div>
+                        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
+                            <div>
+                                <label for="campaign-map-phone" class="block font-bold text-slate-600 mb-0.5"><i class="fas fa-phone text-emerald-600 mr-1"></i>Phone Column</label>
+                                <select id="campaign-map-phone" onchange="applyCampaignColumnMapping()" class="w-full text-[11px] font-semibold px-2 py-1.5 rounded-lg border border-slate-300 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-500"></select>
+                            </div>
+                            <div>
+                                <label for="campaign-map-name" class="block font-bold text-slate-600 mb-0.5"><i class="fas fa-store text-indigo-500 mr-1"></i>Business Name Column</label>
+                                <select id="campaign-map-name" onchange="applyCampaignColumnMapping()" class="w-full text-[11px] font-semibold px-2 py-1.5 rounded-lg border border-slate-300 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"></select>
+                            </div>
+                            <div>
+                                <label for="campaign-map-category" class="block font-bold text-slate-600 mb-0.5"><i class="fas fa-tag text-blue-500 mr-1"></i>Category Column</label>
+                                <select id="campaign-map-category" onchange="applyCampaignColumnMapping()" class="w-full text-[11px] font-semibold px-2 py-1.5 rounded-lg border border-slate-300 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"></select>
+                            </div>
+                            <div>
+                                <label for="campaign-map-area" class="block font-bold text-slate-600 mb-0.5"><i class="fas fa-location-dot text-rose-500 mr-1"></i>Locality / Area Column</label>
+                                <select id="campaign-map-area" onchange="applyCampaignColumnMapping()" class="w-full text-[11px] font-semibold px-2 py-1.5 rounded-lg border border-slate-300 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"></select>
+                            </div>
                         </div>
                     </div>
 
@@ -1501,7 +1529,7 @@
     </div>
 
     <!-- External Modular Application Script -->
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20261125-csvfix"></script>
 
     <!-- ================================================================
          UI PATCH SCRIPT
