@@ -2,7 +2,11 @@
 // ====================================================================
 // MOBILE RESPONSIVENESS HELPERS
 // ====================================================================
+let mobileActivePane = 'list';
+let lastViewportIsDesktop = window.innerWidth >= 768;
+
 function showMobileChat() {
+    mobileActivePane = 'chat';
     if (window.innerWidth < 768) {
         const paneList = document.getElementById('pane-conversations');
         const paneChat = document.getElementById('pane-chat');
@@ -18,6 +22,7 @@ function showMobileChat() {
 }
 
 function showMobileList() {
+    mobileActivePane = 'list';
     if (window.innerWidth < 768) {
         const paneList = document.getElementById('pane-conversations');
         const paneChat = document.getElementById('pane-chat');
@@ -33,9 +38,16 @@ function showMobileList() {
 }
 
 window.addEventListener('resize', () => {
+    const isDesktop = window.innerWidth >= 768;
+    if (isDesktop === lastViewportIsDesktop) {
+        // Ignore vertical resizes on mobile caused by virtual keyboard opening/closing
+        return;
+    }
+    lastViewportIsDesktop = isDesktop;
+
     const paneList = document.getElementById('pane-conversations');
     const paneChat = document.getElementById('pane-chat');
-    if (window.innerWidth >= 768) {
+    if (isDesktop) {
         if (paneList) {
             paneList.classList.remove('hidden');
             paneList.classList.add('flex');
@@ -45,10 +57,11 @@ window.addEventListener('resize', () => {
             paneChat.classList.add('flex');
         }
     } else {
-        if (currentPhone) {
+        if (mobileActivePane === 'chat' && currentPhone) {
             if (paneList) { paneList.classList.add('hidden'); paneList.classList.remove('flex'); }
             if (paneChat) { paneChat.classList.remove('hidden'); paneChat.classList.add('flex'); }
         } else {
+            mobileActivePane = 'list';
             if (paneList) { paneList.classList.remove('hidden'); paneList.classList.add('flex'); }
             if (paneChat) { paneChat.classList.add('hidden'); paneChat.classList.remove('flex'); }
         }
@@ -119,12 +132,18 @@ function deleteChatFromMenu() {
             ['chats', 'analytics', 'testai', 'templates', 'bookings', 'webhooks', 'broadcast'].forEach(t => {
                 const view = document.getElementById('view-' + t);
                 const btn = document.getElementById('tab-btn-' + t);
-                if (view && btn) {
+                if (view) {
                     if (t === tab) {
                         view.classList.remove('hidden');
-                        btn.className = 'px-3.5 py-2 rounded-lg bg-white text-emerald-700 font-bold shadow-sm transition flex items-center space-x-1.5 flex-shrink-0';
+                        view.scrollTop = 0;
                     } else {
                         view.classList.add('hidden');
+                    }
+                }
+                if (btn) {
+                    if (t === tab) {
+                        btn.className = 'px-3.5 py-2 rounded-lg bg-white text-emerald-700 font-bold shadow-sm transition flex items-center space-x-1.5 flex-shrink-0';
+                    } else {
                         btn.className = 'px-3.5 py-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-white/60 transition flex items-center space-x-1.5 flex-shrink-0';
                     }
                 }
@@ -272,21 +291,21 @@ function deleteChatFromMenu() {
                                 </div>
                                 <span class="text-[10px] text-slate-400 font-mono">${formatTime(c.last_time)}</span>
                             </div>
-                            <div class="flex items-center justify-between mt-0.5">
-                                <p class="text-xs text-slate-500 truncate max-w-[170px]">
+                            <div class="flex items-center justify-between mt-0.5 gap-2">
+                                <p class="text-xs text-slate-500 truncate flex-1 min-w-0 pr-1">
                                     ${c.is_typing
                                         ? '<span class="text-emerald-600 font-bold italic"><i class="fas fa-ellipsis fa-fade mr-1"></i>typing...</span>'
                                         : `${dirIcon}${escapeHtml(c.last_message || '')}`}
                                 </p>
                                 <div class="flex items-center space-x-1 flex-shrink-0">
                                     <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-mono font-bold">${c.total_messages}</span>
-                                    <button onclick="event.stopPropagation(); deleteChatByPhone('${c.phone_number}', '${escapeHtml(c.sender_name || c.phone_number)}')" title="Delete conversation" class="opacity-0 group-hover:opacity-100 hover:text-red-600 p-0.5 rounded hover:bg-red-50 text-slate-400 transition ml-1">
+                                    <button onclick="event.stopPropagation(); deleteChatByPhone('${c.phone_number}', '${escapeHtml(c.sender_name || c.phone_number)}')" title="Delete conversation" class="opacity-70 md:opacity-0 md:group-hover:opacity-100 hover:text-red-600 p-1 rounded hover:bg-red-50 text-slate-400 transition ml-1">
                                         <i class="fas fa-trash text-[11px]"></i>
                                     </button>
                                 </div>
                             </div>
                             <!-- 24-Hour Free Promotional Window Tracker Badge -->
-                            <div class="mt-1.5 flex items-center justify-between text-[10px]">
+                            <div class="mt-1.5 flex flex-wrap items-center justify-between gap-1 text-[10px]">
                                 ${c.free_window_active ? `
                                     <span class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold border border-emerald-300">
                                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -312,7 +331,7 @@ function deleteChatFromMenu() {
             document.getElementById('active-name').innerText = currentContactName;
             document.getElementById('active-phone').innerText = phone;
             document.getElementById('active-avatar').innerHTML = getInitials(name || phone);
-            document.getElementById('active-avatar').className = `w-10 h-10 rounded-full ${getAvatarColor(phone)} flex items-center justify-center text-white font-bold shadow-sm text-sm`;
+            document.getElementById('active-avatar').className = `w-9 h-9 md:w-10 md:h-10 rounded-full ${getAvatarColor(phone)} flex items-center justify-center text-white font-bold shadow-sm text-xs md:text-sm flex-shrink-0`;
             
             const badge = document.getElementById('active-channel-badge');
             badge.classList.remove('hidden');
@@ -502,7 +521,7 @@ function deleteChatFromMenu() {
                 ` : '';
 
                 const singleDeleteBtn = !isSelectMode ? `
-                    <button onclick="deleteSingleMessage(${m.id})" title="Delete message" class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition text-[11px] ml-1.5 p-0.5">
+                    <button onclick="deleteSingleMessage(${m.id})" title="Delete message" class="opacity-60 md:opacity-0 md:group-hover:opacity-100 text-slate-300 hover:text-red-500 transition text-[11px] ml-1.5 p-0.5">
                         <i class="fas fa-trash"></i>
                     </button>
                 ` : '';
@@ -510,7 +529,7 @@ function deleteChatFromMenu() {
                 let mediaBlock = '';
                 if (m.media_type === 'image' && m.media_url) {
                     mediaBlock = `
-                        <div class="mb-1.5 overflow-hidden rounded-xl border border-slate-200/60 max-w-[280px]">
+                        <div class="mb-1.5 overflow-hidden rounded-xl border border-slate-200/60 max-w-full sm:max-w-[280px]">
                             <a href="${m.media_url}" target="_blank" title="Click to view full image">
                                 <img src="${m.media_url}" class="w-full h-auto max-h-64 object-cover hover:opacity-95 transition rounded-xl" loading="lazy" />
                             </a>
@@ -519,7 +538,7 @@ function deleteChatFromMenu() {
                 } else if (m.media_type === 'document' && m.media_url) {
                     const docName = escapeHtml(m.media_filename || 'Document.pdf');
                     mediaBlock = `
-                        <div class="mb-1.5 p-2.5 bg-white/95 rounded-xl border border-slate-200/80 flex items-center justify-between space-x-3 max-w-[280px] shadow-xs">
+                        <div class="mb-1.5 p-2.5 bg-white/95 rounded-xl border border-slate-200/80 flex items-center justify-between space-x-3 max-w-full sm:max-w-[280px] shadow-xs">
                             <div class="flex items-center space-x-2.5 min-w-0">
                                 <div class="w-9 h-9 rounded-lg bg-red-50 text-red-600 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-red-100">
                                     <i class="fas fa-file-pdf"></i>
@@ -540,7 +559,7 @@ function deleteChatFromMenu() {
                     <div class="flex items-center ${alignment} group">
                         ${selectCheckbox}
                         <div class="${bubbleBg} ${isOutbound && isSelectMode ? 'order-1' : ''} text-xs px-3.5 py-2.5 rounded-2xl max-w-[85%] md:max-w-[75%] shadow-sm break-words space-y-1 relative transition" ${isSelectMode ? `onclick="handleMessageSelectToggle(${m.id})" style="cursor: pointer"` : ''}>
-                            <div class="flex items-center justify-between">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
                                 <span class="text-[11px] font-extrabold ${isOutbound ? 'text-emerald-700' : 'text-slate-700'}">${senderLabel}</span>
                                 <div class="flex items-center">
                                     ${triggerBtn}
@@ -548,7 +567,7 @@ function deleteChatFromMenu() {
                                 </div>
                             </div>
                             ${mediaBlock}
-                            ${m.message ? `<div class="whitespace-pre-wrap leading-relaxed text-[13px]">${escapeHtml(m.message)}</div>` : ''}
+                            ${m.message ? `<div class="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-[13px]">${escapeHtml(m.message)}</div>` : ''}
                             <div class="flex items-center justify-end space-x-1.5 pt-0.5 text-[10px] text-slate-500">
                                 ${engineTag}
                                 <span>${formatTime(m.created_at)}</span>
@@ -825,23 +844,23 @@ function deleteChatFromMenu() {
         function renderTemplatesGrid() {
             const grid = document.getElementById('templates-grid');
             if (!allTemplates.length) {
-                grid.innerHTML = `<div class="p-8 text-center text-slate-400 col-span-3">No templates created yet.</div>`;
+                grid.innerHTML = `<div class="p-8 text-center text-slate-400 col-span-full">No templates created yet.</div>`;
                 return;
             }
             grid.innerHTML = allTemplates.map(t => `
-                <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col justify-between space-y-3 hover:shadow-sm transition">
-                    <div>
-                        <div class="flex items-center justify-between">
-                            <h4 class="font-bold text-slate-900 text-sm">${escapeHtml(t.title)}</h4>
-                            <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold">${escapeHtml(t.category)}</span>
+                <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between space-y-3 hover:shadow-sm transition min-w-0">
+                    <div class="min-w-0">
+                        <div class="flex items-start justify-between gap-2">
+                            <h4 class="font-bold text-slate-900 text-sm min-w-0 break-words">${escapeHtml(t.title)}</h4>
+                            <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold flex-shrink-0">${escapeHtml(t.category)}</span>
                         </div>
-                        <p class="text-xs text-slate-600 whitespace-pre-wrap mt-2.5 leading-relaxed bg-white p-3 rounded-xl border border-slate-200">${escapeHtml(t.content)}</p>
+                        <p class="text-xs text-slate-600 whitespace-pre-wrap break-words [overflow-wrap:anywhere] mt-2.5 leading-relaxed bg-white p-3 rounded-xl border border-slate-200">${escapeHtml(t.content)}</p>
                     </div>
                     <div class="flex items-center justify-between pt-2 border-t border-slate-200/80">
                         <button onclick="openTemplateBulkModal(${t.id})" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5">
                             <i class="fas fa-paper-plane"></i> Use Template
                         </button>
-                        <button onclick="deleteTemplate(${t.id})" class="text-slate-400 hover:text-red-500 p-1 transition"><i class="fas fa-trash"></i></button>
+                        <button onclick="deleteTemplate(${t.id})" class="text-slate-400 hover:text-red-500 p-1.5 transition"><i class="fas fa-trash"></i></button>
                     </div>
                 </div>
             `).join('');
@@ -1061,27 +1080,27 @@ function deleteChatFromMenu() {
                 const isFreeWindow = c.free_window_active === true;
 
                 return `
-                    <div class="flex items-center justify-between p-2.5 rounded-xl hover:bg-emerald-50/60 cursor-pointer transition select-none ${isSelected ? 'bg-emerald-50/80 border border-emerald-200' : 'bg-white border border-slate-100'}"
+                    <div class="flex items-center justify-between gap-2 p-2.5 rounded-xl hover:bg-emerald-50/60 cursor-pointer transition select-none ${isSelected ? 'bg-emerald-50/80 border border-emerald-200' : 'bg-white border border-slate-100'}"
                          onclick="tplBulkToggleContact('${safePhone}', event)">
-                        <div class="flex items-center space-x-3 overflow-hidden">
+                        <div class="flex items-center space-x-2.5 sm:space-x-3 min-w-0 flex-1 overflow-hidden">
                             <input type="checkbox"
                                    id="tpl-contact-check-${safePhone}"
                                    ${isSelected ? 'checked' : ''}
                                    onclick="event.stopPropagation(); tplBulkToggleContact('${safePhone}')"
-                                   class="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer">
+                                   class="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer flex-shrink-0">
                             <div class="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-xs flex-shrink-0">
                                 ${safeName.charAt(0).toUpperCase()}
                             </div>
-                            <div class="min-w-0">
-                                <div class="flex items-center gap-1.5">
-                                    <span class="font-bold text-slate-900 truncate">${safeName}</span>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                                    <span class="font-bold text-slate-900 truncate max-w-full">${safeName}</span>
                                     <span class="text-[11px] font-mono text-slate-500">(+${safePhone})</span>
                                     ${isFreeWindow ? '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-700">24h Free</span>' : ''}
                                 </div>
-                                <p class="text-[11px] text-slate-500 truncate max-w-xs">${previewMsg}</p>
+                                <p class="text-[11px] text-slate-500 truncate">${previewMsg}</p>
                             </div>
                         </div>
-                        <span class="text-[10px] text-slate-400 font-medium whitespace-nowrap pl-2">
+                        <span class="hidden sm:inline text-[10px] text-slate-400 font-medium whitespace-nowrap pl-2 flex-shrink-0">
                             ${c.last_time ? escapeHtml(c.last_time) : ''}
                         </span>
                     </div>
@@ -1431,13 +1450,13 @@ function deleteChatFromMenu() {
                         return;
                     }
                     container.innerHTML = logs.map(l => `
-                        <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-1.5">
-                            <div class="flex items-center justify-between font-mono text-xs">
-                                <div class="flex items-center space-x-2">
-                                    <span class="px-2 py-0.5 rounded-lg ${l.method === 'POST' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'} font-bold">${l.method}</span>
-                                    <span class="text-slate-800 font-bold">${l.endpoint}</span>
+                        <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 sm:p-4 space-y-1.5">
+                            <div class="flex flex-wrap items-center justify-between gap-1.5 font-mono text-xs">
+                                <div class="flex items-center space-x-2 min-w-0">
+                                    <span class="px-2 py-0.5 rounded-lg ${l.method === 'POST' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'} font-bold flex-shrink-0">${l.method}</span>
+                                    <span class="text-slate-800 font-bold break-all">${l.endpoint}</span>
                                 </div>
-                                <span class="text-slate-400 text-[11px]">${l.created_at}</span>
+                                <span class="text-slate-400 text-[11px] flex-shrink-0">${l.created_at}</span>
                             </div>
                             <pre class="bg-white p-3 rounded-xl border border-slate-200 text-xs text-slate-700 overflow-x-auto font-mono max-h-36">${escapeHtml(l.payload || '')}</pre>
                         </div>
@@ -1875,8 +1894,9 @@ function deleteChatFromMenu() {
                 alert('No customers currently have an active 24-hour free window.');
                 return;
             }
-            // Switch to bulk broadcast tab
+            // Switch to bulk broadcast tab & Quick Static mode so numbers input is visible
             switchTab('broadcast');
+            if (typeof switchCampaignMode === 'function') switchCampaignMode('static');
             // Put numbers in textarea
             const input = document.getElementById('broadcast-numbers-input');
             if (input) {
@@ -1940,19 +1960,19 @@ function deleteChatFromMenu() {
 
             if (mode === 'ai') {
                 if (tabAi) {
-                    tabAi.className = 'px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 text-white shadow-xs transition flex items-center space-x-2';
+                    tabAi.className = 'px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-emerald-600 text-white shadow-xs transition flex items-center justify-center text-center space-x-1.5 sm:space-x-2';
                 }
                 if (tabStatic) {
-                    tabStatic.className = 'px-3.5 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center space-x-1.5';
+                    tabStatic.className = 'px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center justify-center text-center space-x-1.5';
                 }
                 if (panelAi) panelAi.classList.remove('hidden');
                 if (panelStatic) panelStatic.classList.add('hidden');
             } else {
                 if (tabAi) {
-                    tabAi.className = 'px-3.5 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center space-x-2';
+                    tabAi.className = 'px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl text-slate-600 hover:text-slate-900 transition flex items-center justify-center text-center space-x-1.5 sm:space-x-2';
                 }
                 if (tabStatic) {
-                    tabStatic.className = 'px-3.5 py-1.5 rounded-xl bg-slate-800 text-white shadow-xs transition flex items-center space-x-1.5';
+                    tabStatic.className = 'px-2.5 sm:px-3.5 py-2 sm:py-1.5 rounded-xl bg-slate-800 text-white shadow-xs transition flex items-center justify-center text-center space-x-1.5';
                 }
                 if (panelAi) panelAi.classList.add('hidden');
                 if (panelStatic) panelStatic.classList.remove('hidden');
@@ -2628,24 +2648,36 @@ function deleteChatFromMenu() {
 
         function renderCampaignLeadsTable() {
             const tbody = document.getElementById('campaign-leads-tbody');
+            const mobileBox = document.getElementById('campaign-leads-mobile');
             const badge = document.getElementById('campaign-leads-badge');
             const search = (document.getElementById('campaign-search-input')?.value || '').toLowerCase().trim();
 
             if (badge) badge.innerText = `${campaignLeads.length} leads loaded`;
             updateCampaignSelectionStats();
 
-            if (!tbody) return;
+            if (!tbody && !mobileBox) return;
 
             if (campaignLeads.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="6" class="p-12 text-center text-slate-400">
+                if (tbody) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" class="p-12 text-center text-slate-400">
+                                <i class="fas fa-file-csv text-3xl mb-2 opacity-50 block"></i>
+                                <p class="font-bold text-xs">No businesses loaded yet.</p>
+                                <p class="text-[11px] text-slate-400 mt-1">Upload a CSV or click <button type="button" onclick="loadSampleBetulLeads()" class="text-indigo-600 font-bold hover:underline">"Load Sample Betul Directory"</button> above to start.</p>
+                            </td>
+                        </tr>
+                    `;
+                }
+                if (mobileBox) {
+                    mobileBox.innerHTML = `
+                        <div class="p-8 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
                             <i class="fas fa-file-csv text-3xl mb-2 opacity-50 block"></i>
                             <p class="font-bold text-xs">No businesses loaded yet.</p>
                             <p class="text-[11px] text-slate-400 mt-1">Upload a CSV or click <button type="button" onclick="loadSampleBetulLeads()" class="text-indigo-600 font-bold hover:underline">"Load Sample Betul Directory"</button> above to start.</p>
-                        </td>
-                    </tr>
-                `;
+                        </div>
+                    `;
+                }
                 return;
             }
 
@@ -2658,66 +2690,121 @@ function deleteChatFromMenu() {
             });
 
             if (filtered.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 text-xs">No businesses match "${escapeHtml(search)}".</td></tr>`;
+                if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 text-xs">No businesses match "${escapeHtml(search)}".</td></tr>`;
+                if (mobileBox) mobileBox.innerHTML = `<div class="p-6 text-center text-slate-400 text-xs bg-white rounded-xl border border-slate-200">No businesses match "${escapeHtml(search)}".</div>`;
                 return;
             }
 
-            tbody.innerHTML = filtered.map(lead => {
-                const isValidPhone = lead.phone && lead.phone.length >= 10;
-                const statusBadges = {
-                    ready: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">Ready</span>',
-                    generating: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 animate-pulse">Writing...</span>',
-                    sent: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">✅ Sent</span>',
-                    failed: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">❌ Failed</span>'
-                };
-                const statusBadge = statusBadges[lead.status] || statusBadges.ready;
+            const statusBadges = {
+                ready: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200 whitespace-nowrap">Ready</span>',
+                generating: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 animate-pulse whitespace-nowrap">Writing...</span>',
+                sent: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 whitespace-nowrap">✅ Sent</span>',
+                failed: '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300 whitespace-nowrap">❌ Failed</span>'
+            };
 
-                return `
-                    <tr class="hover:bg-slate-50/70 transition border-b border-slate-100 ${lead.selected ? '' : 'opacity-60 bg-slate-50/40'}">
-                        <td class="p-3 text-center">
-                            <input type="checkbox" ${lead.selected ? 'checked' : ''} onchange="toggleCampaignLeadSelect(${lead.id}, this.checked)" class="rounded text-emerald-600 cursor-pointer">
-                        </td>
-                        <td class="p-3">
-                            ${lead.business_name
-                                ? `<span class="font-extrabold text-slate-900 block leading-tight text-xs">${escapeHtml(lead.business_name)}</span>`
-                                : `<span class="font-bold text-slate-400 italic block leading-tight text-xs">Unnamed Lead #${lead.id}</span>`}
-                            <span class="inline-block mt-0.5 px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">${escapeHtml(lead.category || 'Business')}</span>
-                        </td>
-                        <td class="p-3 text-slate-600 text-xs font-medium">
-                            ${lead.area
-                                ? `<i class="fas fa-location-dot text-slate-400 mr-1 text-[10px]"></i>${escapeHtml(lead.area)}`
-                                : `<span class="text-slate-400 italic text-[11px]">Not specified</span>`}
-                        </td>
-                        <td class="p-3">
-                            <div class="relative">
+            if (tbody) {
+                tbody.innerHTML = filtered.map(lead => {
+                    const isValidPhone = lead.phone && lead.phone.length >= 10;
+                    const statusBadge = statusBadges[lead.status] || statusBadges.ready;
+
+                    return `
+                        <tr class="hover:bg-slate-50/70 transition border-b border-slate-100 ${lead.selected ? '' : 'opacity-60 bg-slate-50/40'}">
+                            <td class="p-3 text-center">
+                                <input type="checkbox" ${lead.selected ? 'checked' : ''} onchange="toggleCampaignLeadSelect(${lead.id}, this.checked)" class="rounded text-emerald-600 cursor-pointer">
+                            </td>
+                            <td class="p-3">
+                                ${lead.business_name
+                                    ? `<span class="font-extrabold text-slate-900 block leading-tight text-xs">${escapeHtml(lead.business_name)}</span>`
+                                    : `<span class="font-bold text-slate-400 italic block leading-tight text-xs">Unnamed Lead #${lead.id}</span>`}
+                                <span class="inline-block mt-0.5 px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">${escapeHtml(lead.category || 'Business')}</span>
+                            </td>
+                            <td class="p-3 text-slate-600 text-xs font-medium">
+                                ${lead.area
+                                    ? `<i class="fas fa-location-dot text-slate-400 mr-1 text-[10px]"></i>${escapeHtml(lead.area)}`
+                                    : `<span class="text-slate-400 italic text-[11px]">Not specified</span>`}
+                            </td>
+                            <td class="p-3">
+                                <div class="relative">
+                                    <input type="text"
+                                           value="${escapeHtml(lead.phone || '')}"
+                                           placeholder="Enter 10-digit phone"
+                                           onchange="updateCampaignLeadPhone(${lead.id}, this.value)"
+                                           class="w-full font-mono text-[11px] px-2.5 py-1 rounded-lg border ${isValidPhone ? 'border-emerald-300 bg-emerald-50/40 text-emerald-900' : 'border-amber-300 bg-amber-50/40 text-amber-900'} focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                    ${!isValidPhone ? '<span class="text-[9px] text-amber-700 font-semibold block mt-0.5">⚠️ Missing phone</span>' : ''}
+                                </div>
+                            </td>
+                            <td class="p-3">
+                                <div class="space-y-1">
+                                    <textarea rows="2"
+                                              placeholder="Click 'Generate AI Messages' or type custom message..."
+                                              onchange="updateCampaignLeadMessage(${lead.id}, this.value)"
+                                              class="w-full text-xs p-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-sans resize-y leading-relaxed">${escapeHtml(lead.personalized_message || '')}</textarea>
+                                    <div class="flex items-center justify-between text-[10px] text-slate-400">
+                                        <span>${(lead.personalized_message || '').length} chars</span>
+                                        <button type="button" onclick="regenerateSingleLeadMessage(${lead.id})" title="Regenerate this specific message with AI" class="text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1">
+                                            <i class="fas fa-rotate"></i><span>AI Rewrite</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="p-3 text-right">
+                                ${statusBadge}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            if (mobileBox) {
+                mobileBox.innerHTML = filtered.map(lead => {
+                    const isValidPhone = lead.phone && lead.phone.length >= 10;
+                    const statusBadge = statusBadges[lead.status] || statusBadges.ready;
+
+                    return `
+                        <div class="bg-white rounded-xl border border-slate-200 p-3 space-y-2.5 shadow-xs ${lead.selected ? '' : 'opacity-65 bg-slate-50/70'}">
+                            <div class="flex items-start justify-between gap-2">
+                                <div class="flex items-start space-x-2.5 min-w-0">
+                                    <input type="checkbox" ${lead.selected ? 'checked' : ''} onchange="toggleCampaignLeadSelect(${lead.id}, this.checked)" class="mt-0.5 rounded text-emerald-600 cursor-pointer w-4 h-4 flex-shrink-0">
+                                    <div class="min-w-0">
+                                        ${lead.business_name
+                                            ? `<span class="font-extrabold text-slate-900 block leading-tight text-xs break-words">${escapeHtml(lead.business_name)}</span>`
+                                            : `<span class="font-bold text-slate-400 italic block leading-tight text-xs">Unnamed Lead #${lead.id}</span>`}
+                                        <div class="flex flex-wrap items-center gap-1.5 mt-1">
+                                            <span class="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">${escapeHtml(lead.category || 'Business')}</span>
+                                            ${lead.area
+                                                ? `<span class="text-[11px] text-slate-500 font-medium truncate max-w-full"><i class="fas fa-location-dot text-slate-400 mr-1 text-[10px]"></i>${escapeHtml(lead.area)}</span>`
+                                                : `<span class="text-[11px] text-slate-400 italic">No locality</span>`}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex-shrink-0">${statusBadge}</div>
+                            </div>
+
+                            <div>
                                 <input type="text"
                                        value="${escapeHtml(lead.phone || '')}"
-                                       placeholder="Enter 10-digit phone"
+                                       placeholder="Enter 10-digit WhatsApp phone"
                                        onchange="updateCampaignLeadPhone(${lead.id}, this.value)"
-                                       class="w-full font-mono text-[11px] px-2.5 py-1 rounded-lg border ${isValidPhone ? 'border-emerald-300 bg-emerald-50/40 text-emerald-900' : 'border-amber-300 bg-amber-50/40 text-amber-900'} focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                                ${!isValidPhone ? '<span class="text-[9px] text-amber-700 font-semibold block mt-0.5">⚠️ Missing phone</span>' : ''}
+                                       class="w-full font-mono text-xs px-3 py-2 rounded-lg border ${isValidPhone ? 'border-emerald-300 bg-emerald-50/40 text-emerald-900' : 'border-amber-300 bg-amber-50/40 text-amber-900'} focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                ${!isValidPhone ? '<span class="text-[10px] text-amber-700 font-semibold block mt-1">⚠️ Missing valid 10+ digit phone</span>' : ''}
                             </div>
-                        </td>
-                        <td class="p-3">
-                            <div class="space-y-1">
-                                <textarea rows="2"
-                                          placeholder="Click 'Generate AI Messages' or type custom message..."
+
+                            <div class="space-y-1.5">
+                                <textarea rows="3"
+                                          placeholder="Tap 'Generate AI Messages' or type custom message..."
                                           onchange="updateCampaignLeadMessage(${lead.id}, this.value)"
-                                          class="w-full text-xs p-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white font-sans resize-y leading-relaxed">${escapeHtml(lead.personalized_message || '')}</textarea>
-                                <div class="flex items-center justify-between text-[10px] text-slate-400">
+                                          class="w-full text-xs p-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50/60 font-sans resize-y leading-relaxed">${escapeHtml(lead.personalized_message || '')}</textarea>
+                                <div class="flex items-center justify-between text-[11px] text-slate-500">
                                     <span>${(lead.personalized_message || '').length} chars</span>
-                                    <button type="button" onclick="regenerateSingleLeadMessage(${lead.id})" title="Regenerate this specific message with AI" class="text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1">
+                                    <button type="button" onclick="regenerateSingleLeadMessage(${lead.id})" class="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold flex items-center space-x-1 transition">
                                         <i class="fas fa-rotate"></i><span>AI Rewrite</span>
                                     </button>
                                 </div>
                             </div>
-                        </td>
-                        <td class="p-3 text-right">
-                            ${statusBadge}
-                        </td>
-                    </tr>
-                `;
-            }).join('');
+                        </div>
+                    `;
+                }).join('');
+            }
         }
 
         function toggleCampaignLeadSelect(id, checked) {
