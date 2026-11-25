@@ -18,6 +18,7 @@ try:
     from api.whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
+        send_meta_typing_indicator,
         upload_meta_media,
         send_meta_whatsapp_media,
         download_meta_media,
@@ -30,6 +31,7 @@ except ImportError:
     from whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
+        send_meta_typing_indicator,
         upload_meta_media,
         send_meta_whatsapp_media,
         download_meta_media,
@@ -56,6 +58,101 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 SERVER_START_TIME = time.time()
+
+# In-memory typing status tracker for Live Chat UI & Simulator
+ACTIVE_TYPING_CHATS: dict[str, float] = {}
+
+
+def set_typing_state(phone: str, active: bool):
+    """Mark a conversation as currently composing an AI/agent reply."""
+    key = db.normalize_phone_key(phone) or str(phone or "").replace("+", "").strip()
+    if not key:
+        return
+    if active:
+        ACTIVE_TYPING_CHATS[key] = time.time()
+    else:
+        ACTIVE_TYPING_CHATS.pop(key, None)
+
+
+def is_chat_typing(phone: str) -> bool:
+    """Return True if a reply is actively being composed (auto-expires after 30s)."""
+    key = db.normalize_phone_key(phone) or str(phone or "").replace("+", "").strip()
+    if not key:
+        return False
+    ts = ACTIVE_TYPING_CHATS.get(key)
+    if not ts:
+        return False
+    if (time.time() - ts) > 30.0:
+        ACTIVE_TYPING_CHATS.pop(key, None)
+        return False
+    return True
+
+
+def _pick_real_recipient_name(explicit_name: str, profile: dict, phone_key: str) -> str:
+    """Choose best human/business name without falling back to 'Customer' or 'Lead #N'."""
+    for candidate in (
+        explicit_name,
+        profile.get("contact_name", "") if profile else "",
+        profile.get("business_name", "") if profile else "",
+    ):
+        val = str(candidate or "").strip()
+        if not val:
+            continue
+        low = val.lower()
+        if low in {"customer", "lead", "user", "unknown", "business", "business lead", "valued business", "there"}:
+            continue
+        if re.match(r"^(lead|business|unnamed lead|contact)\s*#?\d+$", low):
+            continue
+        if val.isdigit() or val == phone_key:
+            continue
+        return val
+    return ""
+
+
+def render_template_placeholders(
+    text: str,
+    phone: str = "",
+    explicit_name: str = "",
+    profile: dict = None
+) -> str:
+    """
+    Resolve template placeholders ({{name}}, {{business}}, {{area}}, {{phone}}, {{service}}, {{date_time}})
+    per recipient using explicit metadata and persistent customer_profiles DB. Never leaves literal {{name}}.
+    """
+    raw = str(text or "")
+    if "{{" not in raw:
+        return raw
+
+    phone_key = db.normalize_phone_key(phone) if phone else ""
+    clean_phone = phone_key or re.sub(r"\D", "", str(phone or ""))
+    prof = profile if profile is not None else (db.get_customer_profile(phone) if phone else {})
+
+    resolved_name = _pick_real_recipient_name(explicit_name, prof, clean_phone) or "there"
+    resolved_business = (
+        prof.get("business_name")
+        if db._is_meaningful_profile_val(prof.get("business_name", ""), "business_name")
+        else (resolved_name if resolved_name != "there" else "your business")
+    )
+    resolved_area = (
+        prof.get("area")
+        if db._is_meaningful_profile_val(prof.get("area", ""), "area")
+        else "your area"
+    )
+    resolved_category = (
+        prof.get("business_category")
+        if db._is_meaningful_profile_val(prof.get("business_category", ""), "business_category")
+        else "business"
+    )
+
+    out = re.sub(r"\{\{\s*(?:name|customer_name|user_name)\s*\}\}", lambda _m: resolved_name, raw, flags=re.IGNORECASE)
+    out = re.sub(r"\{\{\s*(?:business|business_name|company|company_name)\s*\}\}", lambda _m: resolved_business, out, flags=re.IGNORECASE)
+    out = re.sub(r"\{\{\s*(?:area|city|locality|location)\s*\}\}", lambda _m: resolved_area, out, flags=re.IGNORECASE)
+    out = re.sub(r"\{\{\s*(?:category|business_category|industry)\s*\}\}", lambda _m: resolved_category, out, flags=re.IGNORECASE)
+    out = re.sub(r"\{\{\s*phone\s*\}\}", lambda _m: clean_phone, out, flags=re.IGNORECASE)
+    out = re.sub(r"\{\{\s*service\s*\}\}", lambda _m: "Website, App & WhatsApp Automation", out, flags=re.IGNORECASE)
+    out = re.sub(r"\{\{\s*(?:date_time|datetime|date)\s*\}\}", lambda _m: "your preferred time", out, flags=re.IGNORECASE)
+    return out
+
 
 def get_ai_reply(prompt: str, customer_id: str = "") -> tuple[str, float, str]:
     """Helper to route AI responses: DeepSeek AI -> Groq AI -> Smart Customer Support Agent with DNA Memory."""
@@ -198,7 +295,7 @@ async def handle_meta_webhook(request: Request):
                             if not user_text:
                                 user_text = f"📄 [Document: {media_filename or 'File'}]"
 
-                        # 1. Save Inbound Message
+                        # 1. Save Inbound Message & Record Real Contact Name
                         db.save_message(
                             phone_number=sender_id,
                             sender_name=sender_name,
@@ -210,6 +307,13 @@ async def handle_meta_webhook(request: Request):
                             media_url=media_url,
                             media_filename=media_filename
                         )
+                        if sender_name and sender_name.strip().lower() not in {"customer", "user", "unknown"}:
+                            db.upsert_customer_profile(
+                                sender_id,
+                                overwrite_existing=False,
+                                contact_name=sender_name.strip(),
+                                data_source="whatsapp_chat"
+                            )
 
                         # Check if automated bot is enabled for this customer
                         bot_active = db.is_bot_enabled_for_contact(sender_id)
@@ -220,26 +324,38 @@ async def handle_meta_webhook(request: Request):
                             db.set_bot_enabled_for_contact(sender_id, False)
 
                         if bot_active:
-                            if media_type:
-                                reply = (
-                                    f"Thank you for sharing your {media_type}! 📄\n\n"
-                                    "We have received your file at **Growhaz**. "
-                                    "Our technical team is reviewing your requirements and will update you shortly.\n\n"
-                                    "If you have specific instructions or questions, please reply here!"
-                                )
-                                latency_ms = 0.0
-                                engine_used = "Growhaz Assistant"
-                            else:
-                                # Track interaction dynamically in DNA memory
+                            incoming_wamid = msg.get("id")
+                            if incoming_wamid:
                                 try:
-                                    dynamic_dna.record_interaction(customer_id=sender_id, action="received_message", target_id="chat_interaction", attributes={"snippet": user_text[:60]})
-                                except Exception as _e:
-                                    logger.debug(f"DNA record error: {_e}")
+                                    await asyncio.to_thread(send_meta_typing_indicator, incoming_wamid, incoming_phone_id)
+                                except Exception as _te:
+                                    logger.debug(f"Typing indicator dispatch warning: {_te}")
 
-                                reply, latency_ms, engine_used = get_ai_reply(user_text, customer_id=sender_id)
+                            set_typing_state(sender_id, True)
+                            try:
+                                if media_type:
+                                    reply = (
+                                        f"Thank you for sharing your {media_type}! 📄\n\n"
+                                        "We have received your file at *Growhaz*. "
+                                        "Our technical team is reviewing it and will update you shortly."
+                                    )
+                                    latency_ms = 0.0
+                                    engine_used = "Growhaz Assistant"
+                                else:
+                                    # Track interaction dynamically in DNA memory
+                                    try:
+                                        dynamic_dna.record_interaction(customer_id=sender_id, action="received_message", target_id="chat_interaction", attributes={"snippet": user_text[:60]})
+                                    except Exception as _e:
+                                        logger.debug(f"DNA record error: {_e}")
+
+                                    reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_text, sender_id)
+                            finally:
+                                set_typing_state(sender_id, False)
 
                             # Send to WhatsApp (dynamically routes to incoming phone_number_id)
-                            success, send_res = send_meta_whatsapp_message(sender_id, reply, phone_id=incoming_phone_id)
+                            success, send_res = await asyncio.to_thread(
+                                send_meta_whatsapp_message, sender_id, reply, incoming_phone_id
+                            )
 
                             # Save Outbound Message
                             db.save_message(
@@ -271,6 +387,8 @@ async def handle_twilio_webhook(From: str = Form(None), Body: str = Form(None), 
         return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>', media_type="application/xml")
 
     db.save_message(phone_number=sender_id, sender_name=ProfileName, message=user_text, direction="inbound", channel="twilio")
+    if ProfileName and ProfileName.strip().lower() not in {"customer", "user", "unknown"}:
+        db.upsert_customer_profile(sender_id, overwrite_existing=False, contact_name=ProfileName.strip(), data_source="twilio")
 
     bot_active = db.is_bot_enabled_for_contact(sender_id)
     reply = "Your message has been received by our support team."
@@ -278,7 +396,11 @@ async def handle_twilio_webhook(From: str = Form(None), Body: str = Form(None), 
     latency_ms = 0.0
 
     if bot_active:
-        reply, latency_ms, engine_used = get_ai_reply(user_text)
+        set_typing_state(sender_id, True)
+        try:
+            reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_text, sender_id)
+        finally:
+            set_typing_state(sender_id, False)
 
     db.save_message(phone_number=sender_id, sender_name="Support Agent (AI)", message=reply, direction="outbound", channel="twilio", status="sent", ai_model=engine_used, latency_ms=latency_ms)
 
@@ -304,13 +426,23 @@ async def get_dashboard_stats():
 @app.get("/api/dashboard/conversations")
 async def get_conversations():
     convs = db.get_conversations()
+    for c in convs:
+        c["is_typing"] = is_chat_typing(c.get("phone_number", ""))
     return JSONResponse({"conversations": convs})
 
 @app.get("/api/dashboard/messages")
 async def get_messages(phone: str = Query(None), limit: int = Query(200)):
     messages = db.get_messages(phone_number=phone, limit=limit)
     bot_enabled = db.is_bot_enabled_for_contact(phone) if phone else True
-    return JSONResponse({"messages": messages, "phone": phone, "bot_enabled": bot_enabled})
+    is_typing = is_chat_typing(phone) if phone else False
+    profile = db.get_customer_profile(phone) if phone else None
+    return JSONResponse({
+        "messages": messages,
+        "phone": phone,
+        "bot_enabled": bot_enabled,
+        "is_typing": is_typing,
+        "customer_profile": profile
+    })
 
 @app.get("/api/dashboard/dna/{phone}")
 async def get_customer_dna(phone: str):
@@ -414,7 +546,11 @@ async def trigger_ai_reply(request: Request):
     if not prompt:
         prompt = "Hello! How can Growhaz customer support help me today?"
 
-    reply, latency_ms, engine_used = get_ai_reply(prompt)
+    set_typing_state(phone, True)
+    try:
+        reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, prompt, phone)
+    finally:
+        set_typing_state(phone, False)
 
     msg_id = None
     if phone:
@@ -442,7 +578,7 @@ async def send_dashboard_reply(request: Request):
     """
     Send message from dashboard.
     If role is 'customer': simulates customer asking question + triggers AI auto reply!
-    If role is 'agent': sends manual response from agent.
+    If role is 'agent': sends manual response from agent (resolving template variables like {{name}}).
     If role is 'ai': generates AI response as agent.
     """
     data = await request.json()
@@ -455,9 +591,6 @@ async def send_dashboard_reply(request: Request):
     if not phone or not msg_input:
         return JSONResponse({"error": "Phone number and message text are required."}, status_code=400)
 
-    groq_key = get_env_var("GROQ_API_KEY")
-    groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-
     # Case 1: Message is typed as Customer -> save inbound and trigger AI reply!
     if role == "customer":
         inbound_id = db.save_message(
@@ -468,6 +601,8 @@ async def send_dashboard_reply(request: Request):
             channel="simulator",
             status="received"
         )
+        if customer_name and customer_name.lower() not in {"customer", "user", "unknown"}:
+            db.upsert_customer_profile(phone, overwrite_existing=False, contact_name=customer_name, data_source="simulator")
 
         bot_active = db.is_bot_enabled_for_contact(phone)
         ai_reply = ""
@@ -476,7 +611,12 @@ async def send_dashboard_reply(request: Request):
         outbound_id = None
 
         if bot_active:
-            ai_reply, latency_ms, engine_used = get_ai_reply(msg_input)
+            set_typing_state(phone, True)
+            try:
+                ai_reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, msg_input, phone)
+            finally:
+                set_typing_state(phone, False)
+
             outbound_id = db.save_message(
                 phone_number=phone,
                 sender_name="Support Agent (AI)",
@@ -500,10 +640,14 @@ async def send_dashboard_reply(request: Request):
 
     # Case 2: Message is typed as Agent or AI generator
     if role == "ai":
-        reply_body, latency_ms, engine_used = get_ai_reply(msg_input)
+        set_typing_state(phone, True)
+        try:
+            reply_body, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, msg_input, phone)
+        finally:
+            set_typing_state(phone, False)
         sender_name = "Support Agent (AI)"
     else:
-        reply_body = msg_input
+        reply_body = render_template_placeholders(msg_input, phone=phone, explicit_name=customer_name)
         latency_ms = 0.0
         engine_used = None
         sender_name = "Growhaz Support"
@@ -513,7 +657,7 @@ async def send_dashboard_reply(request: Request):
     status = "sent"
     meta_payload = {}
     if send_via_meta:
-        success, meta_res = send_meta_whatsapp_message(phone, reply_body)
+        success, meta_res = await asyncio.to_thread(send_meta_whatsapp_message, phone, reply_body)
         status = "sent" if success else "failed"
         meta_payload = {"meta_api_response": meta_res}
 
@@ -639,6 +783,8 @@ async def simulate_inbound(request: Request):
         channel="simulator",
         status="received"
     )
+    if name and name.lower() not in {"customer", "user", "unknown"}:
+        db.upsert_customer_profile(phone, overwrite_existing=False, contact_name=name, data_source="simulator")
 
     out_id = None
     ai_reply = ""
@@ -648,7 +794,11 @@ async def simulate_inbound(request: Request):
     bot_active = db.is_bot_enabled_for_contact(phone)
 
     if auto_reply and bot_active:
-        ai_reply, latency_ms, engine_used = get_ai_reply(user_msg)
+        set_typing_state(phone, True)
+        try:
+            ai_reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_msg, phone)
+        finally:
+            set_typing_state(phone, False)
 
         out_id = db.save_message(
             phone_number=phone,
@@ -677,7 +827,8 @@ async def test_ai_endpoint(request: Request):
     """Test AI bot reply to any text prompt directly."""
     data = await request.json()
     prompt = data.get("prompt", "Hello, what services does Growhaz provide?")
-    reply, latency_ms, engine_used = get_ai_reply(prompt)
+    phone = (data.get("phone") or "").strip()
+    reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, prompt, phone)
     groq_key = get_env_var("GROQ_API_KEY")
     deepseek_key = get_env_var("DEEPSEEK_API_KEY")
     return JSONResponse({
@@ -793,7 +944,11 @@ async def direct_chat(request: Request):
         return JSONResponse({"error": "Empty message"}, status_code=400)
     
     db.save_message(phone, "Customer", msg, "inbound", "simulator")
-    reply, latency, engine = generate_ai_reply(msg, get_env_var("GROQ_API_KEY"), get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile"))
+    set_typing_state(phone, True)
+    try:
+        reply, latency, engine = await asyncio.to_thread(get_ai_reply, msg, phone)
+    finally:
+        set_typing_state(phone, False)
     db.save_message(phone, "Support Agent (AI)", reply, "outbound", "simulator", "sent", None, engine, latency)
     return JSONResponse({"reply": reply, "model": engine, "latency_ms": latency})
 
@@ -809,8 +964,8 @@ async def bulk_broadcast(request: Request):
     """
     Send WhatsApp messages to multiple leads/numbers with rate limiting and logging.
     Supports both:
-    1. Static broadcast: { "phone_numbers": [...], "message": "..." }
-    2. Hyper-personalized AI campaign: { "personalized_messages": [ { "phone": "...", "message": "...", "name": "...", "category": "...", "area": "..." } ] }
+    1. Static broadcast: { "phone_numbers": [...], "message": "...", "recipient_names": {phone: name} }
+    2. Hyper-personalized AI campaign: { "personalized_messages": [ { "phone": "...", "message": "...", "name": "...", "category": "...", "area": "...", "website": "..." } ] }
     """
     data = await request.json()
     personalized_items = data.get("personalized_messages", [])
@@ -819,7 +974,14 @@ async def bulk_broadcast(request: Request):
     send_via_meta = data.get("send_via_meta", True)
     add_as_leads = data.get("add_as_leads", True)
     lead_source = (data.get("lead_source") or "Bulk Broadcast").strip()
-    
+    raw_recipient_names = data.get("recipient_names") or {}
+    recipient_names = {}
+    if isinstance(raw_recipient_names, dict):
+        for k, v in raw_recipient_names.items():
+            nk = db.normalize_phone_key(k) or re.sub(r"\D", "", str(k or ""))
+            if nk and str(v or "").strip():
+                recipient_names[nk] = str(v).strip()
+
     # -------------------------------------------------------------
     # Case 1: Hyper-Personalized Broadcast (Each business has custom message)
     # -------------------------------------------------------------
@@ -830,20 +992,19 @@ async def bulk_broadcast(request: Request):
         
         for item in personalized_items:
             raw_phone = item.get("phone") or item.get("contact_number") or ""
-            digits = re.sub(r'[^0-9]', '', str(raw_phone))
-            if len(digits) == 10:
-                digits = "91" + digits
+            digits = db.normalize_phone_key(raw_phone) or re.sub(r'[^0-9]', '', str(raw_phone))
                 
-            lead_name = (item.get("name") or item.get("business_name") or "Business Lead").strip()
+            lead_name = (item.get("name") or item.get("business_name") or "").strip()
             item_msg = (item.get("message") or item.get("personalized_message") or default_message).strip()
             item_category = (item.get("category") or item.get("business_category") or "").strip()
             item_area = (item.get("area") or item.get("area_or_locality") or "").strip()
+            item_website = (item.get("website") or item.get("Website_or_Social_Link") or "").strip()
             
             if not digits or len(digits) < 10:
                 failed_count += 1
                 results.append({
                     "phone": raw_phone or "N/A",
-                    "name": lead_name,
+                    "name": lead_name or "Unknown",
                     "status": "failed",
                     "error": "Missing or invalid phone number (requires 10+ digits with country code)"
                 })
@@ -853,18 +1014,47 @@ async def bulk_broadcast(request: Request):
                 failed_count += 1
                 results.append({
                     "phone": digits,
-                    "name": lead_name,
+                    "name": lead_name or digits,
                     "status": "failed",
                     "error": "Message content was empty for this lead"
                 })
                 continue
+
+            # Persist structured CSV/campaign business info into customer_profiles first so AI remembers it
+            profile_kwargs = {
+                "business_name": lead_name,
+                "business_category": item_category,
+                "area": item_area,
+                "data_source": "csv_campaign",
+            }
+            if item_website:
+                low_web = item_website.lower()
+                if "instagram.com" in low_web:
+                    profile_kwargs["existing_ecosystem"] = "Instagram"
+                elif "facebook.com" in low_web or "fb.com" in low_web:
+                    profile_kwargs["existing_ecosystem"] = "Facebook"
+                elif "wa.me/" in low_web or "whatsapp.com" in low_web:
+                    profile_kwargs["existing_ecosystem"] = "WhatsApp"
+                else:
+                    profile_kwargs["website_url"] = item_website
+                    profile_kwargs["has_website"] = "yes"
+            stored_profile = db.upsert_customer_profile(digits, overwrite_existing=True, **profile_kwargs)
+
+            # Resolve any {{name}} / {{business}} / {{area}} variables before sending
+            resolved_msg = render_template_placeholders(
+                item_msg,
+                phone=digits,
+                explicit_name=lead_name,
+                profile=stored_profile
+            )
+            display_name = lead_name or stored_profile.get("business_name") or stored_profile.get("contact_name") or "Growhaz Support"
 
             status = "sent"
             err_msg = None
             meta_res = {}
             
             if send_via_meta:
-                success, meta_res = send_meta_whatsapp_message(digits, item_msg)
+                success, meta_res = await asyncio.to_thread(send_meta_whatsapp_message, digits, resolved_msg)
                 if success:
                     status = "sent"
                     sent_count += 1
@@ -890,12 +1080,12 @@ async def bulk_broadcast(request: Request):
             # Record to message history under the contact's phone
             db.save_message(
                 phone_number=digits,
-                sender_name=lead_name,
-                message=item_msg,
+                sender_name=display_name,
+                message=resolved_msg,
                 direction="outbound",
                 channel="ai_campaign" if send_via_meta else "simulator",
                 status=status,
-                raw_payload={"campaign": True, "lead_name": lead_name, "meta_response": meta_res}
+                raw_payload={"campaign": True, "lead_name": display_name, "meta_response": meta_res}
             )
             
             # Save or update in leads CRM
@@ -903,7 +1093,7 @@ async def bulk_broadcast(request: Request):
                 lead_notes = f"{item_category} • {item_area}".strip(" •")
                 db.add_or_update_lead(
                     phone_number=digits,
-                    name=lead_name,
+                    name=display_name if display_name != "Growhaz Support" else "Lead",
                     source=lead_source,
                     notes=lead_notes,
                     status="Contacted" if status in ["sent", "simulated"] else "New"
@@ -912,9 +1102,10 @@ async def bulk_broadcast(request: Request):
                 
             results.append({
                 "phone": digits,
-                "name": lead_name,
+                "name": display_name,
                 "status": status,
-                "error": err_msg
+                "error": err_msg,
+                "resolved_message": resolved_msg
             })
             
             if send_via_meta and len(personalized_items) > 1:
@@ -935,16 +1126,13 @@ async def bulk_broadcast(request: Request):
     if not default_message:
         return JSONResponse({"error": "Message content cannot be empty"}, status_code=400)
     
-    # If string was passed (newline or comma separated), split it
     if isinstance(numbers_raw, str):
         numbers_raw = [n.strip() for n in re.split(r'[\n,;]+', numbers_raw) if n.strip()]
     
     clean_numbers = []
     seen = set()
     for raw in numbers_raw:
-        digits = re.sub(r'[^0-9]', '', str(raw))
-        if len(digits) == 10:
-            digits = "91" + digits
+        digits = db.normalize_phone_key(raw) or re.sub(r'[^0-9]', '', str(raw))
         if len(digits) >= 10 and digits not in seen:
             clean_numbers.append(digits)
             seen.add(digits)
@@ -957,12 +1145,19 @@ async def bulk_broadcast(request: Request):
     failed_count = 0
     
     for phone in clean_numbers:
+        explicit_n = recipient_names.get(phone, "")
+        profile = db.get_customer_profile(phone)
+        if explicit_n and db._is_meaningful_profile_val(explicit_n, "contact_name"):
+            profile = db.upsert_customer_profile(phone, overwrite_existing=False, contact_name=explicit_n, data_source="broadcast")
+        final_msg = render_template_placeholders(default_message, phone=phone, explicit_name=explicit_n, profile=profile)
+        display_name = _pick_real_recipient_name(explicit_n, profile, phone) or "Lead"
+
         status = "sent"
         err_msg = None
         meta_res = {}
         
         if send_via_meta:
-            success, meta_res = send_meta_whatsapp_message(phone, default_message)
+            success, meta_res = await asyncio.to_thread(send_meta_whatsapp_message, phone, final_msg)
             if success:
                 status = "sent"
                 sent_count += 1
@@ -985,11 +1180,11 @@ async def bulk_broadcast(request: Request):
             status = "simulated"
             sent_count += 1
             
-        # Record to message history so it appears in the live chat inbox
+        # Record resolved message to history so inbox reflects exactly what was sent
         db.save_message(
             phone_number=phone,
-            sender_name="Growhaz Support",
-            message=default_message,
+            sender_name=display_name if display_name != "Lead" else "Growhaz Support",
+            message=final_msg,
             direction="outbound",
             channel="bulk_broadcast" if send_via_meta else "simulator",
             status=status,
@@ -1000,7 +1195,7 @@ async def bulk_broadcast(request: Request):
         if add_as_leads:
             db.add_or_update_lead(
                 phone_number=phone,
-                name="Lead",
+                name=display_name,
                 source=lead_source,
                 status="Contacted" if status in ["sent", "simulated"] else "New"
             )
@@ -1008,8 +1203,10 @@ async def bulk_broadcast(request: Request):
             
         results.append({
             "phone": phone,
+            "name": display_name,
             "status": status,
-            "error": err_msg
+            "error": err_msg,
+            "resolved_message": final_msg
         })
         
         if send_via_meta and len(clean_numbers) > 1:
@@ -1028,16 +1225,15 @@ async def bulk_broadcast(request: Request):
 @app.post("/api/dashboard/ai-personalize-campaign")
 async def ai_personalize_campaign(request: Request):
     """
-    Generate customized AI outreach messages for each business/client in a list.
-    Takes a list of businesses (name, category, locality), an outreach goal, and tone.
-    Uses DeepSeek AI / Groq AI with intelligent category template fallback.
+    Generate customized, ecosystem-focused AI outreach messages concurrently across a list of businesses.
+    Enriches missing context from customer_profiles DB when available, and never hallucinates fake names or areas.
     """
     try:
         from api.bot_engine import generate_personalized_campaign_pitch
         
         data = await request.json()
         leads = data.get("leads", [])
-        campaign_goal = (data.get("campaign_goal") or "Website security scan, website & app development, and automated WhatsApp booking assistant").strip()
+        campaign_goal = (data.get("campaign_goal") or "Helping integrate practical technology (website, automation & WhatsApp workflows) into your existing business ecosystem").strip()
         tone = (data.get("tone") or "friendly_warm").strip()
         custom_notes = (data.get("custom_notes") or "").strip()
         
@@ -1049,43 +1245,75 @@ async def ai_personalize_campaign(request: Request):
         groq_key = get_env_var("GROQ_API_KEY")
         groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
         
-        personalized_leads = []
-        engine_used = "AI Engine"
-        
-        for idx, lead in enumerate(leads):
-            b_name = (lead.get("business_name") or lead.get("name") or lead.get("Business_Name") or f"Business #{idx+1}").strip()
+        sem = asyncio.Semaphore(5)
+
+        async def _gen_one(idx: int, lead: dict) -> dict:
+            b_name = (lead.get("business_name") or lead.get("name") or lead.get("Business_Name") or "").strip()
             b_cat = (lead.get("category") or lead.get("business_category") or lead.get("Business_Category") or "").strip()
             b_area = (lead.get("area") or lead.get("area_or_locality") or lead.get("Area_or_Locality") or "").strip()
             b_phone = (lead.get("phone") or lead.get("contact_number") or lead.get("Contact_Number") or "").strip()
-            
-            try:
-                pitch, eng = generate_personalized_campaign_pitch(
-                    business_name=b_name,
-                    category=b_cat,
-                    area=b_area,
-                    campaign_goal=campaign_goal,
-                    tone=tone,
-                    custom_notes=custom_notes,
-                    deepseek_api_key=deepseek_key,
-                    deepseek_model=deepseek_model,
-                    groq_api_key=groq_key,
-                    groq_model=groq_model
-                )
-                engine_used = eng
-            except Exception as item_err:
-                logger.warning(f"[Campaign AI] Error generating pitch for {b_name}: {item_err}")
-                pitch = f"Hello {b_name} team! 👋 Greetings from Growhaz in {b_area or 'your area'}. We help local {b_cat or 'businesses'} automate customer orders and inquiries directly on WhatsApp. Would you like a quick 2-minute demo?"
-                eng = "Fallback Template"
-            
+            b_web = (lead.get("website") or lead.get("website_url") or lead.get("Website_or_Social_Link") or "").strip()
+            b_eco = (lead.get("existing_ecosystem") or "").strip()
+
+            if b_phone:
+                stored = db.get_customer_profile(b_phone)
+                if not db._is_meaningful_profile_val(b_name, "business_name") and stored.get("business_name"):
+                    b_name = stored["business_name"]
+                if not db._is_meaningful_profile_val(b_cat, "business_category") and stored.get("business_category"):
+                    b_cat = stored["business_category"]
+                if not db._is_meaningful_profile_val(b_area, "area") and stored.get("area"):
+                    b_area = stored["area"]
+                if not b_web and stored.get("website_url"):
+                    b_web = stored["website_url"]
+                if not b_eco and stored.get("existing_ecosystem"):
+                    b_eco = stored["existing_ecosystem"]
+
+            async with sem:
+                try:
+                    pitch, eng = await asyncio.to_thread(
+                        generate_personalized_campaign_pitch,
+                        business_name=b_name,
+                        category=b_cat,
+                        area=b_area,
+                        campaign_goal=campaign_goal,
+                        tone=tone,
+                        custom_notes=custom_notes,
+                        deepseek_api_key=deepseek_key,
+                        deepseek_model=deepseek_model,
+                        groq_api_key=groq_key,
+                        groq_model=groq_model,
+                        website_url=b_web,
+                        existing_ecosystem=b_eco,
+                    )
+                except Exception as item_err:
+                    logger.warning(f"[Campaign AI] Error generating pitch for {b_name or idx}: {item_err}")
+                    if b_name:
+                        area_txt = f" in {b_area}" if b_area else ""
+                        pitch = (
+                            f"Hello {b_name} team! 👋 Greetings from Growhaz. We help {b_cat or 'local businesses'}{area_txt} "
+                            "integrate automated WhatsApp replies and web tools smoothly into their existing workflow. "
+                            "Do you already have a website, or would you like a quick 2-minute example?"
+                        )
+                    else:
+                        pitch = (
+                            "Hello! 👋 Greetings from Growhaz. We help business owners integrate practical technology smoothly into their existing workflow. "
+                            "Before sharing suggestions, could you share your business name, what work you do, and whether you already have a website?"
+                        )
+                    eng = "Fallback Template"
+
             updated_lead = dict(lead)
             updated_lead["business_name"] = b_name
             updated_lead["category"] = b_cat
             updated_lead["area"] = b_area
             updated_lead["phone"] = b_phone
+            updated_lead["website"] = b_web
             updated_lead["personalized_message"] = pitch
             updated_lead["engine_used"] = eng
-            personalized_leads.append(updated_lead)
-            
+            return updated_lead
+
+        personalized_leads = list(await asyncio.gather(*[_gen_one(i, l) for i, l in enumerate(leads)]))
+        engine_used = personalized_leads[0]["engine_used"] if personalized_leads else "AI Engine"
+
         return JSONResponse({
             "success": True,
             "total": len(personalized_leads),

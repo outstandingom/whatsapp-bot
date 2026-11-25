@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import json
 import time
@@ -119,6 +120,25 @@ def init_db(force: bool = False):
                 status TEXT DEFAULT 'New', -- 'New', 'Contacted', 'Interested', 'Converted', 'Closed'
                 notes TEXT DEFAULT '',
                 last_messaged_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Persistent Customer & Business Ecosystem Profiles
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customer_profiles (
+                phone_number TEXT PRIMARY KEY,
+                contact_name TEXT DEFAULT '',
+                business_name TEXT DEFAULT '',
+                business_category TEXT DEFAULT '',
+                area TEXT DEFAULT '',
+                has_website TEXT DEFAULT '',
+                website_url TEXT DEFAULT '',
+                existing_ecosystem TEXT DEFAULT '',
+                pain_points TEXT DEFAULT '',
+                goals TEXT DEFAULT '',
+                data_source TEXT DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -585,6 +605,13 @@ def delete_contact(phone_number: str):
                OR phone_number = ? 
                OR REPLACE(phone_number, '+', '') = ?
         """, (phone_number, f"+{clean}", clean))
+        norm_key = normalize_phone_key(phone_number)
+        cursor.execute("""
+            DELETE FROM customer_profiles
+            WHERE phone_number = ?
+               OR REPLACE(phone_number, '+', '') = ?
+               OR phone_number = ?
+        """, (phone_number, clean, norm_key))
         conn.commit()
         conn.close()
         return True
@@ -681,4 +708,251 @@ def update_lead_status(lead_id: int, status: str) -> bool:
     except Exception as e:
         print(f"[DB] Error updating lead status: {e}")
         return False
+
+
+# ==================== CUSTOMER & BUSINESS ECOSYSTEM PROFILES ====================
+
+_PROFILE_PLACEHOLDERS = {
+    "lead", "customer", "user", "unknown", "business", "business lead",
+    "valued business", "your area", "not specified", "n/a", "na", "none",
+    "null", "there", "unnamed"
+}
+
+
+def normalize_phone_key(phone_number: str) -> str:
+    """Normalize phone number into canonical digits (prepending 91 for 10-digit Indian mobiles)."""
+    digits = re.sub(r"\D", "", str(phone_number or ""))
+    if not digits:
+        return ""
+    if digits.startswith("00") and 12 <= len(digits) <= 17:
+        digits = digits[2:]
+    if len(digits) == 13 and digits.startswith("091") and digits[3] in "6789":
+        digits = digits[1:]
+    elif len(digits) == 11 and digits.startswith("0") and digits[1] in "6789":
+        digits = "91" + digits[1:]
+    elif len(digits) == 10:
+        digits = "91" + digits
+    return digits
+
+
+def _is_meaningful_profile_val(val: str, field: str = "") -> bool:
+    """Return True only if value carries real domain/contact data rather than a generic placeholder."""
+    s = str(val or "").strip()
+    if not s:
+        return False
+    low = s.lower()
+    if low in _PROFILE_PLACEHOLDERS:
+        return False
+    if re.match(r"^(lead|business|unnamed lead|contact)\s*#?\d+$", low):
+        return False
+    if field in ("contact_name", "business_name") and s.isdigit():
+        return False
+    return True
+
+
+def _merge_tag_lists(existing_val: str, new_val: str) -> str:
+    """Merge comma-separated ecosystem/goal items preserving order without duplicates."""
+    seen = {}
+    for chunk in (existing_val, new_val):
+        for part in str(chunk or "").split(","):
+            clean = part.strip()
+            if clean and clean.lower() not in seen:
+                seen[clean.lower()] = clean
+    return ", ".join(seen.values())
+
+
+def get_customer_profile(phone_number: str) -> dict:
+    """Fetch stored customer & business ecosystem profile, enriched with CRM leads & chat metadata."""
+    key = normalize_phone_key(phone_number)
+    raw_clean = str(phone_number or "").replace("+", "").strip()
+    profile = {
+        "phone_number": key or raw_clean,
+        "contact_name": "",
+        "business_name": "",
+        "business_category": "",
+        "area": "",
+        "has_website": "",
+        "website_url": "",
+        "existing_ecosystem": "",
+        "pain_points": "",
+        "goals": "",
+        "data_source": "",
+        "updated_at": "",
+        "created_at": "",
+    }
+    if not key and not raw_clean:
+        profile["has_business_name"] = False
+        profile["has_business_category"] = False
+        profile["has_enough_business_context"] = False
+        profile["missing_fields"] = ["business_name", "business_category", "has_website", "existing_ecosystem"]
+        return profile
+
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM customer_profiles
+            WHERE phone_number = ?
+               OR REPLACE(phone_number, '+', '') = ?
+               OR REPLACE(phone_number, '+', '') = ?
+            LIMIT 1
+        """, (key, key, raw_clean))
+        row = cursor.fetchone()
+        if row:
+            for col in (
+                "contact_name", "business_name", "business_category", "area",
+                "has_website", "website_url", "existing_ecosystem",
+                "pain_points", "goals", "data_source", "updated_at", "created_at"
+            ):
+                if row[col]:
+                    profile[col] = str(row[col]).strip()
+
+        # Enrich from leads table if profile is missing fields
+        cursor.execute("""
+            SELECT name, source, notes FROM leads
+            WHERE phone_number = ?
+               OR REPLACE(phone_number, '+', '') = ?
+               OR REPLACE(phone_number, '+', '') = ?
+            LIMIT 1
+        """, (key, key, raw_clean))
+        lead_row = cursor.fetchone()
+        if lead_row:
+            lead_name = str(lead_row["name"] or "").strip()
+            lead_source = str(lead_row["source"] or "").lower()
+            lead_notes = str(lead_row["notes"] or "").strip()
+            if _is_meaningful_profile_val(lead_name, "business_name"):
+                if not profile["business_name"] and ("campaign" in lead_source or "csv" in lead_source or "•" in lead_notes):
+                    profile["business_name"] = lead_name
+                elif not profile["contact_name"]:
+                    profile["contact_name"] = lead_name
+            if "•" in lead_notes:
+                parts = [p.strip() for p in lead_notes.split("•")]
+                if len(parts) >= 1 and not profile["business_category"] and _is_meaningful_profile_val(parts[0], "business_category"):
+                    profile["business_category"] = parts[0]
+                if len(parts) >= 2 and not profile["area"] and _is_meaningful_profile_val(parts[1], "area"):
+                    profile["area"] = parts[1]
+
+        # Enrich contact_name from latest inbound message sender_name
+        if not _is_meaningful_profile_val(profile["contact_name"], "contact_name"):
+            cursor.execute("""
+                SELECT sender_name FROM messages
+                WHERE (REPLACE(phone_number, '+', '') = ? OR REPLACE(phone_number, '+', '') = ?)
+                  AND direction = 'inbound'
+                ORDER BY id DESC LIMIT 1
+            """, (key, raw_clean))
+            msg_row = cursor.fetchone()
+            if msg_row and _is_meaningful_profile_val(msg_row["sender_name"], "contact_name"):
+                profile["contact_name"] = str(msg_row["sender_name"]).strip()
+
+        conn.close()
+    except Exception as e:
+        print(f"[DB] Error fetching customer profile: {e}")
+
+    has_bname = _is_meaningful_profile_val(profile["business_name"], "business_name")
+    has_bcat = _is_meaningful_profile_val(profile["business_category"], "business_category")
+    has_web = _is_meaningful_profile_val(profile["has_website"], "has_website") or bool(profile["website_url"])
+    has_eco = _is_meaningful_profile_val(profile["existing_ecosystem"], "existing_ecosystem")
+
+    missing = []
+    if not has_bname:
+        missing.append("business_name")
+    if not has_bcat:
+        missing.append("business_category")
+    if not has_web:
+        missing.append("has_website")
+    if not has_eco:
+        missing.append("existing_ecosystem")
+
+    profile["has_business_name"] = has_bname
+    profile["has_business_category"] = has_bcat
+    profile["has_enough_business_context"] = bool(has_bname or has_bcat)
+    profile["missing_fields"] = missing
+    return profile
+
+
+def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, **fields) -> dict:
+    """Create or merge meaningful business & ecosystem facts for a phone number."""
+    key = normalize_phone_key(phone_number)
+    if not key:
+        return {}
+
+    allowed_cols = (
+        "contact_name", "business_name", "business_category", "area",
+        "has_website", "website_url", "existing_ecosystem",
+        "pain_points", "goals", "data_source"
+    )
+    list_cols = {"existing_ecosystem", "pain_points", "goals"}
+
+    try:
+        init_db()
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM customer_profiles WHERE phone_number = ?", (key,))
+        existing = cursor.fetchone()
+        merged = {col: (str(existing[col] or "").strip() if existing and existing[col] else "") for col in allowed_cols}
+
+        changed = existing is None
+        for col in allowed_cols:
+            if col not in fields:
+                continue
+            new_val = str(fields.get(col) or "").strip()
+            if not _is_meaningful_profile_val(new_val, col):
+                continue
+            if col in list_cols:
+                combined = _merge_tag_lists(merged[col], new_val)
+                if combined != merged[col]:
+                    merged[col] = combined
+                    changed = True
+            else:
+                if overwrite_existing or not merged[col]:
+                    if new_val != merged[col]:
+                        merged[col] = new_val
+                        changed = True
+
+        if changed:
+            cursor.execute("""
+                INSERT INTO customer_profiles (
+                    phone_number, contact_name, business_name, business_category, area,
+                    has_website, website_url, existing_ecosystem, pain_points, goals, data_source, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(phone_number) DO UPDATE SET
+                    contact_name = excluded.contact_name,
+                    business_name = excluded.business_name,
+                    business_category = excluded.business_category,
+                    area = excluded.area,
+                    has_website = excluded.has_website,
+                    website_url = excluded.website_url,
+                    existing_ecosystem = excluded.existing_ecosystem,
+                    pain_points = excluded.pain_points,
+                    goals = excluded.goals,
+                    data_source = CASE WHEN excluded.data_source != '' THEN excluded.data_source ELSE customer_profiles.data_source END,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (
+                key,
+                merged["contact_name"], merged["business_name"], merged["business_category"],
+                merged["area"], merged["has_website"], merged["website_url"],
+                merged["existing_ecosystem"], merged["pain_points"], merged["goals"],
+                merged["data_source"]
+            ))
+
+            # Keep placeholder leads table row synced with real business/contact name
+            best_name = merged["business_name"] or merged["contact_name"]
+            if _is_meaningful_profile_val(best_name, "business_name"):
+                cursor.execute("""
+                    UPDATE leads
+                    SET name = ?
+                    WHERE REPLACE(phone_number, '+', '') = ?
+                      AND (name IS NULL OR TRIM(name) = '' OR LOWER(TRIM(name)) = 'lead')
+                """, (best_name, key))
+
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[DB] Error upserting customer profile: {e}")
+
+    return get_customer_profile(key)
+
 

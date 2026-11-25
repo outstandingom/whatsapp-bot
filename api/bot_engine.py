@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import time
 import logging
 from typing import List, Dict, Any, Optional
@@ -7,74 +8,308 @@ import httpx
 
 logger = logging.getLogger("bot_engine")
 
-CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are the official Customer Support Representative chatting with clients on WhatsApp for Growhaz (Growhaz Secure Systems).
+CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are a consultative Business Technology Specialist chatting with business owners and clients on WhatsApp for Growhaz (Growhaz Secure Systems).
 
 About Growhaz:
-Growhaz is a next-generation cybersecurity, trust infrastructure, and digital solutions company based in India.
-Founder & CEO: Om Uikey
-Official Website: https://www.growhaz.in/
-Email: info.growhaz@gmail.com
+Growhaz is a cybersecurity, custom web/mobile development, and workflow automation company based in India (Founder & CEO: Om Uikey | Website: https://www.growhaz.in/ | Email: info.growhaz@gmail.com).
+Our core mission is helping business owners integrate practical technology smoothly into their EXISTING business ecosystem (WhatsApp, walk-ins, social pages, billing, websites) rather than forcing generic templates onto them.
 
-CORE SERVICES & PRICING:
-1. Website Security Vulnerability Scanning (Alpha G1 / Alpha G5 / Alpha G3):
-   - Automated security testing discovering SQLi, XSS, IDOR, API vulnerabilities in under 5 minutes.
-   - Pricing:
-     • AlphaG1: ₹1,999 per scan (Basic security audit for small websites)
-     • AlphaG5: ₹4,999 per scan (Advanced audit, API testing & IDOR checks — Most Popular)
-     • AlphaG3: ₹9,999 per scan (Enterprise-grade full penetration testing)
-   - Portal Link (ONLY if user specifically asks for website/link/scan portal): https://www.growhaz.in/security-tools
+CORE CAPABILITIES (share only what fits the owner's actual setup):
+1. Website Security Vulnerability Scanning (AlphaG1 ₹1,999 | AlphaG5 ₹4,999 | AlphaG3 ₹9,999 — fast SQLi/XSS/IDOR & API audits).
+2. Website & Custom Web App Development (Static SEO Website ₹20,000 | Dynamic Web App / CRM / Booking Portal from ₹60,000).
+3. Appify Your Website (Android APK ₹15,000 | Android + iOS Store Package ₹25,000 — turn any website into a mobile app).
+4. Automated WhatsApp Assistants & Ecosystem Workflow Automation (from ₹8,000 — connects 24/7 customer inquiry handling, order/appointment capture, and CRM tracking to their existing workflow).
+5. Blockchain Document Verification & SEO Optimization.
 
-2. Appify Your Website (Mobile App Conversion):
-   - Convert any website or web app into native Android & iOS mobile apps with push notifications and offline mode.
-   - Link (ONLY if user asks for website/link): https://www.growhaz.in/development
-
-3. Secure Web & Full-Stack Development:
-   - Ultra-fast, SEO-optimized, security-hardened websites and custom web apps.
-   - Pricing:
-     • Static Website: ₹20,000 (100% Lighthouse SEO score, security certified)
-     • Dynamic Web App: Starting from ₹60,000 (CRUD, E-commerce, CRM, admin dashboard)
-     • Custom Enterprise Systems: Tailored quotes
-   - Link (ONLY if user asks for website/link): https://www.growhaz.in/development
-
-4. Blockchain Document Verification:
-   - Tamper-proof on-chain verification for degrees, certificates, and legal contracts.
-   - Portal Link (ONLY if user asks for website/link): https://www.growhaz.in/verify
-
-5. SEO & Workflow Automation:
-   - Basic SEO: ₹8,000 | Monthly On-Page SEO: ₹10,000/month | Workflow Automation: From ₹8,000
-   - Link (ONLY if user asks for website/link): https://www.growhaz.in/seo
-
-CRITICAL CONVERSATIONAL & LINK RULES:
-1. HUMAN TONE: Talk naturally, warmly, and helpfully like a real human customer support executive on WhatsApp. Do NOT sound like an automated robot.
-2. STRICT LINK RULE (NEVER SPAM LINKS):
-   - DO NOT include website links or URLs in greetings or general conversation.
-   - DO NOT attach links to every service item.
-   - ONLY provide a link when the user explicitly asks for a link, website URL, portal, online scan link, or where to visit online.
-3. CONVERSATIONAL MEMORY: Pay close attention to what the customer has already asked or discussed. Do NOT repeat the exact same greeting or service list if the conversation is already in progress.
-4. GREETINGS: Keep initial greetings short: "Hey there! 👋 Welcome to Growhaz. How can I help you today?" (NO links).
-5. FORMATTING: Use clean WhatsApp formatting (*bold*, • bullets, friendly emojis). Keep messages concise and easy to read on mobile.
-6. HUMAN HANDOVER: If someone asks to speak to a person or founder Om Uikey, warmly assure them that a human specialist will reply directly shortly.
+CRITICAL CONSULTATIVE & MEMORY RULES:
+1. DISCOVERY-FIRST BEFORE SUGGESTING: Look at the `STORED CUSTOMER & BUSINESS PROFILE` section below before answering!
+   - When the customer asks "what services do you provide for my business?", "how can you help me?", or asks for suggestions:
+     • If we do NOT know their business name/type OR website status yet: DO NOT dump a generic numbered list of services or prices. Politely explain that before recommending anything, you want to understand their setup so your advice actually fits their workflow, and ask 2-3 short, warm questions covering ONLY what is missing (e.g., business name, what kind of business they run, and whether they already have a website or how customers reach them today).
+     • If we DO already have their business info in the stored profile (for example from a CSV campaign or earlier messages): NEVER re-ask for info we already have! Greet/reference their business naturally, and explain clearly how technology can integrate into their existing ecosystem.
+2. ECOSYSTEM INTEGRATION MINDSET: Always frame recommendations around making their existing business operations easier (connecting WhatsApp inquiries, existing website, offline/walk-in orders, or appointments) instead of pushing generic sales copy.
+3. STRICT LINK RULE: DO NOT include website URLs unless the user explicitly asks for a link, portal, or website URL.
+4. HUMAN WHATSAPP STYLE: Warm, concise, conversational, clean bullets/bolding, never repetitive.
+5. HANDOVER: If they ask for a human/founder Om Uikey, assure them a team specialist will reply shortly.
+6. INTERNAL PROFILE MEMORY TAG: Whenever the customer reveals or confirms NEW facts in this turn (business name, category, city/area, whether they have a website, website URL, existing tools/ecosystem like WhatsApp/Instagram/POS, or their personal name), append ONE hidden HTML comment on the final line ONLY with the newly stated facts:
+   <!--PROFILE:{"business_name":"...","business_category":"...","area":"...","has_website":"yes|no","website_url":"...","existing_ecosystem":"...","contact_name":"..."}-->
+   Omit unknown keys. If no new facts were shared, do NOT append the tag.
 """
+
+
+_CATEGORY_KEYWORD_MAP = [
+    (["bakery", "cake", "sweet", "pastry", "confection", "mithai", "mishthan"], "Bakery & Sweets"),
+    (["restaurant", "cafe", "dhaba", "pizza", "food", "dining", "biryani", "tiffin", "kitchen", "catering", "tea", "chai", "coffee", "juice"], "Restaurant & Food"),
+    (["salon", "beauty", "parlour", "parlor", "spa", "makeup", "hair", "grooming"], "Salon & Beauty"),
+    (["coaching", "classes", "academy", "tuition", "institute", "school", "college", "library", "training"], "Coaching & Education"),
+    (["clinic", "hospital", "doctor", "dental", "dentist", "healthcare", "medical", "diagnostic", "pathology", "physio"], "Healthcare & Clinic"),
+    (["pharmacy", "chemist", "pharma", "medicine"], "Pharmacy & Medical"),
+    (["grocery", "supermarket", "kirana", "mart", "bazaar", "bazar", "general store", "dairy"], "Grocery & Retail"),
+    (["clothing", "boutique", "garment", "fashion", "saree", "apparel", "tailor", "silai", "textile"], "Clothing & Fashion"),
+    (["mobile", "electronics", "repair", "computer", "laptop", "cctv", "it shop"], "Mobile & Electronics"),
+    (["hardware", "plywood", "glass", "tiles", "sanitary", "interior", "furniture", "paint"], "Hardware & Interiors"),
+    (["real estate", "property", "builder", "construction", "architect"], "Real Estate & Property"),
+    (["gym", "fitness", "yoga"], "Fitness & Gym"),
+    (["hotel", "lodge", "resort", "banquet", "marriage lawn"], "Hospitality & Hotel"),
+    (["workshop", "garage", "motors", "auto", "car", "bike", "service center"], "Automotive & Workshop"),
+    (["jewellery", "jewelry", "jewellers", "gold"], "Jewellery"),
+    (["printing", "flex", "advertising", "agency", "marketing", "design studio"], "Agency & Printing"),
+    (["travel", "tour", "transport", "logistics", "courier"], "Travel & Logistics"),
+    (["ecommerce", "e-commerce", "wholesale", "manufacturing", "factory", "trading"], "Retail & Wholesale"),
+]
+
+_ECOSYSTEM_KEYWORDS = [
+    (["whatsapp", "wa business"], "WhatsApp"),
+    (["instagram", "insta", "ig"], "Instagram"),
+    (["facebook", "fb"], "Facebook"),
+    (["google maps", "google business", "gmb", "google listing"], "Google Business Listing"),
+    (["walk-in", "walk in", "offline", "counter", "dukaan", "shop counter"], "Offline / Walk-in"),
+    (["phone call", "calling", "calls", "telephone"], "Phone Calls"),
+    (["excel", "spreadsheet", "google sheet"], "Excel / Sheets"),
+    (["register", "diary", "notebook", "manual book"], "Paper Register"),
+    (["pos", "billing software", "tally"], "Billing / POS"),
+    (["shopify"], "Shopify"),
+    (["wordpress", "woo"], "WordPress"),
+    (["zomato", "swiggy"], "Zomato / Swiggy"),
+    (["justdial", "indiamart"], "Directory Listing"),
+]
+
+
+def _clean_captured_phrase(phrase: str) -> str:
+    """Trim trailing clauses/punctuation from regex-captured business names or areas."""
+    s = str(phrase or "").strip(" \t\r\n.,;:-'\"")
+    s = re.split(
+        r"(?:\s*[,\n;|]|\s+(?:in|at|from|near|with|and we|we take|we use|having|which|that|no website|website|already have|don'?t have)\b)",
+        s,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return s.strip(" \t\r\n.,;:-'\"")
+
+
+def extract_profile_updates_from_text(user_text: str, existing_profile: Optional[dict] = None) -> dict:
+    """
+    Deterministically extract business name, category, area, website status, and existing workflow tools
+    from natural English/Hinglish WhatsApp messages so facts persist even when LLMs are off or stateless.
+    """
+    text = (user_text or "").strip()
+    if not text:
+        return {}
+    low = text.lower()
+    updates: Dict[str, str] = {}
+
+    # 1. Website URL detection (ignoring Growhaz's own URLs)
+    url_matches = re.findall(
+        r"(https?://[^\s,;]+|(?:www\.)?[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.(?:com|in|org|net|io|co|ai|app|shop|store|biz)(?:/[^\s,;]*)?)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    for u in url_matches:
+        if "growhaz." not in u.lower() and not u.lower().endswith("@gmail.com"):
+            updates["website_url"] = u.rstrip(".,;:!?)")
+            updates["has_website"] = "yes"
+            break
+
+    # 2. Website yes/no statements
+    if "has_website" not in updates:
+        if any(p in low for p in [
+            "no website", "don't have a website", "dont have a website", "do not have a website",
+            "don't have website", "dont have website", "no site yet", "don't have site", "dont have site",
+            "website nahi", "website nhi", "nhi h website", "nahi hai website", "not created yet",
+            "website is not created", "website not created", "without a website", "no online website"
+        ]):
+            updates["has_website"] = "no"
+        elif any(p in low for p in [
+            "already have a website", "we have a website", "i have a website", "have our website",
+            "website is live", "website is ready", "website hai", "created a website", "built a website",
+            "yes website", "yes we have a website", "yes i have a website"
+        ]):
+            updates["has_website"] = "yes"
+
+    # 3. Business name extraction from explicit introduction patterns
+    bname_patterns = [
+        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+name\s+(?:is|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+is\s+(?:a\s+)?([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:business|shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+(?:is\s+)?(?:called|named)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+name\s+(?:is|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:we|i)\s+(?:run|own|manage)\s+([A-Z][A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+    ]
+    generic_bname_rejects = {
+        "a", "an", "the", "my business", "our business", "online", "offline", "local business",
+        "small business", "new business", "a shop", "a store", "a business", "website"
+    }
+    for pat in bname_patterns:
+        m = re.search(pat, text, flags=0 if r"([A-Z]" in pat else re.IGNORECASE)
+        if m and m.group(1):
+            candidate = _clean_captured_phrase(m.group(1))
+            if (
+                candidate
+                and len(candidate) >= 2
+                and candidate.lower() not in generic_bname_rejects
+                and not re.match(r"^(?:a|an|the)\s+(?:small|local|new|online|offline)?\s*\w+$", candidate.lower())
+            ):
+                updates["business_name"] = candidate
+                break
+
+    # 4. Business category extraction
+    for kw_list, label in _CATEGORY_KEYWORD_MAP:
+        if any(re.search(rf"\b{re.escape(kw)}\b", low) for kw in kw_list):
+            updates["business_category"] = label
+            break
+
+    # 5. Area / locality extraction
+    area_rejects = {
+        "whatsapp", "instagram", "facebook", "google", "online", "offline", "india", "general",
+        "future", "mind", "stock", "time", "advance", "short", "detail", "English", "hindi",
+        "english", "growth", "technology", "business", "website", "this", "that", "here"
+    }
+    area_patterns = [
+        r"\b(?:address|location|city|town|locality)\s*(?:is|:)\s*([A-Za-z0-9\u0900-\u097F \-]{2,40})",
+        r"\b(?:located\s+in|based\s+in|from|in|at)\s+([A-Z][A-Za-z0-9\u0900-\u097F \-]{1,35})",
+    ]
+    for pat in area_patterns:
+        m = re.search(pat, text)
+        if m and m.group(1):
+            cand_area = _clean_captured_phrase(m.group(1))
+            if cand_area and len(cand_area) >= 2 and cand_area.lower() not in area_rejects:
+                if updates.get("business_name") and cand_area.lower() in updates["business_name"].lower():
+                    continue
+                updates["area"] = cand_area
+                break
+
+    # 6. Existing workflow / ecosystem detection
+    eco_found = []
+    for kw_list, eco_label in _ECOSYSTEM_KEYWORDS:
+        if any(kw in low for kw in kw_list):
+            eco_found.append(eco_label)
+    if eco_found:
+        updates["existing_ecosystem"] = ", ".join(eco_found)
+
+    return updates
+
+
+def parse_and_strip_profile_tag(reply_text: str) -> tuple[str, dict]:
+    """Strip internal <!--PROFILE:{...}--> metadata from LLM output and parse extracted fields."""
+    text = str(reply_text or "")
+    parsed_updates: Dict[str, str] = {}
+    allowed_keys = {
+        "contact_name", "business_name", "business_category", "area",
+        "has_website", "website_url", "existing_ecosystem", "pain_points", "goals"
+    }
+
+    for match in re.finditer(r"<!--\s*PROFILE\s*:\s*(\{.*?\})\s*-->", text, flags=re.DOTALL | re.IGNORECASE):
+        try:
+            obj = json.loads(match.group(1))
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k in allowed_keys and isinstance(v, str) and v.strip():
+                        parsed_updates[k] = v.strip()
+        except Exception:
+            pass
+
+    cleaned = re.sub(r"<!--\s*PROFILE\s*:.*?-->", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<!--\s*PROFILE\s*:.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    return cleaned.strip(), parsed_updates
+
+
+def _build_ecosystem_recommendation(profile: dict) -> str:
+    """Build concrete, tailored ecosystem-integration guidance from known business profile fields."""
+    b_name = profile.get("business_name") or ""
+    b_cat = profile.get("business_category") or ""
+    b_area = profile.get("area") or ""
+    has_web = (profile.get("has_website") or "").lower()
+    web_url = profile.get("website_url") or ""
+    b_eco = profile.get("existing_ecosystem") or ""
+    contact_name = profile.get("contact_name") or ""
+
+    cat_low = b_cat.lower()
+    label = f"*{b_name}*" if b_name else "your business"
+    if b_area:
+        label_with_area = f"{label} in *{b_area}*"
+    else:
+        label_with_area = label
+
+    # Tailor core ecosystem workflow to their industry
+    if any(k in cat_low for k in ["bakery", "cake", "sweet", "restaurant", "cafe", "food", "dhaba"]):
+        workflow = (
+            "1️⃣ *WhatsApp Menu & Order Automation:* Plug an automated catalog + pre-order flow directly into your existing WhatsApp so customers can browse items and place cake/table orders 24/7 without manual back-and-forth.\n"
+            "2️⃣ *Customer Database & Repeat Offers:* Save repeat buyers automatically so festive specials go out effortlessly."
+        )
+    elif any(k in cat_low for k in ["salon", "beauty", "parlour", "spa", "clinic", "doctor", "hospital", "dental"]):
+        workflow = (
+            "1️⃣ *24/7 Appointment Integration:* Connect instant slot selection & automatic reminders directly into the WhatsApp number your clients already message.\n"
+            "2️⃣ *Client History CRM:* Track visits and follow-ups cleanly without relying on a paper register."
+        )
+    elif any(k in cat_low for k in ["coaching", "classes", "academy", "school", "education"]):
+        workflow = (
+            "1️⃣ *Admission & Batch Inquiry Automation:* Answer fee/timing questions automatically on WhatsApp and capture student leads cleanly into a central dashboard.\n"
+            "2️⃣ *Document / Certificate Trust:* Optionally issue verifiable digital certificates alongside batch updates."
+        )
+    elif any(k in cat_low for k in ["grocery", "mart", "retail", "clothing", "mobile", "hardware", "store", "wholesale", "electronics"]):
+        workflow = (
+            "1️⃣ *WhatsApp Product Catalog & Order Updates:* Connect your inventory/price queries right to WhatsApp so customers get instant replies even during shop rush.\n"
+            "2️⃣ *Lead & Repeat-Buyer Tracking:* Turn daily inquiries and walk-in contacts into organized repeat customers."
+        )
+    else:
+        workflow = (
+            "1️⃣ *Seamless WhatsApp Workflow Integration:* Automate recurring customer inquiries, bookings, and lead capture right inside the channels you already use.\n"
+            "2️⃣ *CRM & Follow-up Sync:* Keep every customer interaction organized in one place instead of scattered chats."
+        )
+
+    if has_web == "yes" or web_url:
+        site_ref = f" ({web_url})" if web_url else ""
+        web_line = (
+            f"3️⃣ *Strengthen Your Existing Website{site_ref}:* We can run an *AlphaG5 Security Audit* (₹4,999) to protect customer data, speed up SEO, or convert your site into a native Android/iOS app via *Appify*."
+        )
+        follow_up = "Would you like us to review your current website or walk you through connecting automated WhatsApp flows into your setup?"
+    elif has_web == "no":
+        web_line = (
+            "3️⃣ *Lightweight Online Presence (Connected to WhatsApp):* Since you don't have a website yet, we can pair a fast Google-friendly web storefront (₹20,000) directly with WhatsApp ordering so new local customers find you on Google and land straight in your WhatsApp."
+        )
+        follow_up = "Since you're operating without a website right now, would you like to start by automating your existing WhatsApp flow first, or add a simple website connected to it?"
+    else:
+        web_line = ""
+        eco_note = f" (connecting smoothly with your {b_eco} setup)" if b_eco else ""
+        follow_up = (
+            f"To tailor the exact integration plan{eco_note}, could you let me know: *do you already have a website created, or how do most customers currently reach/order from you?*"
+        )
+
+    greet = f"{contact_name}, for " if contact_name else "For "
+    header = f"Here is how Growhaz can integrate practical technology into {label_with_area}'s ecosystem:\n\n"
+    if contact_name and not b_name:
+        header = f"{greet}your {b_cat or 'business'} setup, here is how technology can integrate into your existing ecosystem:\n\n"
+
+    body = header + workflow + (f"\n{web_line}" if web_line else "") + f"\n\n{follow_up}"
+    return body
 
 def run_smart_customer_support_fallback(
     user_prompt: str,
     history: Optional[List[dict]] = None,
     customer_id: str = "",
-    dna_analysis: Optional[dict] = None
+    dna_analysis: Optional[dict] = None,
+    profile: Optional[dict] = None,
+    newly_extracted: Optional[dict] = None
 ) -> str:
     """
-    Context-aware rule-based fallback when AI APIs (DeepSeek/Groq) are unavailable.
-    Directly grounded in the DNA Modal's activated relationship graph and customer memories.
-    Guarantees non-repetitive, contextually relevant replies.
+    Context-aware consultative fallback grounded in persistent customer_profiles DB and DNA memory.
+    Collects missing business context before suggesting generic menus, and tailors recommendations
+    to integrate technology into the owner's existing ecosystem.
     """
     p = user_prompt.lower().strip()
     dna = dna_analysis or {}
     prediction = dna.get("prediction", {})
     activated_nodes = [n.get("id", "") for n in dna.get("activated_nodes", [])]
-    relationships = dna.get("relationships", [])
 
     p_clean = re.sub(r'[^\w\s]', ' ', p)
     words = set(p_clean.split())
+
+    p_data = profile or {}
+    new_info = newly_extracted or {}
+    b_name = p_data.get("business_name") or ""
+    b_cat = p_data.get("business_category") or ""
+    b_area = p_data.get("area") or ""
+    has_web = (p_data.get("has_website") or "").lower()
+    contact_name = p_data.get("contact_name") or ""
+    has_business_ctx = bool(p_data.get("has_enough_business_context") or b_name or b_cat)
 
     # Explicit link requests only - never trigger on "my website" or "my site"
     wants_link = any(phrase in p for phrase in ["link", "send link", "share link", "give link", "url", "portal link", "website link", "where to visit", "where can i visit", "online portal"])
@@ -92,318 +327,281 @@ def run_smart_customer_support_fallback(
 
     customer_facts = dna.get("customer_facts", {})
     newly_learned = dna.get("newly_learned_facts", {})
-    customer_name = customer_facts.get("has_name") or ""
-
+    customer_name = contact_name or customer_facts.get("has_name") or ""
     direct_answers = dna.get("direct_answers", {})
 
-    # 0a. User just stated profile facts in this dialogue turn (Immediate Learning Acknowledgment)
+    # 0a. Immediate business discovery acknowledgment & tailored ecosystem recommendation
+    if any(k in new_info for k in ("business_name", "business_category", "has_website", "website_url", "area", "existing_ecosystem")):
+        if b_name or b_cat:
+            ack_parts = []
+            if "business_name" in new_info or b_name:
+                ack_parts.append(f"*{new_info.get('business_name') or b_name}*")
+            if new_info.get("area"):
+                ack_parts.append(f"in {new_info['area']}")
+            ack = f"Got it — I've saved {' '.join(ack_parts) or 'your business details'} to our memory! 😊\n\n"
+            return ack + _build_ecosystem_recommendation(p_data)
+        web_note = "you don't have a website yet" if new_info.get("has_website") == "no" else "your online setup details"
+        return (
+            f"Got it — noted that {web_note}! 😊\n\n"
+            "Before I suggest the best way to plug technology into your workflow, could you also share your *business name* and *what type of business* you run?"
+        )
+
+    # 0b. User just stated personal/DNA profile facts in this dialogue turn
     if "has_name" in newly_learned:
         name = newly_learned["has_name"]
-        return f"Nice to meet you, {name}! 😊 I've saved that in my long-term memory. How can I assist you with Growhaz services today?"
+        if customer_id:
+            try:
+                from api import db
+                db.upsert_customer_profile(customer_id, contact_name=name, data_source="whatsapp_chat")
+            except Exception:
+                pass
+        return f"Nice to meet you, {name}! 😊 I've saved that in memory. Could you share a little about your business so I can help with what fits your setup?"
     if "has_company" in newly_learned:
         comp = newly_learned["has_company"]
-        return f"Noted that you're with {comp}! 🏢 How can Growhaz help support your team and business today?"
+        if customer_id:
+            try:
+                from api import db
+                p_data = db.upsert_customer_profile(customer_id, business_name=comp, data_source="whatsapp_chat")
+            except Exception:
+                pass
+        return f"Noted that you're with *{comp}*! 🏢\n\n" + _build_ecosystem_recommendation(p_data or {"business_name": comp})
     if "has_role" in newly_learned:
         role = newly_learned["has_role"]
-        return f"Great to connect with a {role}! How can Growhaz assist your work today?"
+        return f"Great to connect with a {role}! What kind of business are you running, and how do customers reach you right now?"
 
-    # 0b. Direct Relational DNA Knowledge Resolution (Pillars 1, 2, 3)
+    # 0c. Direct Relational DNA Knowledge Resolution
     if "user_name" in direct_answers:
         name = direct_answers["user_name"]
         first = name.split()[0]
-        return f"Your name is {name}! 😊 I have it remembered in my long-term memory. How can I assist you today, {first}?"
+        return f"Your name is {name}! 😊 I have it remembered in memory. How can I assist you today, {first}?"
     if "user_company" in direct_answers:
-        comp = direct_answers["user_company"]
-        return f"You're with {comp}! How can I assist with your company's technical requirements?"
+        comp = b_name or direct_answers["user_company"]
+        return f"You're with *{comp}*! How can we help integrate technology cleanly into your workflow today?"
     if "user_website" in direct_answers:
-        site = direct_answers["user_website"]
-        return f"Your website is {site}! Would you like us to run a security vulnerability scan on it?"
+        site = p_data.get("website_url") or direct_answers["user_website"]
+        return f"Your website is {site}! Would you like us to run a security vulnerability scan or connect WhatsApp automation with it?"
     if "founder" in direct_answers:
         founder = direct_answers["founder"]
         return (
             f"👤 *Leadership at Growhaz:*\n\n"
-            f"Growhaz was founded by *{founder}*, who serves as the Founder and Lead AI Architect.\n\n"
-            f"He leads our research in AI cognitive architectures, the proprietary DNA Memory System, and full-stack cybersecurity audit engines."
+            f"Growhaz was founded by *{founder}*, who serves as Founder and Lead AI Architect.\n\n"
+            f"He leads our work on AI cognitive architectures, cybersecurity audits, and custom business workflow integration."
         )
     if "payment_methods" in direct_answers:
         return (
-            f"💳 *Accepted Payment Methods at Growhaz:*\n\n"
-            f"• *UPI:* Instant payment via Google Pay, PhonePe, Paytm, and BHIM UPI.\n"
-            f"• *Cards:* All major Credit & Debit cards (Visa, MasterCard, RuPay, Amex).\n"
-            f"• *NetBanking:* Supported across all major Indian banks.\n"
-            f"• *Bank Transfer (NEFT/IMPS/RTGS):* Available for corporate and milestone contracts.\n"
-            f"• *International:* Stripe & Wire Transfer for global clients (USD, EUR, GBP).\n\n"
-            f"We issue official GST-compliant tax invoices for all transactions."
+            "💳 *Accepted Payment Methods at Growhaz:*\n\n"
+            "• *UPI:* Google Pay, PhonePe, Paytm, and BHIM UPI\n"
+            "• *Cards & NetBanking:* All major Credit/Debit cards and Indian banks\n"
+            "• *Bank Transfer (NEFT/IMPS/RTGS) & International Wire/Stripe*\n\n"
+            "We issue GST-compliant tax invoices for all transactions."
         )
     if "turnaround_times" in direct_answers:
         times = direct_answers["turnaround_times"]
         lines = [f"• *{s.replace('_', ' ').title()}:* {t.replace('_', ' ').title()}" for s, t in times.items()]
         return "⏱️ *Growhaz Service Turnaround Times:*\n\n" + "\n".join(lines) + "\n\nWhich project do you need estimated?"
 
-    # 0c. General company info request
+    # 0d. General company info request
     if any(phrase in p for phrase in ["about growhaz", "what is growhaz", "where are you located", "contact details", "contact email", "headquarters"]):
         return (
-            "🏢 *About Growhaz Technologies:*\n\n"
-            "Growhaz is a technology and cybersecurity solutions firm based in India, founded by Om Uikey.\n\n"
-            "• *Core Solutions:* AlphaG security scanning, Appify mobile app conversion, custom full-stack web platforms, and blockchain verification.\n"
-            "• *Headquarters:* India\n"
-            "• *Official Website:* https://www.growhaz.in\n"
-            "• *Official Email:* info.growhaz@gmail.com\n"
-            "• *WhatsApp Support:* Available directly here 24/7!"
+            "🏢 *About Growhaz:*\n\n"
+            "Growhaz helps local and digital businesses integrate practical technology — security audits, fast websites, mobile apps, and automated WhatsApp workflows — directly into their existing ecosystem.\n\n"
+            "• *Website:* https://www.growhaz.in\n"
+            "• *Email:* info.growhaz@gmail.com\n"
+            "• *WhatsApp Consultation:* Available right here!"
         )
 
     # 1. Human Handover Request
     if any(w in words for w in ["human", "agent", "person", "representative", "specialist"]) or any(phrase in p for phrase in ["talk to someone", "call me"]):
         res = (
             "👤 *Connecting you with our team*\n\n"
-            "I've flagged this conversation for our founder Om Uikey and our technical team. "
+            "I've flagged this chat for our founder Om Uikey and our engineering team. "
             "A human specialist will reply directly here on WhatsApp shortly!"
         )
         if wants_link:
-            res += "\n\n🌐 You can also reach us via email at info.growhaz@gmail.com or visit https://www.growhaz.in/"
+            res += "\n\n🌐 You can also reach us at info.growhaz@gmail.com or https://www.growhaz.in/"
         return res
 
     # 2. Thank you / Closing
     if any(w in words for w in ["thank", "thanks", "thx", "dhanyawad", "shukriya", "great", "perfect", "bye"]):
+        closing_name = f", {customer_name.split()[0]}" if customer_name else ""
         return (
-            "You're very welcome! 😊 Glad I could help.\n\n"
-            "Feel free to reply anytime if you have more questions or need technical support. Have a wonderful day!"
+            f"You're very welcome{closing_name}! 😊 Glad I could help.\n\n"
+            "Feel free to reply anytime if you'd like to explore how we can fit technology into your workflow. Have a wonderful day!"
         )
 
-    # 3. Detected Website URL in user message (e.g. example.com, https://...)
-    has_url = bool(re.search(r'(https?://[^\s]+|[a-zA-Z0-9-]+\.(com|in|org|net|io|co|ai|app))', user_prompt))
+    # 3. Detected Website URL in user message (excluding growhaz)
+    has_url = bool(new_info.get("website_url") or re.search(r'(https?://[^\s]+|[a-zA-Z0-9-]+\.(com|in|org|net|io|co|ai|app))', user_prompt))
     if has_url:
         if "appify" in top_target or any(w in words for w in ["app", "mobile", "apk", "ios"]):
             return (
                 "Got your website URL for mobile conversion! 📱\n\n"
-                "We can convert this directly into native Android & iOS mobile apps with push notifications, offline mode, and biometric auth.\n\n"
-                "• *Starter Android APK:* ₹15,000 (Complete native bundle)\n"
-                "• *Dual Platform (Android + iOS):* ₹25,000 (App Store & Play Store ready)\n\n"
-                "Would you like us to generate a mobile preview package for your website?"
+                "We can connect this directly into native Android & iOS apps with push notifications and offline mode:\n"
+                "• *Starter Android APK:* ₹15,000\n"
+                "• *Dual Platform (Android + iOS):* ₹25,000\n\n"
+                "Would you like us to prepare a mobile preview for your site?"
             )
         return (
             "Got your website URL! 🛡️\n\n"
-            "We can initiate a security vulnerability scan or review right away. Would you prefer:\n"
-            "• *AlphaG1 (Basic Audit):* ₹1,999 (Under 5-minute automated scan for SQLi & XSS)\n"
-            "• *AlphaG5 (Advanced Audit):* ₹4,999 (In-depth API & IDOR vulnerability testing — Most Popular)\n"
-            "• *AlphaG3 (Full Pentest):* ₹9,999 (Comprehensive manual penetration testing)\n\n"
-            "Let me know which tier you'd like, and I'll confirm your scan!"
+            "We can integrate automated WhatsApp workflows alongside your site, or run a security check first:\n"
+            "• *AlphaG1 (Basic Audit):* ₹1,999\n"
+            "• *AlphaG5 (Advanced API & IDOR Audit):* ₹4,999\n"
+            "• *AlphaG3 (Full Pentest):* ₹9,999\n\n"
+            "Which area matters most for your business right now — security, automation, or a mobile app?"
         )
 
-    # 4. Pricing & Quotes (Prioritized over generic topic keywords)
+    # 4. Pricing & Quotes
     if any(w in words for w in ["price", "cost", "rate", "quote", "charges", "estimate", "pricing"]) or "how much" in p:
         if wants_link:
             return "Here is our complete online pricing breakdown: https://www.growhaz.in/pricing"
         if any(w in words for w in ["app", "appify", "apk", "mobile"]) or "appify" in top_target:
             return (
                 "📱 *Appify Mobile App Conversion Pricing*\n\n"
-                "• *Starter Android APK:* ₹15,000 (Native Android APK + push notifications + offline cache)\n"
-                "• *Full Android & iOS Store Package:* ₹25,000 (Dual platform, Play Store & App Store ready, biometric login)\n\n"
-                "Would you like us to build your mobile app? Just share your website URL!"
+                "• *Starter Android APK:* ₹15,000\n"
+                "• *Full Android & iOS Store Package:* ₹25,000\n\n"
+                "Do you already have a website live that we should connect?"
             )
         if any(w in words for w in ["security", "scan", "vulnerability", "alphag5", "alphag1", "alphag3", "audit"]) or "service_alphag5_audit" in top_target:
             return (
                 "🛡️ *Growhaz Security Audit Pricing*\n\n"
-                "• *AlphaG1 (Basic Audit):* ₹1,999 (Automated scan for SQLi & XSS in under 5 minutes)\n"
-                "• *AlphaG5 (Advanced Audit):* ₹4,999 (Full API & IDOR testing + 24hr remediation PDF — Most Popular)\n"
-                "• *AlphaG3 (Comprehensive Pentest):* ₹9,999 (Human hacker validation & zero-day checks)\n\n"
-                "Send over your website URL to initiate your scan!"
+                "• *AlphaG1 (Basic Audit):* ₹1,999 per scan\n"
+                "• *AlphaG5 (Advanced Audit):* ₹4,999 per scan\n"
+                "• *AlphaG3 (Full Pentest):* ₹9,999 per scan\n\n"
+                "Feel free to share your website URL if you'd like us to inspect it!"
             )
         if any(w in words for w in ["web", "website", "develop", "development"]):
             return (
                 "💻 *Growhaz Web Development Pricing*\n\n"
-                "• *Static SEO Website:* ₹20,000 (100% Google Lighthouse score, lightning fast)\n"
-                "• *Dynamic Full-Stack Web App:* Starting at ₹60,000 (Custom CRM, payment gateway, user auth, dynamic database)\n\n"
-                "Tell us about your project requirements, and we'll prepare a custom milestone quote!"
+                "• *Static SEO Website:* ₹20,000\n"
+                "• *Dynamic Full-Stack Web App:* Starting from ₹60,000 (CRM, bookings, online store)\n\n"
+                "What kind of business is this for? I can suggest only the modules you actually need."
             )
         return (
             "💰 *Growhaz Pricing Overview*\n\n"
-            "• *Security Scans:* AlphaG1 (₹1,999) | AlphaG5 (₹4,999) | AlphaG3 (₹9,999)\n"
-            "• *Appify Mobile App:* Android APK (₹15,000) | Android + iOS (₹25,000)\n"
-            "• *Web Development:* Static (₹20,000) | Dynamic (From ₹60,000)\n"
-            "• *SEO & Speed:* ₹8,000 one-time | ₹10,000/mo ongoing\n"
-            "• *Workflow Automation:* From ₹8,000\n\n"
-            "Which service would you like a customized quote for?"
+            "• *WhatsApp Workflow Automation:* From ₹8,000\n"
+            "• *Security Scans:* AlphaG1 ₹1,999 | AlphaG5 ₹4,999 | AlphaG3 ₹9,999\n"
+            "• *Web Development:* Static ₹20,000 | Dynamic From ₹60,000\n"
+            "• *Appify Mobile App:* Android ₹15,000 | Dual ₹25,000\n\n"
+            "Tell me a bit about your business so I can tell you what fits best without overspending!"
         )
 
-    # 5. Process / "How does it work" / "How to start"
-    if any(w in p for w in ["how does it work", "how it works", "process", "steps", "how to start", "timeline", "how long"]):
-        if "appify" in top_target:
-            return (
-                "⚙️ *How Appify Works*\n\n"
-                "1️⃣ *Submit URL:* Send us your website or web app URL.\n"
-                "2️⃣ *App Engine Compilation:* We bundle native Android APK & iOS build with push notification SDK.\n"
-                "3️⃣ *Delivery:* You receive testing APK in 3-5 days ready for Google Play & App Store upload.\n\n"
-                "Ready to transform your site into an app?"
-            )
-        return (
-            "⚙️ *How Growhaz Works*\n\n"
-            "1️⃣ *Submit Details:* Send us your website or application URL.\n"
-            "2️⃣ *Automated & Manual Scan:* Our security engine audits for SQLi, XSS, IDOR, and exposed API keys.\n"
-            "3️⃣ *Executive Report:* You receive a full PDF vulnerability report with step-by-step remediation fixes within 24 hours.\n\n"
-            "Would you like us to run a preliminary check on your website today?"
-        )
-
-    has_substantive_intent = any(w in words for w in [
-        "scan", "security", "vulnerability", "audit", "alphag1", "alphag5", "alphag3",
-        "app", "appify", "apk", "android", "ios",
-        "website", "web", "develop", "development",
-        "price", "cost", "rate", "quote", "charges", "pricing"
-    ]) or has_url or any(phrase in p for phrase in ["how much", "how does it work", "how it works", "scanning options", "scanning"])
-
-    # 6. Greetings (Only if pure greeting or no substantive intent)
-    is_greeting = any(w in words for w in ["hi", "hello", "hey", "hola", "namaste"]) or any(phrase in p for phrase in ["good morning", "good evening", "good afternoon"])
-    if is_greeting and not has_substantive_intent:
-        if customer_name:
-            first = customer_name.split()[0]
-            if has_history:
-                return f"Hey {first}! 👋 Happy to have you back. How can I assist you further today?"
-            return f"Hey {first}! 👋 Welcome to Growhaz. How can I help you today?"
-        if has_history:
-            if has_dna_memory and top_target:
-                target_name = top_target.replace("service_", "").replace("_", " ").title()
-                return f"Hey again! 👋 Happy to continue where we left off regarding {target_name}. How can I assist you further?"
-            return "Hey again! 👋 How can I assist you further with your project or security audit?"
-        return (
-            "Hey there! 👋 Welcome to Growhaz.\n\n"
-            "How can I help you today? Feel free to ask about our website security scanning, mobile app conversion, web development, or pricing!"
-        )
-
-    # 7. Confirmation / Agreement / "Yes" / "Ok" / "Sure" / "Go ahead"
-    if any(w in words for w in ["yes", "yeah", "yep", "sure", "ok", "okay", "interested", "proceed"]) or any(phrase in p for phrase in ["go ahead", "start now"]):
-        if "appify" in top_target or any(w in words for w in ["app", "mobile"]):
-            return (
-                "Awesome! 🎉 To start your mobile app conversion, please share:\n"
-                "1. Your website or store URL\n"
-                "2. Your app name and preferred primary brand color\n\n"
-                "Our team will prepare your native Android APK demo!"
-            )
-        return (
-            "Awesome! 🎉 To get started, please share:\n"
-            "1. Your website or app URL\n"
-            "2. The best email address to send the detailed report/quote\n\n"
-            "Our technical team will review it and initiate your service right away!"
-        )
-
-    # 8. Services / What do you offer
-    if any(w in words for w in ["service", "services", "provide", "providing", "offer", "offering", "solution", "solutions"]) or any(phrase in p for phrase in ["what do you do", "what can you do", "list services"]):
+    # 5. Services / "How can you help my business" / Consultative Discovery
+    is_service_inquiry = (
+        any(w in words for w in ["service", "services", "provide", "providing", "offer", "offering", "solution", "solutions", "suggest", "recommend", "help", "grow"])
+        or any(phrase in p for phrase in ["what do you do", "what can you do", "list services", "my business", "for our business", "grow my business"])
+    )
+    if is_service_inquiry:
         if wants_link:
             return (
                 "Here are our official service portals:\n\n"
+                "• Development & Automation: https://www.growhaz.in/development\n"
                 "• Security Tools: https://www.growhaz.in/security-tools\n"
-                "• Appify & Web Development: https://www.growhaz.in/development\n"
-                "• Blockchain Verification: https://www.growhaz.in/verify\n"
-                "• Full Pricing: https://www.growhaz.in/pricing\n\n"
-                "Which area would you like to explore?"
+                "• Full Pricing: https://www.growhaz.in/pricing"
+            )
+        if not has_business_ctx:
+            first_greet = f"Hi {customer_name.split()[0]}! 👋 " if customer_name else "Hi there! 👋 "
+            return (
+                f"{first_greet}Before I suggest any service, I'd love to understand your business first so I only recommend technology that actually fits your existing workflow.\n\n"
+                "Could you quickly share:\n"
+                "1️⃣ What is your *business name* and *type of work*?\n"
+                "2️⃣ *Is your website already created*, or how do customers currently reach & order from you (e.g., WhatsApp, walk-ins, Instagram)?\n\n"
+                "Once I know that, I'll map out practical ways we can help automate and grow your setup!"
+            )
+        return _build_ecosystem_recommendation(p_data)
+
+    # 6. Process / "How does it work"
+    if any(w in p for w in ["how does it work", "how it works", "process", "steps", "how to start", "timeline", "how long"]):
+        return (
+            "⚙️ *How We Integrate Technology With Your Business*\n\n"
+            "1️⃣ *Understand Your Ecosystem:* We look at how you already talk to customers today (WhatsApp, calls, website, or walk-ins).\n"
+            "2️⃣ *Lightweight Integration:* We connect automated replies, booking/catalog tools, or a fast website without disrupting your daily routine.\n"
+            "3️⃣ *Launch & Support:* Everything goes live in days with full WhatsApp support from our team.\n\n"
+            "What kind of business do you run?"
+        )
+
+    # 7. Greetings
+    is_greeting = any(w in words for w in ["hi", "hello", "hey", "hola", "namaste"]) or any(phrase in p for phrase in ["good morning", "good evening", "good afternoon"])
+    if is_greeting:
+        if b_name:
+            first = f"{customer_name.split()[0]} ({b_name})" if customer_name else f"{b_name} team"
+            return f"Hey {first}! 👋 Good to hear from you. How can we help integrate technology smoothly into your business workflow today?"
+        if customer_name:
+            first = customer_name.split()[0]
+            return f"Hey {first}! 👋 Welcome to Growhaz. Could you tell me a little about your business and whether you already have a website or WhatsApp workflow you want to improve?"
+        if has_history:
+            return "Hey again! 👋 Happy to continue helping your business. What would you like to focus on next?"
+        return (
+            "Hey there! 👋 Welcome to Growhaz.\n\n"
+            "Our goal is to help business owners integrate practical technology into their existing workflow. Tell me a bit about your business (and whether you already have a website), and I'll suggest what fits best!"
+        )
+
+    # 8. Confirmation / "Yes" / "Sure"
+    if any(w in words for w in ["yes", "yeah", "yep", "sure", "ok", "okay", "interested", "proceed"]) or any(phrase in p for phrase in ["go ahead", "start now"]):
+        if not has_business_ctx:
+            return (
+                "Wonderful! 😊 First, please share:\n"
+                "1️⃣ Your *business name* & category\n"
+                "2️⃣ Whether your *website is already created* (or your URL if live)\n\n"
+                "That helps us prepare a setup specifically for your ecosystem!"
+            )
+        if not has_web and not p_data.get("website_url"):
+            return (
+                f"Great, let's get *{b_name or b_cat}* set up! 🎉\n\n"
+                "Quick question first so I suggest the right workflow: *do you already have a website created, or are you primarily using WhatsApp/offline store right now?*"
             )
         return (
-            "Here is what we do at Growhaz:\n\n"
-            "1️⃣ 🛡️ *Website Security Vulnerability Scanning*\n"
-            "Automated audits (Alpha G1/G5/G3) scanning SQLi, XSS, IDOR, and API security flaws in under 5 minutes.\n\n"
-            "2️⃣ 📱 *Appify Your Website (Mobile App Conversion)*\n"
-            "Convert any website or web app into native Android & iOS mobile apps with push notifications and offline mode.\n\n"
-            "3️⃣ 💻 *Secure Web & Full-Stack Development*\n"
-            "Ultra-fast static websites (100% Lighthouse SEO score) and custom dynamic web applications.\n\n"
-            "4️⃣ 🔗 *Blockchain Document Verification*\n"
-            "Tamper-proof on-chain verification for degrees, certificates, and legal contracts.\n\n"
-            "Which of these would you like to know more about?"
+            f"Awesome! 🎉 For *{b_name or b_cat}*, please share your best email or preferred time for a quick 5-minute WhatsApp walkthrough, and our specialist will connect everything cleanly."
         )
 
     # 9. Security Scans specifically
     if any(w in words for w in ["security", "scan", "vulnerability", "hack", "penetration", "alphag1", "alphag5", "alphag3", "audit", "firewall", "sqli", "xss", "idor"]):
         if wants_link:
-            return "You can launch a security vulnerability scan directly on our portal here: https://www.growhaz.in/security-tools"
+            return "You can launch a security vulnerability scan directly here: https://www.growhaz.in/security-tools"
+        if has_web == "no":
+            return (
+                f"For *{b_name or 'your business'}*, since you don't have a website live yet, we can first build a security-hardened site or WhatsApp catalog and protect it right from launch! Would you like to see how that fits into your setup?"
+            )
         reply = (
             "🛡️ *Growhaz Website Security Scans*\n\n"
-            "We offer automated vulnerability scanning that discovers SQLi, XSS, IDOR, and API flaws in under 5 minutes:\n\n"
-            "• *AlphaG1 (Basic Audit):* ₹1,999 per scan\n"
-            "• *AlphaG5 (Advanced Audit - Most Popular):* ₹4,999 per scan\n"
-            "• *AlphaG3 (Full Pentest):* ₹9,999 per scan\n\n"
-            "Would you like us to run a scan on your website? Just send me your website URL!"
+            "We audit websites and APIs for SQLi, XSS, IDOR, and exposed data in under 5 minutes:\n"
+            "• *AlphaG1:* ₹1,999 | *AlphaG5:* ₹4,999 | *AlphaG3:* ₹9,999\n\n"
+            "Could you share your website URL so we can check its setup?"
         )
-        if reply == last_bot_reply:
-            return (
-                "🛡️ We are ready to scan! Please provide your website or target IP address, "
-                "and let us know if you want the AlphaG1 (₹1,999) or AlphaG5 (₹4,999) audit tier."
-            )
-        return reply
+        return reply if reply != last_bot_reply else "🛡️ Please share your website URL, and let me know if you prefer AlphaG1 (₹1,999) or AlphaG5 (₹4,999)."
 
     # 10. Appify / Mobile App Conversion
     if any(w in words for w in ["app", "appify", "apk", "android", "ios"]) or any(phrase in p for phrase in ["convert to app", "mobile app"]):
         if wants_link:
-            return "You can check out our Appify mobile conversion packages here: https://www.growhaz.in/development"
-        reply = (
+            return "You can check our Appify mobile conversion details here: https://www.growhaz.in/development"
+        return (
             "📱 *Appify by Growhaz*\n\n"
-            "We convert any website or web application into fast native Android (APK) & iOS apps with push notifications, biometric login, and offline caching.\n\n"
-            "Do you have an existing website URL you'd like to convert into a mobile app?"
+            "We convert websites or business catalogs into native Android & iOS apps that sync seamlessly with your existing backend and WhatsApp alerts.\n\n"
+            "Do you already have a website created that you'd like to convert into an app?"
         )
-        if reply == last_bot_reply:
-            return (
-                "📱 For your mobile app conversion: We can start with your Android APK right away. "
-                "Please share your website or store URL, and we'll review your compatibility and generate a demo preview!"
-            )
-        return reply
 
     # 11. Web Development
     if any(w in words for w in ["website", "develop", "development", "design", "redesign", "react", "ecommerce", "store"]):
         if wants_link:
-            return "You can explore our web development services here: https://www.growhaz.in/development"
+            return "You can explore our web development solutions here: https://www.growhaz.in/development"
+        if has_business_ctx:
+            return _build_ecosystem_recommendation(p_data)
         return (
-            "💻 *Growhaz Web Development*\n\n"
-            "• *Static SEO-Certified Website:* ₹20,000 (100% Lighthouse SEO score)\n"
-            "• *Dynamic Full-Stack Web App:* From ₹60,000 (CRUD, E-commerce, CRM, admin dashboard)\n\n"
-            "Tell me a little about your project requirements, and we can prepare a tailored roadmap for you!"
+            "💻 *Growhaz Web & Ecosystem Development*\n\n"
+            "Rather than building a disconnected website, we connect your online storefront directly with WhatsApp inquiries and customer tracking.\n\n"
+            "What is your *business name* and *what do you sell or offer*?"
         )
 
-    # 12. Dynamic DNA Grounded Response (When DNA nodes are active)
-    if "service_alphag5_audit" in activated_nodes or "service_alphag1_audit" in activated_nodes or "service_alphag3_audit" in activated_nodes:
-        reply = (
-            "🛡️ Regarding website security: We can audit your platform against SQL injection, XSS, and authorization flaws with our Alpha G5 engine in under 5 minutes.\n\n"
-            "Would you like us to run a check? Send over your website or API endpoint URL to begin!"
-        )
-        if reply != last_bot_reply:
-            return reply
+    # 12. DNA / General discovery follow-up
+    if "service_alphag5_audit" in activated_nodes or "service_alphag1_audit" in activated_nodes:
+        return "🛡️ We can audit your platform's security with AlphaG5 in under 5 minutes. Do you already have a website URL you'd like us to review?"
+    if has_business_ctx:
+        return _build_ecosystem_recommendation(p_data)
 
-    if "service_appify_mobile" in activated_nodes:
-        reply = (
-            "📱 Regarding mobile conversion: With Appify, we bundle your web application into high-performance native Android & iOS builds.\n\n"
-            "Feel free to share your website link, and we'll review it for mobile app conversion."
-        )
-        if reply != last_bot_reply:
-            return reply
-
-    if "service_dynamic_webapp" in activated_nodes or "service_static_website" in activated_nodes:
-        reply = (
-            "💻 Regarding web development: Whether you need an ultra-fast static site or a custom dynamic full-stack portal with payments and CRM, we can build it.\n\n"
-            "Could you share a brief summary of what your project needs?"
-        )
-        if reply != last_bot_reply:
-            return reply
-        return (
-            "💻 Regarding web development: Whether you need an ultra-fast static site or a custom dynamic full-stack portal with payments and CRM, we can build it.\n\n"
-            "Could you share a brief summary of what your project needs?"
-        )
-
-    # 13. Context-aware follow-up (when conversation is active)
-    if has_history:
-        return (
-            "Got it! Could you tell me a bit more about what you're looking for, or share your website / project details? "
-            "I'll help you pick the best solution right away."
-        )
-
-    # 14. Default first-contact message
-    if wants_link:
-        return (
-            "Here are the official Growhaz links:\n\n"
-            "• Website: https://www.growhaz.in/\n"
-            "• Security Tools: https://www.growhaz.in/security-tools\n"
-            "• Development & Appify: https://www.growhaz.in/development\n"
-            "• Pricing: https://www.growhaz.in/pricing"
-        )
     return (
-        "Thanks for reaching out to Growhaz! 😊\n\n"
-        "How can I help you today? Feel free to ask about our security scanning, mobile app conversion, web development, or pricing."
+        "Thanks for messaging Growhaz! 😊\n\n"
+        "We specialize in helping business owners integrate practical technology (WhatsApp automation, websites, apps, security) into their existing workflow.\n\n"
+        "Could you share your *business name*, *what you do*, and *whether you already have a website* so I can suggest what works best for you?"
     )
+
 
 def generate_ai_reply(
     user_prompt: str,
@@ -414,17 +612,29 @@ def generate_ai_reply(
     customer_id: str = ""
 ) -> tuple[str, float, str]:
     """
-    Generate Customer Support response with DeepSeek AI, Groq Cloud AI, or smart fallback.
-    Augmented with:
-      1. Multi-turn conversation history from database.
-      2. Dynamic customer DNA memory context.
+    Generate consultative Customer Support response with DeepSeek AI, Groq AI, or smart DB-backed fallback.
+    Persists discovered business facts in `customer_profiles` and injects them into prompt context.
     """
     start = time.time()
 
-    # -------------------------------------------------------------
-    # STEP 1 & 2: First, the message goes directly to the DNA Modal.
-    # The DNA Modal discovers related relationships and active memories.
-    # -------------------------------------------------------------
+    # Load persistent customer/business profile & extract any newly stated facts right away
+    profile: dict = {}
+    newly_extracted: dict = {}
+    if customer_id:
+        try:
+            from api import db
+            profile = db.get_customer_profile(customer_id)
+            newly_extracted = extract_profile_updates_from_text(user_prompt, profile)
+            if newly_extracted:
+                profile = db.upsert_customer_profile(
+                    customer_id,
+                    data_source="whatsapp_chat",
+                    **newly_extracted
+                )
+        except Exception as e:
+            logger.debug(f"Profile DB error: {e}")
+
+    # STEP 1 & 2: Process message through DNA Modal
     dna_analysis = {}
     graph_context = ""
     try:
@@ -437,8 +647,36 @@ def generate_ai_reply(
     except Exception as e:
         logger.debug(f"DNA processing error: {e}")
 
-    # STEP 3: Inject DNA Modal's activated relationships into AI System Prompt
+    # STEP 3: Inject Stored Profile + DNA relationships into System Prompt
     system_prompt = CUSTOMER_SUPPORT_SYSTEM_PROMPT
+    if profile:
+        known_lines = []
+        if profile.get("contact_name"):
+            known_lines.append(f"- Contact Name: {profile['contact_name']}")
+        if profile.get("business_name"):
+            known_lines.append(f"- Business Name: {profile['business_name']}")
+        if profile.get("business_category"):
+            known_lines.append(f"- Business Category: {profile['business_category']}")
+        if profile.get("area"):
+            known_lines.append(f"- Area / Locality: {profile['area']}")
+        if profile.get("has_website"):
+            known_lines.append(f"- Has Website Created: {profile['has_website']}")
+        if profile.get("website_url"):
+            known_lines.append(f"- Website URL: {profile['website_url']}")
+        if profile.get("existing_ecosystem"):
+            known_lines.append(f"- Existing Ecosystem / Tools: {profile['existing_ecosystem']}")
+        if profile.get("data_source"):
+            known_lines.append(f"- Source: {profile['data_source']}")
+
+        missing_list = ", ".join(profile.get("missing_fields") or []) or "None"
+        profile_block = (
+            "\n\n=== STORED CUSTOMER & BUSINESS PROFILE (FROM DATABASE) ===\n"
+            + ("\n".join(known_lines) if known_lines else "- No business details collected yet.")
+            + f"\n- Missing Key Details: {missing_list}\n"
+            + "Follow DISCOVERY-FIRST rules: ask politely for missing details instead of generic service dumps, and never re-ask known details."
+        )
+        system_prompt += profile_block
+
     if graph_context:
         system_prompt += "\n\n" + graph_context
 
@@ -458,15 +696,24 @@ def generate_ai_reply(
         except Exception as e:
             logger.debug(f"Could not load conversation history: {e}")
 
-    # Build messages array for LLM (DeepSeek / Groq)
     llm_messages = [{"role": "system", "content": system_prompt}]
     for h in conversation_history[-6:]:
         role = "user" if h.get("direction") == "inbound" else "assistant"
         llm_messages.append({"role": role, "content": h.get("message")})
-    
-    # Ensure current user_prompt is at the end
+
     if not llm_messages or llm_messages[-1].get("content") != user_prompt:
         llm_messages.append({"role": "user", "content": user_prompt})
+
+    def _finalize_llm_reply(raw_reply: str, engine_label: str) -> tuple[str, float, str]:
+        cleaned_reply, llm_profile = parse_and_strip_profile_tag(raw_reply)
+        if customer_id and llm_profile:
+            try:
+                from api import db
+                db.upsert_customer_profile(customer_id, data_source="whatsapp_chat", **llm_profile)
+            except Exception as ex:
+                logger.debug(f"Could not save LLM profile tag: {ex}")
+        latency_val = round((time.time() - start) * 1000, 2)
+        return cleaned_reply or "How can I assist your business today?", latency_val, engine_label
 
     # 3. Try DeepSeek AI
     if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
@@ -486,11 +733,9 @@ def generate_ai_reply(
                 res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()
-                    reply = data["choices"][0]["message"]["content"] or "No response generated."
-                    latency = round((time.time() - start) * 1000, 2)
-                    return reply, latency, f"DeepSeek ({model_to_use})"
-                else:
-                    logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to Groq...")
+                    raw_ans = data["choices"][0]["message"]["content"] or ""
+                    return _finalize_llm_reply(raw_ans, f"DeepSeek ({model_to_use})")
+                logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to Groq...")
         except Exception as e:
             logger.warning(f"DeepSeek call failed ({e}). Falling back to Groq...")
 
@@ -512,21 +757,21 @@ def generate_ai_reply(
                 res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()
-                    reply = data["choices"][0]["message"]["content"] or "No response generated."
-                    latency = round((time.time() - start) * 1000, 2)
-                    return reply, latency, f"Groq ({model_to_use})"
-                else:
-                    logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
+                    raw_ans = data["choices"][0]["message"]["content"] or ""
+                    return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
+                logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
         except Exception as e:
             logger.warning(f"Groq API call failed ({e}). Falling back to smart agent...")
 
-    # 5. Smart Context-Aware Fallback (Never repeats identical canned text)
+    # 5. Consultative DB-Backed Fallback
     latency = round((time.time() - start) * 1000, 2)
     reply = run_smart_customer_support_fallback(
         user_prompt,
         history=conversation_history,
         customer_id=customer_id,
-        dna_analysis=dna_analysis
+        dna_analysis=dna_analysis,
+        profile=profile,
+        newly_extracted=newly_extracted,
     )
     return reply, max(latency, 10.0), "Customer Support Agent"
 
@@ -541,90 +786,127 @@ def generate_personalized_campaign_pitch(
     deepseek_api_key: str = "",
     deepseek_model: str = "deepseek-chat",
     groq_api_key: str = "",
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "llama-3.3-70b-versatile",
+    website_url: str = "",
+    existing_ecosystem: str = ""
 ) -> tuple[str, str]:
     """
-    Generate an authentic, highly personalized WhatsApp outreach message tailored specifically to a business lead.
-    Tries DeepSeek AI, Groq AI, and falls back to our intelligent category template engine.
+    Generate an authentic, consultative WhatsApp outreach message focused on helping business owners
+    integrate practical technology into their existing ecosystem. Never hallucinates missing areas or names.
     """
-    clean_name = (business_name or "Valued Business").strip().strip('"').strip("'")
-    clean_category = (category or "Business").strip().strip('"').strip("'")
-    clean_area = (area or "your area").strip().strip('"').strip("'")
-    clean_goal = (campaign_goal or "Website security scan, web & app development, and automated WhatsApp customer booking").strip()
-
-    prompt = (
-        f"Write a concise, high-converting WhatsApp outreach message for this business:\n"
-        f"- Business Name: {clean_name}\n"
-        f"- Category / Industry: {clean_category}\n"
-        f"- City / Locality: {clean_area}\n"
-        f"- Outreach Offer / Value Proposition: {clean_goal}\n"
-        f"- Tone: {tone}\n"
-        f"- Custom Notes: {custom_notes}\n\n"
-        f"Instructions:\n"
-        f"1. Greet them warmly by business name.\n"
-        f"2. Mention their category and locality naturally.\n"
-        f"3. Explain the practical benefit to their specific business (e.g. 24/7 automated orders, appointments, or website security).\n"
-        f"4. Include 2-3 relevant emojis.\n"
-        f"5. End with a polite, non-pushy question asking if they would like a quick 2-minute demo on WhatsApp.\n"
-        f"6. Return ONLY the message text. Do not wrap in quotes or add metadata."
+    raw_name = (business_name or "").strip().strip('"').strip("'")
+    is_name_missing = (
+        not raw_name
+        or raw_name.lower() in {"lead", "customer", "user", "unknown", "business", "business lead", "valued business", "unnamed"}
+        or bool(re.match(r"^(lead|business|unnamed lead)\s*#?\d+$", raw_name.lower()))
     )
+    raw_cat = (category or "").strip().strip('"').strip("'")
+    is_cat_missing = (not raw_cat) or raw_cat.lower() in {"business", "general", "unknown", "n/a", "none"}
+    raw_area = (area or "").strip().strip('"').strip("'")
+    is_area_missing = (not raw_area) or raw_area.lower() in {"your area", "unknown", "not specified", "n/a", "none", "area", "city"}
+    clean_goal = (campaign_goal or "Integrating practical technology (website, automation & WhatsApp workflows) into your existing business ecosystem").strip()
+    clean_website = (website_url or "").strip()
+    clean_eco = (existing_ecosystem or "").strip()
+
+    if is_name_missing and is_cat_missing:
+        prompt = (
+            "Write a short, polite, consultative WhatsApp first-contact message from Growhaz.\n"
+            f"- Goal: {clean_goal}\n"
+            f"- Tone: {tone}\n\n"
+            "IMPORTANT: We do NOT know this recipient's business name or industry yet.\n"
+            "Instructions:\n"
+            "1. Do NOT invent a business name, category, or city.\n"
+            "2. Warmly greet them and explain that Growhaz helps business owners integrate practical technology into their existing workflow smoothly.\n"
+            "3. Politely ask for their business name, what work they do, and whether they already have a website so we can share relevant ideas.\n"
+            "4. Keep under 60 words with 1-2 friendly emojis. Return ONLY the message text."
+        )
+    else:
+        location_line = f"- City / Locality: {raw_area}\n" if not is_area_missing else "- City / Locality: (Not specified — DO NOT invent a city name)\n"
+        website_line = f"- Existing Website / Link: {clean_website}\n" if clean_website else ""
+        eco_line = f"- Existing Ecosystem: {clean_eco}\n" if clean_eco else ""
+        prompt = (
+            "Write a concise, authentic, consultative WhatsApp outreach message from Growhaz for this business owner:\n"
+            f"- Business Name: {raw_name if not is_name_missing else '(Not specified)'}\n"
+            f"- Category / Industry: {raw_cat if not is_cat_missing else 'Local Business'}\n"
+            f"{location_line}{website_line}{eco_line}"
+            f"- Core Value / Focus: {clean_goal}\n"
+            f"- Tone: {tone}\n"
+            f"- Custom Notes: {custom_notes}\n\n"
+            "Instructions:\n"
+            "1. Greet them warmly by business name (or 'Hi there!' if business name is not specified).\n"
+            "2. Mention their category naturally, and mention their locality ONLY if a real City/Locality is provided above (never write 'your area' literally).\n"
+            "3. Frame the message around helping them integrate technology seamlessly into their existing business ecosystem (saving manual effort on orders, inquiries, bookings, or web security).\n"
+            "4. Include 2 relevant emojis and end with a polite, low-pressure question asking whether they already have a website or would like a quick 2-minute example on WhatsApp.\n"
+            "5. Return ONLY the message text without quotes or metadata."
+        )
 
     llm_messages = [
-        {"role": "system", "content": "You are an expert WhatsApp marketing copywriter who creates personalized, authentic, polite, and effective B2B outreach messages for local business owners."},
+        {"role": "system", "content": "You are a consultative B2B technology advisor at Growhaz who writes warm, concise, zero-hype WhatsApp outreach messages focused on integrating tech into each business owner's existing ecosystem."},
         {"role": "user", "content": prompt}
     ]
 
-    # Try DeepSeek
+    # Try DeepSeek (6s timeout for fast parallel batching)
     if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
         try:
             m = deepseek_model.strip() if deepseek_model else "deepseek-chat"
-            with httpx.Client(timeout=8.0) as client:
+            with httpx.Client(timeout=6.0) as client:
                 res = client.post(
                     "https://api.deepseek.com/chat/completions",
                     headers={"Authorization": f"Bearer {deepseek_api_key.strip()}", "Content-Type": "application/json"},
-                    json={"model": m, "messages": llm_messages, "temperature": 0.7, "max_tokens": 500}
+                    json={"model": m, "messages": llm_messages, "temperature": 0.7, "max_tokens": 450}
                 )
                 if res.status_code == 200:
-                    ans = res.json()["choices"][0]["message"]["content"].strip()
+                    ans = res.json()["choices"][0]["message"]["content"].strip().strip('"')
                     if ans:
                         return ans, f"DeepSeek ({m})"
         except Exception as e:
             logger.warning(f"[Campaign AI] DeepSeek failed: {e}")
 
-    # Try Groq
+    # Try Groq (6s timeout for fast parallel batching)
     if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
         try:
             m = groq_model.strip() if groq_model else "llama-3.3-70b-versatile"
-            with httpx.Client(timeout=8.0) as client:
+            with httpx.Client(timeout=6.0) as client:
                 res = client.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {groq_api_key.strip()}", "Content-Type": "application/json"},
-                    json={"model": m, "messages": llm_messages, "temperature": 0.7, "max_tokens": 500}
+                    json={"model": m, "messages": llm_messages, "temperature": 0.7, "max_tokens": 450}
                 )
                 if res.status_code == 200:
-                    ans = res.json()["choices"][0]["message"]["content"].strip()
+                    ans = res.json()["choices"][0]["message"]["content"].strip().strip('"')
                     if ans:
                         return ans, f"Groq ({m})"
         except Exception as e:
             logger.warning(f"[Campaign AI] Groq failed: {e}")
 
-    # Smart Category-Driven Fallback Engine
-    cat_lower = clean_category.lower()
+    # Consultative Fallback Engine (Zero hallucinated names/locations)
+    if is_name_missing and is_cat_missing:
+        msg = (
+            "Hello! 👋 Greetings from *Growhaz*. Our goal is to help business owners integrate practical technology smoothly into their existing workflow without any hassle.\n\n"
+            "Before sharing tailored ideas, could you share your *business name*, *what work you do*, and *whether you already have a website*? That will help us suggest what genuinely fits your setup! 😊"
+        )
+        return msg, "AI Ecosystem Engine"
+
+    area_phrase = f" in {raw_area}" if not is_area_missing else ""
+    cat_lower = raw_cat.lower()
+    greeting_target = f"{raw_name} team" if not is_name_missing else "there"
+
     if any(k in cat_lower for k in ["bakery", "cake", "sweet", "pastry"]):
-        msg = f"Namaste {clean_name} team! 🍰 Hope everything is sweet in {clean_area}. We know how popular your bakery delights are with local customers! Growhaz helps food & bakery businesses in {clean_area} receive cake orders and inquiries 24/7 directly on WhatsApp without manual typing. Would you like a quick 2-minute demo of how this can boost your festive orders? 😊"
+        msg = f"Namaste {greeting_target}! 🍰 Greetings from Growhaz. We help bakeries{area_phrase} connect a simple 24/7 cake menu & order-tracking flow right into the WhatsApp workflow you already use — saving hours of manual typing. Do you already have a website, or would you like to see a 2-minute example of how this fits into your existing setup? 😊"
     elif any(k in cat_lower for k in ["cafe", "restaurant", "dhaba", "pizza", "food", "dining", "fast food", "bites", "biryani"]):
-        msg = f"Hi {clean_name} team! 🍽️✨ Hope business is flourishing in {clean_area}. As a favorite dining spot, managing table reservations and weekend customer rush can get overwhelming. Growhaz provides an automated WhatsApp assistant that shares menus, books tables, and gathers reviews 24/7. May I share a quick 1-minute preview with you?"
+        msg = f"Hi {greeting_target}! 🍽️ Greetings from Growhaz. For food & dining spots{area_phrase}, handling menu questions and weekend reservations manually gets hectic. We help integrate 24/7 automated table/order capture right into your existing WhatsApp workflow. Do you already have a website created, or would you like a quick 1-minute walkthrough?"
     elif any(k in cat_lower for k in ["salon", "beauty", "makeup", "parlour", "spa"]):
-        msg = f"Hi {clean_name} team! 💇‍♀️ Greetings from Growhaz. As a premier salon & beauty hub in {clean_area}, weekend appointment requests can be hard to manage manually. Our WhatsApp booking assistant lets clients reserve slots 24/7 without waiting. Would you be open to seeing a quick 2-minute demo?"
+        msg = f"Hi {greeting_target}! 💇‍♀️ Greetings from Growhaz. For salons & beauty studios{area_phrase}, we integrate automated appointment booking and reminder alerts straight into the WhatsApp channel your clients already use. Would you be open to seeing how smoothly this plugs into your current schedule?"
     elif any(k in cat_lower for k in ["coaching", "classes", "academy", "library", "school", "education"]):
-        msg = f"Namaste {clean_name} team! 📚 As a reputed coaching center in {clean_area}, answering student & parent inquiries about batches and fees takes hours. Our automated WhatsApp bot answers queries 24/7 and records admissions leads. Shall I share a quick sample with you?"
+        msg = f"Namaste {greeting_target}! 📚 Greetings from Growhaz. We help coaching institutes{area_phrase} integrate automated WhatsApp batch/fee inquiry replies and student lead tracking directly into their existing workflow. Do you already use a website for admissions, or should I share a quick 2-minute sample?"
     elif any(k in cat_lower for k in ["doctor", "clinic", "hospital", "medical", "health", "dental"]):
-        msg = f"Namaste {clean_name} team! 🩺 Greetings from Growhaz. For healthcare practices in {clean_area}, streamlining patient appointments and timings is essential. Our WhatsApp assistant manages schedules and updates patients automatically. Would you be open to a quick 2-minute walkthrough?"
+        msg = f"Namaste {greeting_target}! 🩺 Greetings from Growhaz. For clinics & healthcare practices{area_phrase}, we integrate automated patient appointment scheduling and timing updates directly with your existing reception WhatsApp. Would you like a quick 2-minute overview?"
     elif any(k in cat_lower for k in ["mobile", "electronics", "repair", "computer"]):
-        msg = f"Hello {clean_name} team! 📱 Greetings from Growhaz. As a trusted electronics & mobile shop in {clean_area}, customers frequently ask for repair status and gadget prices. Our WhatsApp bot automatically responds to product inquiries and price lists 24/7. Would you like to see a quick sample?"
-    elif any(k in cat_lower for k in ["mart", "supermarket", "grocery", "bazaar", "store", "hardware", "plywood", "clothing", "dairy"]):
-        msg = f"Hello {clean_name} team! 🛒 Hope business is thriving in {clean_area}. Growhaz helps retail & store owners stay connected with customers via automated WhatsApp product catalogs and quick order updates. Would you be interested in a quick 2-minute demo?"
+        msg = f"Hello {greeting_target}! 📱 Greetings from Growhaz. For mobile & electronics shops{area_phrase}, we connect repair-status updates and product inquiries straight into WhatsApp so customers get instant answers. Do you already have a website, or would you like a quick preview?"
+    elif any(k in cat_lower for k in ["mart", "supermarket", "grocery", "bazaar", "bazar", "store", "hardware", "plywood", "clothing", "dairy"]):
+        msg = f"Hello {greeting_target}! 🛒 Greetings from Growhaz. We help store & retail owners{area_phrase} integrate WhatsApp product catalogs, quick order updates, and customer tracking directly into their existing workflow. Do you already have a website set up, or would you like a 2-minute walkthrough?"
     else:
-        msg = f"Hello {clean_name} team! 👋 Greetings from Growhaz. We admire your work as a leading {clean_category} in {clean_area}. We help local businesses automate customer inquiries, appointments, and marketing directly on WhatsApp. Would you be open to a quick 2-minute preview of how this can help grow your business? Cheers!"
+        cat_desc = raw_cat if not is_cat_missing else "business"
+        msg = f"Hello {greeting_target}! 👋 Greetings from Growhaz. We help {cat_desc} owners{area_phrase} integrate practical technology — automated WhatsApp customer replies, lead tracking, and secure web tools — directly into their existing ecosystem. Do you already have a website, or would you like a quick 2-minute example of how this can fit your workflow?"
 
     return msg, "AI Category Engine"

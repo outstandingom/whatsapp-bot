@@ -108,6 +108,8 @@ function deleteChatFromMenu() {
         let currentContactName = 'Customer';
         let allConversations = [];
         let allTemplates = [];
+        let allLeads = [];
+        let localTypingPhone = null;
         let activeTab = 'chats';
 
         document.getElementById('webhook-full-url').innerText = window.location.origin + '/api/webhook';
@@ -272,7 +274,9 @@ function deleteChatFromMenu() {
                             </div>
                             <div class="flex items-center justify-between mt-0.5">
                                 <p class="text-xs text-slate-500 truncate max-w-[170px]">
-                                    ${dirIcon}${escapeHtml(c.last_message || '')}
+                                    ${c.is_typing
+                                        ? '<span class="text-emerald-600 font-bold italic"><i class="fas fa-ellipsis fa-fade mr-1"></i>typing...</span>'
+                                        : `${dirIcon}${escapeHtml(c.last_message || '')}`}
                                 </p>
                                 <div class="flex items-center space-x-1 flex-shrink-0">
                                     <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-mono font-bold">${c.total_messages}</span>
@@ -337,11 +341,79 @@ function deleteChatFromMenu() {
             await loadMessages(true);
         }
 
+        function updateActiveCustomerProfileUI(profile, isTyping) {
+            const typingBadge = document.getElementById('active-typing-badge');
+            if (typingBadge) {
+                typingBadge.classList.toggle('hidden', !isTyping);
+            }
+            const profileBadge = document.getElementById('active-profile-badge');
+            if (profileBadge) {
+                const bits = [];
+                if (profile && profile.business_name) bits.push(profile.business_name);
+                if (profile && profile.business_category) bits.push(profile.business_category);
+                if (profile && profile.area) bits.push(profile.area);
+                if (bits.length > 0) {
+                    profileBadge.innerText = `🏢 ${bits.join(' • ')}`;
+                    profileBadge.title = profile.website_url
+                        ? `${bits.join(' • ')} | Site: ${profile.website_url}`
+                        : (profile.has_website ? `${bits.join(' • ')} | Website: ${profile.has_website}` : bits.join(' • '));
+                    profileBadge.classList.remove('hidden');
+                } else {
+                    profileBadge.classList.add('hidden');
+                }
+            }
+        }
+
+        function renderTypingBubbleHtml() {
+            return `
+                <div id="live-typing-bubble" class="flex items-center justify-end animate-pulse">
+                    <div class="bg-[#d9fdd3] text-slate-800 border border-emerald-200/70 rounded-2xl rounded-tr-sm px-3.5 py-2.5 shadow-xs space-y-1">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] font-extrabold text-emerald-700">Support Agent (AI)</span>
+                        </div>
+                        <div class="flex items-center space-x-1.5 py-0.5">
+                            <span class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 0ms;"></span>
+                            <span class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 150ms;"></span>
+                            <span class="w-2 h-2 rounded-full bg-emerald-600 animate-bounce" style="animation-delay: 300ms;"></span>
+                            <span class="text-[11px] font-bold text-emerald-800 italic ml-1">typing...</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function appendOptimisticChatTyping(customerMessageText) {
+            const container = document.getElementById('messages-container');
+            if (!container) return;
+            localTypingPhone = currentPhone;
+            updateActiveCustomerProfileUI(null, true);
+            if (customerMessageText) {
+                const msgHtml = `
+                    <div class="flex items-center justify-start">
+                        <div class="bg-white text-slate-900 border border-slate-200/80 rounded-2xl rounded-tl-sm text-xs px-3.5 py-2.5 max-w-[85%] md:max-w-[75%] shadow-sm break-words space-y-1">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] font-extrabold text-slate-700">${escapeHtml(currentContactName || 'Customer')}</span>
+                            </div>
+                            <div class="whitespace-pre-wrap leading-relaxed text-[13px]">${escapeHtml(customerMessageText)}</div>
+                            <div class="flex items-center justify-end space-x-1.5 pt-0.5 text-[10px] text-slate-500"><span>Just now</span></div>
+                        </div>
+                    </div>
+                `;
+                if (lastRenderedCount === 0) container.innerHTML = msgHtml;
+                else container.insertAdjacentHTML('beforeend', msgHtml);
+            }
+            const existingTyping = document.getElementById('live-typing-bubble');
+            if (existingTyping) existingTyping.remove();
+            container.insertAdjacentHTML('beforeend', renderTypingBubbleHtml());
+            setTimeout(() => scrollChatToBottom(true), 15);
+        }
+
         async function loadMessages(shouldScroll = true) {
             if (!currentPhone) return;
+            const reqPhone = currentPhone;
             try {
-                const res = await fetch(`/api/dashboard/messages?phone=${encodeURIComponent(currentPhone)}`);
-                if (res.ok) {
+                const res = await fetch(`/api/dashboard/messages?phone=${encodeURIComponent(reqPhone)}`);
+                if (res.ok && reqPhone === currentPhone) {
                     const data = await res.json();
                     const isBotActive = data.bot_enabled !== false;
                     updateBotStatusPill(isBotActive);
@@ -349,7 +421,9 @@ function deleteChatFromMenu() {
                         const agentRadio = document.getElementById('role-agent');
                         if (agentRadio) agentRadio.checked = true;
                     }
-                    renderMessages(data.messages || [], shouldScroll);
+                    const isTyping = Boolean(data.is_typing || (localTypingPhone && localTypingPhone === reqPhone));
+                    updateActiveCustomerProfileUI(data.customer_profile || null, isTyping);
+                    renderMessages(data.messages || [], shouldScroll, isTyping);
                 }
             } catch (e) {
                 console.error("Message load error:", e);
@@ -399,10 +473,10 @@ function deleteChatFromMenu() {
             });
         }
 
-        function renderMessages(messages, shouldScroll = true) {
+        function renderMessages(messages, shouldScroll = true, isTyping = false) {
             const container = document.getElementById('messages-container');
             setupScrollListener();
-            if (messages.length === 0) {
+            if (messages.length === 0 && !isTyping) {
                 container.innerHTML = `<div class="h-full flex items-center justify-center text-slate-500 text-xs">No messages in this chat yet.</div>`;
                 lastRenderedCount = 0;
                 return;
@@ -412,13 +486,13 @@ function deleteChatFromMenu() {
             const wasScrolledUp = isUserScrolledUp;
             lastRenderedCount = messages.length;
 
-            container.innerHTML = messages.map(m => {
+            let html = messages.map(m => {
                 const isOutbound = m.direction === 'outbound';
                 const alignment = isOutbound ? 'justify-end' : 'justify-start';
                 const bubbleBg = isOutbound ? 'bg-[#d9fdd3] text-slate-900 border border-emerald-200/50 rounded-tr-sm' : 'bg-white text-slate-900 border border-slate-200/80 rounded-tl-sm';
                 const senderLabel = isOutbound ? (m.sender_name || 'Support Agent') : escapeHtml(m.sender_name || 'Customer');
                 const engineTag = m.ai_model ? `<span class="text-[9px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold mr-1"><i class="fas fa-robot mr-1"></i>${escapeHtml(m.ai_model)}</span>` : '';
-                const triggerBtn = !isOutbound ? `<button onclick="triggerAiReplyForPrompt('${escapeHtml(m.message)}')" title="Generate AI Reply to this" class="ml-2 text-[10px] text-emerald-600 hover:text-emerald-800 font-bold underline"><i class="fas fa-wand-magic-sparkles mr-0.5"></i>AI Reply</button>` : '';
+                const triggerBtn = !isOutbound ? `<button onclick="triggerAiReplyForPrompt(decodeURIComponent('${encodeURIComponent(m.message || '')}'))" title="Generate AI Reply to this" class="ml-2 text-[10px] text-emerald-600 hover:text-emerald-800 font-bold underline"><i class="fas fa-wand-magic-sparkles mr-0.5"></i>AI Reply</button>` : '';
 
                 const isChecked = selectedMessageIds.has(m.id);
                 const selectCheckbox = isSelectMode ? `
@@ -485,11 +559,16 @@ function deleteChatFromMenu() {
                 `;
             }).join('');
 
+            if (isTyping) {
+                html += renderTypingBubbleHtml();
+            }
+            container.innerHTML = html;
+
             // Smart scrolling:
             // 1. If explicit scroll requested (shouldScroll == true, e.g. chat clicked or message sent): scroll to bottom
-            // 2. If already at bottom and new messages arrived: auto-scroll to bottom
+            // 2. If already at bottom and new messages arrived or typing started: auto-scroll to bottom
             // 3. If user scrolled up reading history: preserve their scroll position & show badge on down button
-            if (shouldScroll || (!wasScrolledUp && countChanged)) {
+            if (shouldScroll || (!wasScrolledUp && (countChanged || isTyping))) {
                 setTimeout(() => scrollChatToBottom(false), 20);
             } else if (wasScrolledUp && countChanged) {
                 const unreadBadge = document.getElementById('scroll-unread-badge');
@@ -502,22 +581,32 @@ function deleteChatFromMenu() {
                 alert("Please select a conversation first.");
                 return;
             }
-            await fetch('/api/dashboard/trigger-ai-reply', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: currentPhone })
-            });
-            fetchData(true);
+            appendOptimisticChatTyping('');
+            try {
+                await fetch('/api/dashboard/trigger-ai-reply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: currentPhone })
+                });
+            } finally {
+                localTypingPhone = null;
+            }
+            await fetchData(true);
         }
 
         async function triggerAiReplyForPrompt(prompt) {
             if (!currentPhone) return;
-            await fetch('/api/dashboard/trigger-ai-reply', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: currentPhone, prompt: prompt })
-            });
-            fetchData(true);
+            appendOptimisticChatTyping('');
+            try {
+                await fetch('/api/dashboard/trigger-ai-reply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: currentPhone, prompt: prompt })
+                });
+            } finally {
+                localTypingPhone = null;
+            }
+            await fetchData(true);
         }
 
         async function handleRoleChange(role) {
@@ -606,6 +695,9 @@ function deleteChatFromMenu() {
 
             input.disabled = true;
             btn.disabled = true;
+            if (role === 'customer' || role === 'ai') {
+                appendOptimisticChatTyping(role === 'customer' ? msg : '');
+            }
 
             try {
                 const res = await fetch('/api/dashboard/send', {
@@ -622,7 +714,6 @@ function deleteChatFromMenu() {
 
                 if (res.ok) {
                     input.value = '';
-                    await fetchData(true);
                 } else {
                     const err = await res.json();
                     alert("Error: " + (err.error || 'Failed to send message'));
@@ -630,9 +721,12 @@ function deleteChatFromMenu() {
             } catch (err) {
                 alert("Network error: " + err.message);
             } finally {
+                localTypingPhone = null;
+                document.getElementById('active-typing-badge')?.classList.add('hidden');
                 input.disabled = false;
                 btn.disabled = false;
                 input.focus();
+                await fetchData(true);
             }
         }
 
@@ -684,10 +778,45 @@ function deleteChatFromMenu() {
             }
         }
 
+        function pickRealDisplayName(explicitName, phone = '') {
+            const val = String(explicitName || '').trim();
+            if (!val) return '';
+            const low = val.toLowerCase();
+            const digits = String(phone || '').replace(/\D/g, '');
+            if (['customer', 'lead', 'user', 'unknown', 'business', 'business lead', 'valued business', 'there'].includes(low)) return '';
+            if (/^(lead|business|unnamed lead|contact)\s*#?\d+$/.test(low)) return '';
+            if (/^\d+$/.test(val) || (digits && val === digits)) return '';
+            return val;
+        }
+
+        function resolveTemplateClientSide(rawContent, recipient = {}) {
+            const raw = String(rawContent || '');
+            const phone = String(recipient.phone || currentPhone || '').replace(/\D/g, '');
+            const realName = pickRealDisplayName(recipient.name || currentContactName || '', phone) || 'there';
+            const business = pickRealDisplayName(recipient.business_name || recipient.name || '', phone) || (realName !== 'there' ? realName : 'your business');
+            const area = (recipient.area || '').trim() || 'your area';
+            const category = (recipient.category || '').trim() || 'business';
+
+            return raw
+                .replace(/\{\{\s*(?:name|customer_name|user_name)\s*\}\}/gi, () => realName)
+                .replace(/\{\{\s*(?:business|business_name|company|company_name)\s*\}\}/gi, () => business)
+                .replace(/\{\{\s*(?:area|city|locality|location)\s*\}\}/gi, () => area)
+                .replace(/\{\{\s*(?:category|business_category|industry)\s*\}\}/gi, () => category)
+                .replace(/\{\{\s*phone\s*\}\}/gi, () => phone)
+                .replace(/\{\{\s*(?:date_time|datetime|date)\s*\}\}/gi, () => 'Tomorrow at 2:00 PM')
+                .replace(/\{\{\s*service\s*\}\}/gi, () => 'Website, App & WhatsApp Automation');
+        }
+
+        function applyTemplateById(id) {
+            const tpl = (allTemplates || []).find(t => t.id == id);
+            if (tpl) applyTemplate(tpl.content || '');
+        }
+
         function renderQuickTemplates() {
             const bar = document.getElementById('quick-templates-bar');
+            if (!bar) return;
             bar.innerHTML = allTemplates.slice(0, 4).map(t => `
-                <button onclick="applyTemplate('${escapeHtml(t.content)}')" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-medium border border-slate-200 flex-shrink-0 transition truncate max-w-[160px]">
+                <button type="button" onclick="applyTemplateById(${t.id})" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-medium border border-slate-200 flex-shrink-0 transition truncate max-w-[160px]">
                     ${escapeHtml(t.title)}
                 </button>
             `).join('');
@@ -720,8 +849,9 @@ function deleteChatFromMenu() {
 
         function renderTemplatePicker() {
             const list = document.getElementById('template-picker-list');
+            if (!list) return;
             list.innerHTML = allTemplates.map(t => `
-                <div onclick="applyTemplate('${escapeHtml(t.content)}'); closeTemplateSelectorModal();" class="p-3.5 bg-slate-50 hover:bg-emerald-50 rounded-2xl border border-slate-200 cursor-pointer transition">
+                <div onclick="applyTemplateById(${t.id}); closeTemplateSelectorModal();" class="p-3.5 bg-slate-50 hover:bg-emerald-50 rounded-2xl border border-slate-200 cursor-pointer transition">
                     <div class="flex items-center justify-between">
                         <h4 class="font-bold text-slate-900">${escapeHtml(t.title)}</h4>
                         <span class="text-[10px] font-bold text-slate-500">${escapeHtml(t.category)}</span>
@@ -732,15 +862,17 @@ function deleteChatFromMenu() {
         }
 
         function applyTemplate(rawContent) {
-            let replaced = rawContent
-                .replace(/\{\{name\}\}/g, currentContactName || 'Customer')
-                .replace(/\{\{phone\}\}/g, currentPhone || '')
-                .replace(/\{\{date_time\}\}/g, 'Tomorrow at 2:00 PM')
-                .replace(/\{\{service\}\}/g, 'Website Security & App Service');
-            
-            document.getElementById('role-agent').checked = true;
-            document.getElementById('reply-input').value = replaced;
-            document.getElementById('reply-input').focus();
+            const replaced = resolveTemplateClientSide(rawContent, {
+                phone: currentPhone,
+                name: currentContactName
+            });
+            const agentRadio = document.getElementById('role-agent');
+            if (agentRadio) agentRadio.checked = true;
+            const replyInput = document.getElementById('reply-input');
+            if (replyInput) {
+                replyInput.value = replaced;
+                replyInput.focus();
+            }
         }
 
         function openCreateTemplateModal() { document.getElementById('template-create-modal').classList.remove('hidden'); }
@@ -776,6 +908,47 @@ function deleteChatFromMenu() {
         let currentBulkTemplateTitle = '';
         let currentBulkTemplateId = null;
 
+        function getMergedTemplateBulkDirectory() {
+            const map = new Map();
+            (allConversations || []).forEach(c => {
+                const digits = normalizePhoneDigits(String(c.phone_number || '').replace(/\D/g, ''), false);
+                if (!digits || digits.length < 10) return;
+                map.set(digits, {
+                    phone: digits,
+                    name: pickRealDisplayName(c.sender_name, digits) || '',
+                    last_message: c.last_message || '',
+                    last_time: c.last_time || '',
+                    free_window_active: c.free_window_active === true,
+                    area: '',
+                    category: ''
+                });
+            });
+            (allLeads || []).forEach(l => {
+                const digits = normalizePhoneDigits(String(l.phone_number || '').replace(/\D/g, ''), false);
+                if (!digits || digits.length < 10) return;
+                const notes = String(l.notes || '');
+                const noteParts = notes.includes('•') ? notes.split('•').map(s => s.trim()) : [];
+                const existing = map.get(digits);
+                const leadRealName = pickRealDisplayName(l.name, digits);
+                if (existing) {
+                    if (!existing.name && leadRealName) existing.name = leadRealName;
+                    if (noteParts[0] && !existing.category) existing.category = noteParts[0];
+                    if (noteParts[1] && !existing.area) existing.area = noteParts[1];
+                } else {
+                    map.set(digits, {
+                        phone: digits,
+                        name: leadRealName || '',
+                        last_message: notes ? `CRM Lead: ${notes}` : 'CRM Lead',
+                        last_time: l.created_at || '',
+                        free_window_active: false,
+                        category: noteParts[0] || '',
+                        area: noteParts[1] || ''
+                    });
+                }
+            });
+            return Array.from(map.values());
+        }
+
         function openTemplateBulkModal(templateIdOrTitle, rawContent) {
             let title = 'Message Template';
             let content = '';
@@ -803,6 +976,7 @@ function deleteChatFromMenu() {
                 contentEl.oninput = () => {
                     const countEl = document.getElementById('tpl-bulk-char-count');
                     if (countEl) countEl.innerText = `${contentEl.value.length} chars`;
+                    updateTemplateBulkCount();
                 };
             }
             const countEl = document.getElementById('tpl-bulk-char-count');
@@ -823,9 +997,16 @@ function deleteChatFromMenu() {
 
             // Reset selected contacts
             tplBulkSelectedPhones.clear();
-            // Pre-select current active contact if available
             if (currentPhone) {
-                tplBulkSelectedPhones.add(currentPhone);
+                const normCur = normalizePhoneDigits(String(currentPhone).replace(/\D/g, ''), false) || currentPhone;
+                tplBulkSelectedPhones.add(normCur);
+            }
+
+            if (allLeads.length === 0 && typeof loadLeadsTable === 'function') {
+                loadLeadsTable().then(() => {
+                    populateTemplateBulkContacts(document.getElementById('tpl-bulk-search')?.value || '');
+                    updateTemplateBulkCount();
+                });
             }
 
             populateTemplateBulkContacts('');
@@ -845,20 +1026,21 @@ function deleteChatFromMenu() {
             if (!listEl) return;
 
             const filterLower = (filter || '').toLowerCase().trim();
-            const convs = (allConversations || []).filter(c => {
+            const directory = getMergedTemplateBulkDirectory();
+            const convs = directory.filter(c => {
                 if (!filterLower) return true;
-                const name = (c.sender_name || '').toLowerCase();
-                const phone = (c.phone_number || '').toLowerCase();
+                const name = (c.name || '').toLowerCase();
+                const phone = (c.phone || '').toLowerCase();
                 return name.includes(filterLower) || phone.includes(filterLower);
             });
 
             if (convs.length === 0) {
-                if ((allConversations || []).length === 0) {
+                if (directory.length === 0) {
                     listEl.innerHTML = `
                         <div class="p-6 text-center text-slate-400">
                             <i class="fas fa-address-book text-2xl mb-2 opacity-50"></i>
-                            <p class="font-medium text-xs">No active chat contacts found.</p>
-                            <p class="text-[11px] text-slate-400 mt-1">You can add numbers manually using "Add custom phone numbers" below.</p>
+                            <p class="font-medium text-xs">No active chat contacts or CRM leads found.</p>
+                            <p class="text-[11px] text-slate-400 mt-1">You can add numbers below (supports <code>Name, Phone</code> or plain numbers).</p>
                         </div>
                     `;
                 } else {
@@ -872,9 +1054,9 @@ function deleteChatFromMenu() {
             }
 
             listEl.innerHTML = convs.map(c => {
-                const isSelected = tplBulkSelectedPhones.has(c.phone_number);
-                const safeName = escapeHtml(c.sender_name || 'Customer');
-                const safePhone = escapeHtml(c.phone_number || '');
+                const isSelected = tplBulkSelectedPhones.has(c.phone);
+                const safeName = escapeHtml(c.name || `+${c.phone}`);
+                const safePhone = escapeHtml(c.phone || '');
                 const previewMsg = escapeHtml(c.last_message || 'No prior message');
                 const isFreeWindow = c.free_window_active === true;
 
@@ -923,11 +1105,11 @@ function deleteChatFromMenu() {
         function tplBulkSelectAll() {
             const searchInput = document.getElementById('tpl-bulk-search');
             const filterLower = (searchInput?.value || '').toLowerCase().trim();
-            (allConversations || []).forEach(c => {
+            getMergedTemplateBulkDirectory().forEach(c => {
                 if (!filterLower ||
-                    (c.sender_name || '').toLowerCase().includes(filterLower) ||
-                    (c.phone_number || '').toLowerCase().includes(filterLower)) {
-                    if (c.phone_number) tplBulkSelectedPhones.add(c.phone_number);
+                    (c.name || '').toLowerCase().includes(filterLower) ||
+                    (c.phone || '').toLowerCase().includes(filterLower)) {
+                    if (c.phone) tplBulkSelectedPhones.add(c.phone);
                 }
             });
             populateTemplateBulkContacts(filterLower);
@@ -947,21 +1129,57 @@ function deleteChatFromMenu() {
         }
 
         function getTemplateBulkAllRecipients() {
-            const numbers = new Set();
+            const recipientMap = new Map();
+            const dirByPhone = new Map();
+            getMergedTemplateBulkDirectory().forEach(d => dirByPhone.set(d.phone, d));
+
             tplBulkSelectedPhones.forEach(p => {
-                if (p) numbers.add(String(p).replace(/\D/g, ''));
+                const digits = normalizePhoneDigits(String(p || '').replace(/\D/g, ''), false) || String(p || '').replace(/\D/g, '');
+                if (digits && digits.length >= 10) {
+                    const meta = dirByPhone.get(digits) || {};
+                    recipientMap.set(digits, {
+                        phone: digits,
+                        name: meta.name || '',
+                        business_name: meta.name || '',
+                        area: meta.area || '',
+                        category: meta.category || ''
+                    });
+                }
             });
 
             const customArea = document.getElementById('tpl-bulk-custom-numbers');
             if (customArea && customArea.value) {
-                const parseFn = typeof parseBroadcastNumbers === 'function' 
-                    ? parseBroadcastNumbers 
-                    : (txt) => txt.split(/[\n,;]+/).map(t => t.replace(/\D/g, '')).filter(t => t.length >= 10);
-                const parsed = parseFn(customArea.value);
-                parsed.forEach(p => numbers.add(p));
+                const lines = customArea.value.split(/[\n;]+/);
+                for (const rawLine of lines) {
+                    const line = rawLine.trim();
+                    if (!line) continue;
+                    // Support either "Name, Phone" on a line or multiple numbers separated by commas
+                    const commaParts = line.split(',');
+                    if (commaParts.length === 2 && !extractPhoneNumber(commaParts[0], { strict: true }) && extractPhoneNumber(commaParts[1], { strict: false })) {
+                        const phone = extractPhoneNumber(commaParts[1], { strict: false });
+                        const customName = commaParts[0].trim();
+                        if (phone && !recipientMap.has(phone)) {
+                            recipientMap.set(phone, { phone, name: customName, business_name: customName, area: '', category: '' });
+                        }
+                    } else {
+                        for (const tok of commaParts) {
+                            const phone = extractPhoneNumber(tok, { strict: false });
+                            if (phone && !recipientMap.has(phone)) {
+                                const meta = dirByPhone.get(phone) || {};
+                                recipientMap.set(phone, {
+                                    phone,
+                                    name: meta.name || '',
+                                    business_name: meta.name || '',
+                                    area: meta.area || '',
+                                    category: meta.category || ''
+                                });
+                            }
+                        }
+                    }
+                }
             }
 
-            return Array.from(numbers).filter(n => n.length >= 10);
+            return Array.from(recipientMap.values());
         }
 
         function updateTemplateBulkCount() {
@@ -984,6 +1202,16 @@ function deleteChatFromMenu() {
             const sendBtn = document.getElementById('tpl-bulk-send-btn');
             if (sendBtn) {
                 sendBtn.disabled = recipients.length === 0;
+            }
+
+            // Live resolved preview (eliminates literal {{name}})
+            const previewEl = document.getElementById('tpl-bulk-live-preview');
+            const contentEl = document.getElementById('tpl-bulk-content');
+            if (previewEl && contentEl) {
+                const sampleRecip = recipients[0] || { phone: currentPhone || '', name: currentContactName || '' };
+                const resolved = resolveTemplateClientSide(contentEl.value || '', sampleRecip);
+                const who = pickRealDisplayName(sampleRecip.name, sampleRecip.phone) || (sampleRecip.phone ? `+${sampleRecip.phone}` : 'recipient');
+                previewEl.innerHTML = `<span class="font-bold text-emerald-800">Preview (${escapeHtml(who)}):</span> ${escapeHtml(resolved || '...')}`;
             }
         }
 
@@ -1015,7 +1243,7 @@ function deleteChatFromMenu() {
                 return;
             }
 
-            const confirmMsg = `Send this template to ${recipients.length} contact(s)${sendMeta ? ' via official Meta WhatsApp' : ' (simulated)'}?`;
+            const confirmMsg = `Send personalized template to ${recipients.length} contact(s)${sendMeta ? ' via official Meta WhatsApp' : ' (simulated)'}?`;
             if (!confirm(confirmMsg)) return;
 
             const sendBtn = document.getElementById('tpl-bulk-send-btn');
@@ -1028,48 +1256,70 @@ function deleteChatFromMenu() {
             if (sendBtn) sendBtn.disabled = true;
             if (progBox) progBox.classList.remove('hidden');
             if (progText) progText.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Sending to ${recipients.length} recipients...`;
-            if (progBar) progBar.style.width = '30%';
-            if (progPct) progPct.innerText = '30%';
-            if (logBox) logBox.innerHTML = `<div>🚀 Starting template dispatch to ${recipients.length} recipient(s)...</div>`;
+            if (progBar) progBar.style.width = '5%';
+            if (progPct) progPct.innerText = '5%';
+            if (logBox) logBox.innerHTML = `<div>🚀 Starting personalized template dispatch to ${recipients.length} recipient(s)...</div>`;
+
+            let totalSent = 0;
+            let totalFailed = 0;
+            const CHUNK_SIZE = 5;
 
             try {
-                const res = await fetch('/api/dashboard/broadcast', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        phone_numbers: recipients,
-                        message: message,
+                for (let i = 0; i < recipients.length; i += CHUNK_SIZE) {
+                    const chunk = recipients.slice(i, i + CHUNK_SIZE);
+                    const pct = Math.round((i / recipients.length) * 100);
+                    if (progBar) progBar.style.width = `${Math.max(5, pct)}%`;
+                    if (progPct) progPct.innerText = `${pct}%`;
+
+                    const payload = {
+                        personalized_messages: chunk.map(r => ({
+                            phone: r.phone,
+                            name: r.name || '',
+                            category: r.category || '',
+                            area: r.area || '',
+                            message: resolveTemplateClientSide(message, r)
+                        })),
                         send_via_meta: sendMeta,
                         add_as_leads: saveLeads,
                         lead_source: `Template: ${currentBulkTemplateTitle || 'Direct Send'}`
-                    })
-                });
+                    };
 
-                const data = await res.json();
-                if (!res.ok || data.error) {
-                    throw new Error(data.error || 'Failed to dispatch template messages');
+                    const res = await fetch('/api/dashboard/broadcast', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const data = await res.json();
+                    if (!res.ok || data.error) {
+                        throw new Error(data.error || 'Failed to dispatch template batch');
+                    }
+
+                    totalSent += (data.sent || 0);
+                    totalFailed += (data.failed || 0);
+                    if (logBox && Array.isArray(data.results)) {
+                        data.results.forEach(r => {
+                            const ok = r.status === 'sent' || r.status === 'simulated';
+                            logBox.innerHTML += `<div class="${ok ? 'text-emerald-700' : 'text-rose-600'}">${ok ? '✅' : '❌'} ${escapeHtml(r.name || r.phone)}: ${escapeHtml(r.status)} ${r.error ? `(${escapeHtml(r.error)})` : ''}</div>`;
+                        });
+                        logBox.scrollTop = logBox.scrollHeight;
+                    }
                 }
 
                 if (progBar) progBar.style.width = '100%';
                 if (progPct) progPct.innerText = '100%';
                 if (progText) progText.innerHTML = `<i class="fas fa-check-circle text-emerald-600 mr-1"></i> Completed!`;
                 if (logBox) {
-                    logBox.innerHTML += `
-                        <div class="text-emerald-700 font-bold mt-1">
-                            ✅ Finished: ${data.sent || 0} sent, ${data.failed || 0} failed (Total: ${data.total || recipients.length})
-                        </div>
-                    `;
+                    logBox.innerHTML += `<div class="text-emerald-700 font-bold mt-1">🏁 Finished: ${totalSent} sent, ${totalFailed} failed (Total: ${recipients.length})</div>`;
                 }
 
-                // Refresh data in background
                 if (typeof fetchData === 'function') fetchData();
                 if (typeof loadLeadsTable === 'function') loadLeadsTable();
 
                 setTimeout(() => {
-                    alert(`Template successfully sent to ${data.sent || recipients.length} recipients!`);
+                    alert(`Template successfully dispatched: ${totalSent} sent, ${totalFailed} failed!`);
                     closeTemplateBulkModal();
-                }, 1200);
-
+                }, 800);
             } catch (err) {
                 console.error('Template bulk send error:', err);
                 if (progText) progText.innerHTML = `<i class="fas fa-circle-exclamation text-rose-600 mr-1"></i> Send failed`;
@@ -1286,6 +1536,13 @@ function deleteChatFromMenu() {
             btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Sending...`;
 
             try {
+                if (autoReply) {
+                    closeSimulateModal();
+                    currentPhone = phone;
+                    currentContactName = name || 'Customer';
+                    appendOptimisticChatTyping(msg);
+                }
+
                 const res = await fetch('/api/dashboard/simulate-inbound', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1295,14 +1552,16 @@ function deleteChatFromMenu() {
                 if (res.ok) {
                     closeSimulateModal();
                     currentPhone = phone;
-                    currentContactName = name;
-                    await fetchData(true);
+                    currentContactName = name || 'Customer';
                 }
             } catch (err) {
                 alert("Simulation error: " + err.message);
             } finally {
+                localTypingPhone = null;
+                document.getElementById('active-typing-badge')?.classList.add('hidden');
                 btn.disabled = false;
                 btn.innerHTML = `<i class="fas fa-paper-plane"></i> <span>Send & Reply</span>`;
+                await fetchData(true);
             }
         }
 
@@ -2012,13 +2271,17 @@ function deleteChatFromMenu() {
             const areaIdx = findHeaderByKeywords(
                 ['areaorlocality', 'locality', 'area', 'fulladdress', 'address', 'location', 'city', 'town', 'place', 'market', 'ward', 'district', 'state', 'region', 'street', 'neighborhood', 'neighbourhood']
             );
+            const websiteIdx = findHeaderByKeywords(
+                ['websiteorsociallink', 'website', 'websiteurl', 'url', 'site', 'sociallink', 'domain', 'weblink']
+            );
 
             return {
                 mapping: {
                     phone: phoneIdx >= 0 ? phoneIdx : 'auto',
                     name: nameIdx,
                     category: categoryIdx,
-                    area: areaIdx
+                    area: areaIdx,
+                    website: websiteIdx
                 },
                 phoneCounts,
                 headerPhoneScores,
@@ -2047,6 +2310,7 @@ function deleteChatFromMenu() {
                 const rawName = (mapping.name >= 0 ? row[mapping.name] : '') || '';
                 const rawCategory = (mapping.category >= 0 ? row[mapping.category] : '') || '';
                 const rawArea = (mapping.area >= 0 ? row[mapping.area] : '') || '';
+                const rawWebsite = (typeof mapping.website === 'number' && mapping.website >= 0 ? row[mapping.website] : '') || '';
 
                 let phone = '';
                 if (mapping.phone !== 'auto' && typeof mapping.phone === 'number' && mapping.phone >= 0) {
@@ -2070,9 +2334,10 @@ function deleteChatFromMenu() {
                 const prev = prevById.get(rowNum);
                 return {
                     id: rowNum,
-                    business_name: rawName.trim() || `Lead #${rowNum}`,
+                    business_name: rawName.trim(),
                     category: rawCategory.trim() || 'Business',
-                    area: rawArea.trim() || 'Betul',
+                    area: rawArea.trim(),
+                    website: rawWebsite.trim(),
                     phone: phone,
                     personalized_message: prev ? prev.personalized_message : '',
                     selected: prev ? prev.selected : true,
@@ -2271,7 +2536,8 @@ function deleteChatFromMenu() {
                 phone: phoneVal === 'auto' ? 'auto' : parseInt(phoneVal, 10),
                 name: nameVal !== undefined ? parseInt(nameVal, 10) : campaignRawTable.mapping.name,
                 category: catVal !== undefined ? parseInt(catVal, 10) : campaignRawTable.mapping.category,
-                area: areaVal !== undefined ? parseInt(areaVal, 10) : campaignRawTable.mapping.area
+                area: areaVal !== undefined ? parseInt(areaVal, 10) : campaignRawTable.mapping.area,
+                website: campaignRawTable.mapping.website ?? -1
             };
 
             campaignLeads = buildCampaignLeadsFromRawTable(campaignRawTable, true);
@@ -2412,11 +2678,15 @@ function deleteChatFromMenu() {
                             <input type="checkbox" ${lead.selected ? 'checked' : ''} onchange="toggleCampaignLeadSelect(${lead.id}, this.checked)" class="rounded text-emerald-600 cursor-pointer">
                         </td>
                         <td class="p-3">
-                            <span class="font-extrabold text-slate-900 block leading-tight text-xs">${escapeHtml(lead.business_name)}</span>
-                            <span class="inline-block mt-0.5 px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">${escapeHtml(lead.category)}</span>
+                            ${lead.business_name
+                                ? `<span class="font-extrabold text-slate-900 block leading-tight text-xs">${escapeHtml(lead.business_name)}</span>`
+                                : `<span class="font-bold text-slate-400 italic block leading-tight text-xs">Unnamed Lead #${lead.id}</span>`}
+                            <span class="inline-block mt-0.5 px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">${escapeHtml(lead.category || 'Business')}</span>
                         </td>
                         <td class="p-3 text-slate-600 text-xs font-medium">
-                            <i class="fas fa-location-dot text-slate-400 mr-1 text-[10px]"></i>${escapeHtml(lead.area)}
+                            ${lead.area
+                                ? `<i class="fas fa-location-dot text-slate-400 mr-1 text-[10px]"></i>${escapeHtml(lead.area)}`
+                                : `<span class="text-slate-400 italic text-[11px]">Not specified</span>`}
                         </td>
                         <td class="p-3">
                             <div class="relative">
@@ -2463,6 +2733,21 @@ function deleteChatFromMenu() {
             renderCampaignLeadsTable();
         }
 
+        function campaignSelectWithPhoneOnly() {
+            let count = 0;
+            campaignLeads.forEach(l => {
+                const ok = Boolean(l.phone && l.phone.length >= 10);
+                l.selected = ok;
+                if (ok) count++;
+            });
+            const headerCheck = document.getElementById('campaign-header-check');
+            if (headerCheck) headerCheck.checked = count > 0 && count === campaignLeads.length;
+            renderCampaignLeadsTable();
+            if (count === 0) {
+                alert('No leads currently have valid 10+ digit phone numbers.');
+            }
+        }
+
         function toggleCampaignHeaderCheck(checked) {
             campaignSelectAll(checked);
         }
@@ -2504,6 +2789,7 @@ function deleteChatFromMenu() {
         function updateCampaignSelectionStats() {
             const selected = campaignLeads.filter(l => l.selected);
             const valid = selected.filter(l => l.phone && l.phone.length >= 10);
+            const genTargetCount = selected.length > 0 ? selected.length : campaignLeads.length;
             const badge = document.getElementById('campaign-selected-count-badge');
             const validBadge = document.getElementById('campaign-valid-phone-count');
             const sendLabel = document.getElementById('campaign-send-label');
@@ -2515,7 +2801,11 @@ function deleteChatFromMenu() {
             if (validBadge) validBadge.innerText = valid.length;
             if (sendLabel) sendLabel.innerText = `Send Personalized Messages (${valid.length} Businesses)`;
             if (sendBtn) sendBtn.disabled = valid.length === 0;
-            if (genLabel) genLabel.innerText = `Generate AI Personalized Messages for All (${campaignLeads.length} Businesses)`;
+            if (genLabel) {
+                genLabel.innerText = selected.length > 0 && selected.length < campaignLeads.length
+                    ? `Generate AI Personalized Messages (${selected.length} Selected)`
+                    : `Generate AI Personalized Messages for All (${genTargetCount} Businesses)`;
+            }
             if (genBtn) genBtn.disabled = campaignLeads.length === 0;
         }
 
@@ -2546,9 +2836,19 @@ function deleteChatFromMenu() {
             alert(`✅ Filled phone ${digits} across ${selected.length} selected businesses!`);
         }
 
-        async function generateAllPersonalizedMessages() {
+        async function generateAllPersonalizedMessages(customTargetLeads = null) {
             if (campaignLeads.length === 0) {
                 alert('Please upload or load businesses first.');
+                return;
+            }
+
+            const isAutoTriggered = Array.isArray(customTargetLeads);
+            const targetLeads = isAutoTriggered
+                ? customTargetLeads
+                : (campaignLeads.filter(l => l.selected).length > 0 ? campaignLeads.filter(l => l.selected) : campaignLeads);
+
+            if (targetLeads.length === 0) {
+                if (!isAutoTriggered) alert('Please select at least one business first.');
                 return;
             }
 
@@ -2559,16 +2859,20 @@ function deleteChatFromMenu() {
 
             if (genBtn) genBtn.disabled = true;
 
-            const CHUNK_SIZE = 6;
+            const CHUNK_SIZE = 5;
             let totalUpdated = 0;
-            let lastEngine = 'Groq/DeepSeek';
+            let failedChunks = 0;
+            let lastEngine = 'Growhaz AI Engine';
 
             try {
-                for (let i = 0; i < campaignLeads.length; i += CHUNK_SIZE) {
-                    const chunk = campaignLeads.slice(i, i + CHUNK_SIZE);
-                    const processed = Math.min(i + CHUNK_SIZE, campaignLeads.length);
+                for (let i = 0; i < targetLeads.length; i += CHUNK_SIZE) {
+                    const chunk = targetLeads.slice(i, i + CHUNK_SIZE);
+                    chunk.forEach(l => { l.status = 'generating'; });
+                    renderCampaignLeadsTable();
+
+                    const processed = Math.min(i + CHUNK_SIZE, targetLeads.length);
                     if (genLabel) {
-                        genLabel.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> AI Writing Pitches (${processed}/${campaignLeads.length} Businesses)...`;
+                        genLabel.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> Generating All Pitches (${processed}/${targetLeads.length})...`;
                     }
 
                     try {
@@ -2589,26 +2893,34 @@ function deleteChatFromMenu() {
                                 const found = campaignLeads.find(l => l.id === item.id);
                                 if (found) {
                                     found.personalized_message = item.personalized_message;
+                                    found.status = 'ready';
                                     totalUpdated++;
                                 }
                             });
+                        } else {
+                            failedChunks++;
+                            chunk.forEach(l => { l.status = 'ready'; });
                         }
                     } catch (chunkErr) {
+                        failedChunks++;
+                        chunk.forEach(l => { l.status = 'ready'; });
                         console.warn("Chunk AI generation warning:", chunkErr);
                     }
 
-                    // Update the table dynamically after each batch
                     renderCampaignLeadsTable();
-                    await new Promise(r => setTimeout(r, 100));
                 }
 
-                alert(`✨ Successfully generated personalized pitches for ${totalUpdated} businesses using ${lastEngine}! You can review, edit, or regenerate any message before sending.`);
+                if (!isAutoTriggered) {
+                    const warn = failedChunks > 0 ? ` (${failedChunks} batch error(s) occurred)` : '';
+                    alert(`✨ 1-Click Generation Complete: customized messages written for ${totalUpdated} businesses using ${lastEngine}${warn}! Review or click Send whenever ready.`);
+                }
             } catch (err) {
                 console.error("AI campaign generation error:", err);
-                alert("AI generation encountered an issue: " + err.message);
+                targetLeads.forEach(l => { if (l.status === 'generating') l.status = 'ready'; });
+                if (!isAutoTriggered) alert("AI generation encountered an issue: " + err.message);
             } finally {
                 if (genBtn) genBtn.disabled = false;
-                if (genLabel) genLabel.innerText = `Generate AI Personalized Messages for All (${campaignLeads.length} Businesses)`;
+                updateCampaignSelectionStats();
                 renderCampaignLeadsTable();
             }
         }
@@ -2646,10 +2958,24 @@ function deleteChatFromMenu() {
 
         async function executeCampaignSend() {
             const selected = campaignLeads.filter(l => l.selected);
-            const valid = selected.filter(l => l.phone && l.phone.length >= 10 && (l.personalized_message || '').trim());
+            const withValidPhone = selected.filter(l => l.phone && l.phone.length >= 10);
 
+            if (withValidPhone.length === 0) {
+                alert('No valid leads ready to send. Ensure leads are selected and have valid 10+ digit phone numbers.');
+                return;
+            }
+
+            const missingMsgLeads = withValidPhone.filter(l => !(l.personalized_message || '').trim());
+            if (missingMsgLeads.length > 0) {
+                if (!confirm(`${missingMsgLeads.length} selected business(es) don't have customized messages yet. Generate personalized AI messages in 1 click now and proceed to send?`)) {
+                    return;
+                }
+                await generateAllPersonalizedMessages(missingMsgLeads);
+            }
+
+            const valid = selected.filter(l => l.phone && l.phone.length >= 10 && (l.personalized_message || '').trim());
             if (valid.length === 0) {
-                alert('No valid leads ready to send. Ensure leads are selected, have valid 10+ digit phone numbers, and have personalized messages generated.');
+                alert('Unable to generate messages for selected leads. Please verify lead details and try again.');
                 return;
             }
 
@@ -2698,7 +3024,8 @@ function deleteChatFromMenu() {
                                 name: l.business_name,
                                 message: l.personalized_message,
                                 category: l.category,
-                                area: l.area
+                                area: l.area,
+                                website: l.website || ''
                             })),
                             send_via_meta: sendMeta,
                             add_as_leads: saveLeads,
@@ -2899,11 +3226,17 @@ function deleteChatFromMenu() {
             logBox.innerHTML = `<div class="text-indigo-600 font-bold">🚀 Starting broadcast to ${validNumbers.length} recipients...</div>`;
 
             try {
+                const directoryNames = {};
+                getMergedTemplateBulkDirectory().forEach(d => {
+                    if (d.phone && d.name) directoryNames[d.phone] = d.name;
+                });
+
                 const res = await fetch('/api/dashboard/broadcast', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         phone_numbers: validNumbers,
+                        recipient_names: directoryNames,
                         message: message,
                         send_via_meta: sendMeta,
                         add_as_leads: saveLeads,
@@ -2955,14 +3288,15 @@ function deleteChatFromMenu() {
         async function loadLeadsTable() {
             const tbody = document.getElementById('leads-table-body');
             const badge = document.getElementById('leads-count-badge');
-            if (!tbody) return;
 
             try {
                 const res = await fetch('/api/dashboard/leads');
                 const data = await res.json();
                 const leads = data.leads || [];
+                allLeads = leads;
 
                 if (badge) badge.innerText = `${leads.length} Lead${leads.length === 1 ? '' : 's'}`;
+                if (!tbody) return;
 
                 if (leads.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-slate-400 italic">No leads recorded yet.</td></tr>';

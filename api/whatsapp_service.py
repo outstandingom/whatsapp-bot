@@ -20,6 +20,54 @@ def get_env_var(key: str, default: str = "") -> str:
     return os.getenv(key, default).strip()
 
 
+def get_meta_api_version() -> str:
+    """Return configured Meta Graph API version (defaults to v23.0 for typing_indicator support)."""
+    return get_env_var("WHATSAPP_API_VERSION", "v23.0") or "v23.0"
+
+
+def send_meta_typing_indicator(message_id: str, phone_id: str = None) -> tuple[bool, str]:
+    """
+    Mark an incoming WhatsApp message as read and trigger the native WhatsApp 'typing...' bubble.
+    Falls back to a plain read receipt if the API version/endpoint rejects typing_indicator.
+    """
+    token = get_env_var("WHATSAPP_TOKEN")
+    phone_id = (phone_id or get_env_var("WHATSAPP_PHONE_NUMBER_ID")).strip()
+    msg_id = (message_id or "").strip()
+
+    if not token or not phone_id or not msg_id:
+        return False, "Missing WhatsApp token, phone_id, or incoming message_id."
+
+    api_ver = get_meta_api_version()
+    url = f"https://graph.facebook.com/{api_ver}/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": msg_id,
+        "typing_indicator": {"type": "text"},
+    }
+
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            res = client.post(url, headers=headers, json=payload)
+            if res.status_code == 200:
+                return True, res.text
+            logger.warning(f"[Meta Typing Indicator] Status {res.status_code}: {res.text}. Trying plain read receipt...")
+            fallback_payload = {
+                "messaging_product": "whatsapp",
+                "status": "read",
+                "message_id": msg_id,
+            }
+            fb = client.post(url, headers=headers, json=fallback_payload)
+            return fb.status_code == 200, fb.text
+    except Exception as e:
+        logger.warning(f"[Meta Typing Indicator] Error: {e}")
+        return False, str(e)
+
+
 def send_meta_whatsapp_message(recipient_number: str, message_text: str, phone_id: str = None):
     """
     Send text message to user via Meta WhatsApp Cloud API.
@@ -31,7 +79,7 @@ def send_meta_whatsapp_message(recipient_number: str, message_text: str, phone_i
     if not token or not phone_id:
         return False, "Meta WhatsApp Token or Phone Number ID is not configured."
 
-    url = f"https://graph.facebook.com/v21.0/{phone_id}/messages"
+    url = f"https://graph.facebook.com/{get_meta_api_version()}/{phone_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -62,7 +110,7 @@ def upload_meta_media(file_bytes: bytes, filename: str, mime_type: str = "applic
     if not token or not phone_id:
         return None
 
-    url = f"https://graph.facebook.com/v21.0/{phone_id}/media"
+    url = f"https://graph.facebook.com/{get_meta_api_version()}/{phone_id}/media"
     headers = {"Authorization": f"Bearer {token}"}
     files = {
         "file": (filename, file_bytes, mime_type),
@@ -91,7 +139,7 @@ def send_meta_whatsapp_media(recipient_number: str, media_type: str, media_id: s
     if not token or not phone_id:
         return False, "Meta WhatsApp Token or Phone Number ID is not configured."
 
-    url = f"https://graph.facebook.com/v21.0/{phone_id}/messages"
+    url = f"https://graph.facebook.com/{get_meta_api_version()}/{phone_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -135,7 +183,7 @@ def download_meta_media(media_id: str, default_ext: str = ".bin") -> tuple:
         return None, None, None
 
     try:
-        meta_url = f"https://graph.facebook.com/v21.0/{media_id}"
+        meta_url = f"https://graph.facebook.com/{get_meta_api_version()}/{media_id}"
         headers = {"Authorization": f"Bearer {token}"}
         with httpx.Client(timeout=20.0) as client:
             res1 = client.get(meta_url, headers=headers)
