@@ -285,7 +285,7 @@ async def health_check():
 
 
 async def keep_alive_worker():
-    """Background task that pings both this service and dna-modal every 4 minutes so Render never sleeps."""
+    """Background task that pings both this service and dna-modal every 5 minutes so Render never sleeps."""
     await asyncio.sleep(30)
     while True:
         try:
@@ -314,7 +314,7 @@ async def keep_alive_worker():
                             logger.info(f"[Keep-Alive] Heartbeat {u} -> {res.status_code}")
         except Exception as e:
             logger.warning(f"[Keep-Alive] Warning: keep-alive loop error: {e}")
-        await asyncio.sleep(240)
+        await asyncio.sleep(300)
 
 
 @app.on_event("startup")
