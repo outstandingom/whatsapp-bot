@@ -285,7 +285,7 @@ async def health_check():
 
 
 async def keep_alive_worker():
-    """Background task that pings the public URL every 4 minutes so Render never sleeps."""
+    """Background task that pings both this service and dna-modal every 4 minutes so Render never sleeps."""
     await asyncio.sleep(30)
     while True:
         try:
@@ -296,14 +296,24 @@ async def keep_alive_worker():
                 or os.getenv("APP_URL")
                 or "https://whatsapp-bot-qtm1.onrender.com"
             ).rstrip("/")
+            dna_url = (os.getenv("DNA_API_URL") or "https://dna-modal.onrender.com").strip().rstrip("/")
 
+            targets = []
             if "localhost" not in base_url and "127.0.0.1" not in base_url:
-                health_url = f"{base_url}/api/health"
+                targets.append(f"{base_url}/api/health")
+            if dna_url and "localhost" not in dna_url and "127.0.0.1" not in dna_url:
+                targets.append(f"{dna_url}/ping")
+
+            if targets:
                 async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.get(health_url)
-                    logger.info(f"[Keep-Alive] Heartbeat {health_url} -> {resp.status_code}")
+                    results = await asyncio.gather(*(client.get(u) for u in targets), return_exceptions=True)
+                    for u, res in zip(targets, results):
+                        if isinstance(res, Exception):
+                            logger.warning(f"[Keep-Alive] Ping failed for {u}: {res}")
+                        else:
+                            logger.info(f"[Keep-Alive] Heartbeat {u} -> {res.status_code}")
         except Exception as e:
-            logger.warning(f"[Keep-Alive] Warning: self-ping failed: {e}")
+            logger.warning(f"[Keep-Alive] Warning: keep-alive loop error: {e}")
         await asyncio.sleep(240)
 
 

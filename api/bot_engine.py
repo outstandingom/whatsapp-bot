@@ -917,9 +917,15 @@ def generate_ai_reply(
             for comp in detected_competitors:
                 comp_val = f"{comp['name']} ({comp['url']})" if comp.get("url") else comp["name"]
                 dynamic_dna_ref.system.remember_user_fact(scoped_cust, "has_competitor", comp_val)
+                dynamic_dna_ref.sync_relationship_to_api(scoped_cust, comp_val, relation="HAS_COMPETITOR")
             dynamic_dna_ref.save()
         except Exception as de:
             logger.debug(f"Could not bind competitor in DNA memory: {de}")
+
+    if newly_extracted and dynamic_dna_ref:
+        for k in ("business_name", "business_category", "website_url", "area"):
+            if newly_extracted.get(k):
+                dynamic_dna_ref.sync_relationship_to_api(scoped_cust, newly_extracted[k], relation=k.upper())
 
     if customer_id and cloud_store:
         try:

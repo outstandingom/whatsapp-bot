@@ -10,7 +10,9 @@ import re
 import json
 import logging
 import datetime
+import threading
 from typing import Dict, Any, List, Optional
+import httpx
 
 # Ensure local whatapp/dna_memory and sibling dna-modal package are importable
 REPO_ROOT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -39,7 +41,10 @@ class DynamicDNAManager:
     No hardcoded domain data: everything is encoded dynamically via vector algebra.
     """
     def __init__(self, render_api_url: Optional[str] = None):
-        self.render_api_url = (render_api_url or os.getenv("DNA_API_URL", "")).rstrip("/")
+        raw_url = render_api_url if render_api_url is not None else os.getenv("DNA_API_URL", "https://dna-modal.onrender.com")
+        raw_url = (raw_url or "").strip().rstrip("/")
+        self.render_api_url = "" if raw_url.lower() in {"off", "none", "disabled"} else raw_url
+        self._api_client: Optional[httpx.Client] = httpx.Client(timeout=2.5) if self.render_api_url else None
         self.system: Optional[DNAMemorySystem] = None
 
         if DNA_AVAILABLE:
@@ -406,27 +411,74 @@ class DynamicDNAManager:
                 pass
         return facts
 
+    def reason_via_api(self, query: str, session_id: str = "", max_hops: int = 2) -> Optional[Dict[str, Any]]:
+        """Query the deployed dna-modal.onrender.com /reason API."""
+        if not self.render_api_url or not self._api_client:
+            return None
+        try:
+            resp = self._api_client.post(
+                f"{self.render_api_url}/reason",
+                json={"query": query[:500], "session_id": session_id or None, "max_hops": max_hops},
+                timeout=2.5,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            logger.debug(f"dna-modal API /reason fallback to local: {e}")
+        return None
+
+    def sync_relationship_to_api(self, concept_a: str, concept_b: str, relation: str = "RELATED", weight: float = 1.0) -> None:
+        """Non-blocking push of a new relationship triple to dna-modal.onrender.com /relationships/add."""
+        if not self.render_api_url or not self._api_client or not concept_a or not concept_b:
+            return
+
+        def _post():
+            try:
+                self._api_client.post(
+                    f"{self.render_api_url}/relationships/add",
+                    json={
+                        "concept_a": str(concept_a)[:120],
+                        "concept_b": str(concept_b)[:120],
+                        "weight": float(weight),
+                        "color": str(relation or "RELATED")[:40],
+                    },
+                    timeout=2.5,
+                )
+            except Exception as e:
+                logger.debug(f"dna-modal API /relationships/add warning: {e}")
+
+        threading.Thread(target=_post, daemon=True).start()
+
     def process_message_through_dna(self, customer_id: str, message: str) -> Dict[str, Any]:
         """
         Universal Cognitive Memory Pipeline:
         1. Fact Extraction into Relational DNA (R_ABC).
-        2. User Profile Reconstruction (Pillar 3).
+        2. Remote dna-modal.onrender.com /reason API + Local DNA Context Synthesis.
         3. Spreading Activation & Query Grounding (Pillar 1 & 2).
         4. Synthesizes Agent Grounding Context for any downstream LLM or agent.
         """
+        clean_cust_id = customer_id.strip()
+        remote_reason = self.reason_via_api(message, session_id=clean_cust_id, max_hops=2)
+
         if not self.system:
+            remote_ctx = ""
+            remote_nodes = []
+            if remote_reason:
+                ans = remote_reason.get("answer_concepts") or []
+                expl = (remote_reason.get("explanation") or "").strip()
+                remote_nodes = [{"id": c} for c in ans]
+                if expl or ans:
+                    remote_ctx = f"[DNA-MODAL API REASONING]: {expl or ', '.join(ans)}"
             return {
-                "customer_id": customer_id,
+                "customer_id": clean_cust_id,
                 "customer_facts": {},
                 "newly_learned_facts": {},
                 "direct_answers": {},
-                "activated_nodes": [],
-                "relationships": [],
+                "activated_nodes": remote_nodes,
+                "relationships": remote_reason.get("reasoning_path", []) if remote_reason else [],
                 "prediction": {},
-                "graph_context": ""
+                "graph_context": remote_ctx,
             }
-
-        clean_cust_id = customer_id.strip()
 
         # 1. Learn any new facts from message into core DNA memory
         newly_learned = self.extract_and_encode_user_facts(clean_cust_id, message)
@@ -451,15 +503,27 @@ class DynamicDNAManager:
                 attributes={"query_snippet": message[:60]}
             )
 
+        ctx_str = agent_ctx.prompt_context_string or ""
+        activated = [{"id": c} for c in agent_ctx.active_concepts]
+        if remote_reason:
+            r_ans = remote_reason.get("answer_concepts") or []
+            r_expl = (remote_reason.get("explanation") or "").strip()
+            for c in r_ans:
+                if not any(n.get("id") == c for n in activated):
+                    activated.append({"id": c})
+            if r_expl:
+                ctx_str = f"[DNA-MODAL API REASONING]: {r_expl}\n{ctx_str}".strip()
+
         return {
             "customer_id": clean_cust_id,
             "customer_facts": agent_ctx.user_profile,
             "newly_learned_facts": newly_learned,
             "direct_answers": agent_ctx.direct_answers,
-            "activated_nodes": [{"id": c} for c in agent_ctx.active_concepts],
+            "activated_nodes": activated,
             "relationships": agent_ctx.relevant_domain_facts,
             "prediction": prediction,
-            "graph_context": agent_ctx.prompt_context_string
+            "graph_context": ctx_str,
+            "dna_api_used": bool(remote_reason),
         }
 
     def save(self):
