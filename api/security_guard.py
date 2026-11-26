@@ -215,19 +215,19 @@ def check_openrouter_guard(
         }
         try:
             client, should_close = _get_guard_client(timeout_sec)
-            try:
+            if should_close:
+                with client:
+                    res = client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=timeout_sec)
+            else:
                 res = client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=timeout_sec)
-            finally:
-                if should_close:
-                    client.close()
             if res.status_code == 200:
-                    data = res.json()
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    parsed = _parse_openrouter_guard_response(content, target_model)
-                    parsed["configured"] = True
-                    parsed["detector"] = f"OpenRouter ({target_model})"
-                    return parsed
-                logger.warning(f"[OpenRouter Guard] {target_model} HTTP {res.status_code}: {res.text[:180]}")
+                data = res.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                parsed = _parse_openrouter_guard_response(content, target_model)
+                parsed["configured"] = True
+                parsed["detector"] = f"OpenRouter ({target_model})"
+                return parsed
+            logger.warning(f"[OpenRouter Guard] {target_model} HTTP {res.status_code}: {res.text[:180]}")
         except Exception as e:
             logger.warning(f"[OpenRouter Guard] {target_model} call error: {e}")
         return None

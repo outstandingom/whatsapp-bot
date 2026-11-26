@@ -1120,11 +1120,11 @@ def generate_ai_reply(
                 "max_tokens": 512
             }
             client, should_close = _get_llm_client(10.0)
-            try:
+            if should_close:
+                with client:
+                    res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10.0)
+            else:
                 res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10.0)
-            finally:
-                if should_close:
-                    client.close()
             if res.status_code == 200:
                 data = res.json()
                 raw_ans = data["choices"][0]["message"]["content"] or ""
@@ -1148,11 +1148,11 @@ def generate_ai_reply(
                 "max_tokens": 512
             }
             client, should_close = _get_llm_client(8.0)
-            try:
+            if should_close:
+                with client:
+                    res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
+            else:
                 res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
-            finally:
-                if should_close:
-                    client.close()
             if res.status_code == 200:
                 data = res.json()
                 raw_ans = data["choices"][0]["message"]["content"] or ""
