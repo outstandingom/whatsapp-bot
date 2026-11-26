@@ -4,10 +4,24 @@ import json
 import time
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional
 import httpx
 
 logger = logging.getLogger("bot_engine")
+
+_ORIG_HTTPX_CLIENT = httpx.Client
+_SHARED_LLM_CLIENT: Optional[httpx.Client] = None
+
+
+def _get_llm_client(timeout_sec: float) -> tuple[httpx.Client, bool]:
+    """Reuse keep-alive TLS connections for DeepSeek/Groq while respecting httpx.Client mocks."""
+    global _SHARED_LLM_CLIENT
+    if httpx.Client is not _ORIG_HTTPX_CLIENT:
+        return httpx.Client(timeout=timeout_sec), True
+    if _SHARED_LLM_CLIENT is None:
+        _SHARED_LLM_CLIENT = _ORIG_HTTPX_CLIENT(timeout=timeout_sec)
+    return _SHARED_LLM_CLIENT, False
 
 CUSTOMER_SUPPORT_SYSTEM_PROMPT = """You are a consultative Business Technology Specialist chatting with business owners and clients on WhatsApp for Growhaz (Growhaz Secure Systems).
 
@@ -785,17 +799,41 @@ def generate_ai_reply(
     tid = str(tenant_id or "default").strip() or "default"
     tcfg = tenant_config or {}
 
-    # STEP 0: Prompt-Injection & Data-Exfiltration Guard (fail-safe before touching memory/DB/LLM)
-    try:
-        from api import db, security_guard
-        guard_key = (openrouter_api_key or tcfg.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY", "")).strip()
-        guard_model = (openrouter_guard_model or tcfg.get("openrouter_guard_model") or os.getenv("OPENROUTER_GUARD_MODEL", "")).strip()
-        guard_res = security_guard.evaluate_user_input(
-            user_prompt,
-            openrouter_key=guard_key,
-            guard_model=guard_model,
-        )
+    # STEP 0 + Pre-fetch Subgraph in parallel so security guard & Supabase I/O overlap
+    def _run_security_guard():
+        try:
+            from api import security_guard
+            guard_key = (openrouter_api_key or tcfg.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY", "")).strip()
+            guard_model = (openrouter_guard_model or tcfg.get("openrouter_guard_model") or os.getenv("OPENROUTER_GUARD_MODEL", "")).strip()
+            return security_guard.evaluate_user_input(
+                user_prompt,
+                openrouter_key=guard_key,
+                guard_model=guard_model,
+            )
+        except Exception as ge:
+            logger.debug(f"Security guard check warning: {ge}")
+            return {"blocked": False}
+
+    def _run_subgraph_fetch():
+        if not customer_id:
+            return None, ""
+        try:
+            from api.supabase_store import get_cloud_store
+            cs = get_cloud_store()
+            if cs:
+                sub = cs.get_customer_subgraph(tid, customer_id)
+                return cs, sub.get("summary_prompt", "")
+        except Exception as ne:
+            logger.debug(f"Cloud knowledge graph warning: {ne}")
+        return None, ""
+
+    with ThreadPoolExecutor(max_workers=2) as pre_pool:
+        f_guard = pre_pool.submit(_run_security_guard)
+        f_subgraph = pre_pool.submit(_run_subgraph_fetch)
+        guard_res = f_guard.result()
+
         if guard_res.get("blocked"):
+            from api import db, security_guard
             db.save_security_event(
                 tenant_id=tid,
                 phone_number=customer_id or "",
@@ -815,8 +853,11 @@ def generate_ai_reply(
             )
             latency_val = round((time.time() - start) * 1000, 2)
             return security_guard.SAFE_BLOCK_REPLY, max(latency_val, 5.0), f"Security Shield ({guard_res.get('detector', 'Guard')})"
-    except Exception as ge:
-        logger.debug(f"Security guard check warning: {ge}")
+
+        try:
+            cloud_store, neo_graph_context = f_subgraph.result(timeout=1.5)
+        except Exception:
+            cloud_store, neo_graph_context = None, ""
 
     # STEP 0.5: Centralised Guardrails, Action Confirmation & Allowlisted Tool Execution
     if customer_id:
@@ -857,7 +898,6 @@ def generate_ai_reply(
     # STEP 1 & 2: Sync Episode & Relationships into Supabase Cloud DB + DNA Modal Knowledge Graph
     dna_analysis = {}
     graph_context = ""
-    neo_graph_context = ""
     scoped_cust = f"{tid}:{customer_id or 'guest'}"
     dynamic_dna_ref = None
     try:
@@ -881,10 +921,8 @@ def generate_ai_reply(
         except Exception as de:
             logger.debug(f"Could not bind competitor in DNA memory: {de}")
 
-    try:
-        from api.supabase_store import get_cloud_store
-        cloud_store = get_cloud_store()
-        if customer_id and cloud_store:
+    if customer_id and cloud_store:
+        try:
             svc_hint = ""
             for act in (dna_analysis.get("activated_nodes") or []):
                 nid = act.get("id", "")
@@ -907,10 +945,8 @@ def generate_ai_reply(
                     logger.debug(f"Background graph write error: {bg_err}")
 
             threading.Thread(target=_bg_record_graph, daemon=True).start()
-            sub = cloud_store.get_customer_subgraph(tid, customer_id)
-            neo_graph_context = sub.get("summary_prompt", "")
-    except Exception as ne:
-        logger.debug(f"Cloud knowledge graph warning: {ne}")
+        except Exception as ne:
+            logger.debug(f"Cloud knowledge graph warning: {ne}")
 
     # STEP 3: Build Tenant-Aware System Prompt with Stored Profile + Cloud Graph + DNA Memory
     custom_bname = str(tcfg.get("business_name") or "").strip()
@@ -1083,13 +1119,17 @@ def generate_ai_reply(
                 "temperature": 0.5,
                 "max_tokens": 512
             }
-            with httpx.Client(timeout=10.0) as client:
-                res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    raw_ans = data["choices"][0]["message"]["content"] or ""
-                    return _finalize_llm_reply(raw_ans, f"DeepSeek ({model_to_use})")
-                logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to Groq...")
+            client, should_close = _get_llm_client(10.0)
+            try:
+                res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10.0)
+            finally:
+                if should_close:
+                    client.close()
+            if res.status_code == 200:
+                data = res.json()
+                raw_ans = data["choices"][0]["message"]["content"] or ""
+                return _finalize_llm_reply(raw_ans, f"DeepSeek ({model_to_use})")
+            logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to Groq...")
         except Exception as e:
             logger.warning(f"DeepSeek call failed ({e}). Falling back to Groq...")
 
@@ -1107,13 +1147,17 @@ def generate_ai_reply(
                 "temperature": 0.5,
                 "max_tokens": 512
             }
-            with httpx.Client(timeout=8.0) as client:
-                res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    raw_ans = data["choices"][0]["message"]["content"] or ""
-                    return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
-                logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
+            client, should_close = _get_llm_client(8.0)
+            try:
+                res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
+            finally:
+                if should_close:
+                    client.close()
+            if res.status_code == 200:
+                data = res.json()
+                raw_ans = data["choices"][0]["message"]["content"] or ""
+                return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
+            logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
         except Exception as e:
             logger.warning(f"Groq API call failed ({e}). Falling back to smart agent...")
 

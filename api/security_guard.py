@@ -18,6 +18,19 @@ import httpx
 
 logger = logging.getLogger("security_guard")
 
+_ORIG_HTTPX_CLIENT = httpx.Client
+_SHARED_GUARD_CLIENT: Optional[httpx.Client] = None
+
+
+def _get_guard_client(timeout_sec: float) -> tuple[httpx.Client, bool]:
+    """Reuse keep-alive TLS connections in prod while respecting httpx.Client monkeypatches in tests."""
+    global _SHARED_GUARD_CLIENT
+    if httpx.Client is not _ORIG_HTTPX_CLIENT:
+        return httpx.Client(timeout=timeout_sec), True
+    if _SHARED_GUARD_CLIENT is None:
+        _SHARED_GUARD_CLIENT = _ORIG_HTTPX_CLIENT(timeout=timeout_sec)
+    return _SHARED_GUARD_CLIENT, False
+
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_GUARD_MODEL = "meta-llama/llama-guard-4-12b"
 FALLBACK_GUARD_MODEL = "meta-llama/llama-3.2-3b-instruct:free"
@@ -201,9 +214,13 @@ def check_openrouter_guard(
             "max_tokens": 64,
         }
         try:
-            with httpx.Client(timeout=timeout_sec) as client:
-                res = client.post(OPENROUTER_API_URL, headers=headers, json=payload)
-                if res.status_code == 200:
+            client, should_close = _get_guard_client(timeout_sec)
+            try:
+                res = client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=timeout_sec)
+            finally:
+                if should_close:
+                    client.close()
+            if res.status_code == 200:
                     data = res.json()
                     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                     parsed = _parse_openrouter_guard_response(content, target_model)

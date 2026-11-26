@@ -16,6 +16,7 @@ import time
 import hashlib
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -786,16 +787,29 @@ class SupabaseStore:
         if not self._ensure_ready():
             return {"connected": False, "nodes": [], "edges": [], "episodes": [], "summary_prompt": ""}
 
-        cust_nodes = self._select(
-            "wa_graph_nodes",
-            params={"tenant_id": f"eq.{tid}", "node_key": f"eq.{cust_key}", "limit": 1},
-        )
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            f_nodes = pool.submit(
+                self._select,
+                "wa_graph_nodes",
+                {"tenant_id": f"eq.{tid}", "node_key": f"eq.{cust_key}", "limit": 1},
+            )
+            f_hop1 = pool.submit(
+                self._select,
+                "wa_graph_edges",
+                {"tenant_id": f"eq.{tid}", "source_key": f"eq.{cust_key}", "limit": 50},
+            )
+            f_eps = pool.submit(
+                self._select,
+                "wa_graph_episodes",
+                {"tenant_id": f"eq.{tid}", "phone": f"eq.{clean}", "order": "timestamp.desc", "limit": 5},
+                "id,content,timestamp",
+            )
+            cust_nodes = f_nodes.result()
+            hop1 = f_hop1.result()
+            episodes = f_eps.result()
+
         cust_name = (cust_nodes[0].get("name") if cust_nodes else "") or clean
 
-        hop1 = self._select(
-            "wa_graph_edges",
-            params={"tenant_id": f"eq.{tid}", "source_key": f"eq.{cust_key}", "limit": 50},
-        )
         target_keys = list({e["target_key"] for e in hop1 if e.get("target_key")})
         hop2: List[dict] = []
         if target_keys:
@@ -807,17 +821,6 @@ class SupabaseStore:
                     "limit": 100,
                 },
             )
-
-        episodes = self._select(
-            "wa_graph_episodes",
-            params={
-                "tenant_id": f"eq.{tid}",
-                "phone": f"eq.{clean}",
-                "order": "timestamp.desc",
-                "limit": 5,
-            },
-            select="id,content,timestamp",
-        )
 
         nodes_map: Dict[str, dict] = {
             cust_key: {"id": cust_key, "label": "Customer", "name": cust_name}
