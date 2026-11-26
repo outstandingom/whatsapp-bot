@@ -147,7 +147,7 @@ def _clean_captured_phrase(phrase: str) -> str:
     """Trim trailing clauses/punctuation from regex-captured business names or areas."""
     s = str(phrase or "").strip(" \t\r\n.,;:-='\"")
     s = re.split(
-        r"(?:\s*[,\n;|]|\s+(?:in|at|from|near|with|and\s+(?:my|our|the)?\s*(?:website|site|url|link|we|i)|and we|we take|we use|having|which|that|no website|website|already have|don'?t have|hai|hain|tha|thi|aur|है|हैं|था|थी)\b|\s+\bh\b(?:\s|$))",
+        r"(?:\s*[,\n;|]|\s+(?:in|at|from|near|with|and\s+(?:my|our|the)?\s*(?:website|site|url|link|we|i)|and we|we take|we use|having|which|that|no website|website|already have|don'?t have|hai|hain|tha|thi|aur)\b|\s+(?:h|है|हैं|था|थी)(?:\s|$))",
         s,
         maxsplit=1,
         flags=re.IGNORECASE,
