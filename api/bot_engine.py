@@ -3,6 +3,7 @@ import re
 import json
 import time
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 import httpx
 
@@ -72,6 +73,59 @@ _ECOSYSTEM_KEYWORDS = [
     (["zomato", "swiggy"], "Zomato / Swiggy"),
     (["justdial", "indiamart"], "Directory Listing"),
 ]
+
+
+_RELEVANCE_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "am", "be", "been", "being",
+    "do", "does", "did", "can", "could", "will", "would", "should", "may", "might",
+    "i", "you", "we", "they", "he", "she", "it", "my", "your", "our", "their", "me",
+    "to", "of", "in", "on", "at", "for", "from", "with", "about", "as", "by", "or",
+    "and", "but", "if", "so", "that", "this", "these", "those", "what", "which",
+    "who", "whom", "when", "where", "why", "how", "please", "tell", "give", "show",
+    "want", "need", "know", "hai", "hain", "ho", "ka", "ki", "ke", "ko", "se", "me",
+    "kya", "kaise", "kitna", "kab", "kahan", "batao", "bataiye", "hi", "hello", "hey",
+    "thanks", "thank", "ok", "okay", "yes", "no", "ji", "sir", "mam", "please"
+}
+
+
+def _is_reply_relevant_to_query(user_query: str, reply_text: str) -> bool:
+    """
+    Fast deterministic cross-check verifying that an AI reply actually addresses
+    the user's current query rather than drifting to unrelated graph/memory topics.
+    """
+    q = (user_query or "").strip().lower()
+    r = (reply_text or "").strip().lower()
+    if not q or not r:
+        return False
+
+    # Short greetings / acknowledgements don't require strict keyword overlap
+    q_tokens = [t for t in re.findall(r"[a-z0-9\u0900-\u097F]{3,}", q) if t not in _RELEVANCE_STOPWORDS]
+    if len(q_tokens) < 2 and "?" not in q:
+        return True
+
+    r_tokens = set(re.findall(r"[a-z0-9\u0900-\u097F]{3,}", r))
+    if not q_tokens:
+        return True
+
+    overlap = sum(1 for t in q_tokens if t in r_tokens or any(t[:4] == rt[:4] for rt in r_tokens if len(t) >= 4 and len(rt) >= 4))
+    if overlap > 0:
+        return True
+
+    # Semantic intent bridges (e.g., pricing -> ₹/rs/inr/cost/plan, website -> site/domain/url)
+    intent_bridges = [
+        ({"price", "pricing", "cost", "charges", "fee", "fees", "rate", "plan", "plans", "kitna", "budget"}, {"₹", "rs", "inr", "price", "cost", "plan", "per", "month", "free"}),
+        ({"website", "site", "web", "domain", "url", "portal"}, {"website", "site", "web", "url", "page", "domain", "online", "app"}),
+        ({"security", "scan", "hack", "vulnerability", "audit", "pentest"}, {"security", "scan", "audit", "alphag", "vulnerability", "sql", "xss", "test"}),
+        ({"competitor", "competitors", "rival", "rivals", "competing"}, {"competitor", "competitors", "rival", "compare", "website", "noted", "saved"}),
+        ({"book", "booking", "appointment", "demo", "meeting", "call", "schedule"}, {"book", "booking", "demo", "schedule", "call", "time", "date", "slot"}),
+        ({"whatsapp", "bot", "automation", "automate", "crm", "ai"}, {"whatsapp", "bot", "automation", "automate", "crm", "workflow", "ai"}),
+    ]
+    q_set = set(q_tokens)
+    for q_keys, r_keys in intent_bridges:
+        if q_set & q_keys and (r_tokens & r_keys or any(k in r for k in r_keys)):
+            return True
+
+    return False
 
 
 def _clean_captured_phrase(phrase: str) -> str:
@@ -790,9 +844,11 @@ def generate_ai_reply(
     dna_analysis = {}
     graph_context = ""
     neo_graph_context = ""
+    scoped_cust = f"{tid}:{customer_id or 'guest'}"
+    dynamic_dna_ref = None
     try:
         from api.dna_service import dynamic_dna
-        scoped_cust = f"{tid}:{customer_id or 'guest'}"
+        dynamic_dna_ref = dynamic_dna
         dna_analysis = dynamic_dna.process_message_through_dna(
             customer_id=scoped_cust,
             message=user_prompt
@@ -802,12 +858,12 @@ def generate_ai_reply(
         logger.debug(f"DNA processing error: {e}")
 
     detected_competitors = extract_competitors_from_text(user_prompt)
-    if detected_competitors and dna_manager and getattr(dna_manager, "system", None):
+    if detected_competitors and dynamic_dna_ref and getattr(dynamic_dna_ref, "system", None):
         try:
             for comp in detected_competitors:
                 comp_val = f"{comp['name']} ({comp['url']})" if comp.get("url") else comp["name"]
-                dna_manager.system.remember_user_fact(scoped_cust, "has_competitor", comp_val)
-            dna_manager.save()
+                dynamic_dna_ref.system.remember_user_fact(scoped_cust, "has_competitor", comp_val)
+            dynamic_dna_ref.save()
         except Exception as de:
             logger.debug(f"Could not bind competitor in DNA memory: {de}")
 
@@ -821,14 +877,22 @@ def generate_ai_reply(
                 if nid.startswith("service_"):
                     svc_hint = nid.replace("service_", "").replace("_", " ").title()
                     break
-            cloud_store.record_customer_knowledge_graph(
-                tenant_id=tid,
-                phone=customer_id,
-                message_text=user_prompt,
-                profile=profile,
-                service_hint=svc_hint,
-                competitors=detected_competitors,
-            )
+
+            # Non-blocking background write so Supabase graph sync never slows down the reply
+            def _bg_record_graph():
+                try:
+                    cloud_store.record_customer_knowledge_graph(
+                        tenant_id=tid,
+                        phone=customer_id,
+                        message_text=user_prompt,
+                        profile=profile,
+                        service_hint=svc_hint,
+                        competitors=detected_competitors,
+                    )
+                except Exception as bg_err:
+                    logger.debug(f"Background graph write error: {bg_err}")
+
+            threading.Thread(target=_bg_record_graph, daemon=True).start()
             sub = cloud_store.get_customer_subgraph(tid, customer_id)
             neo_graph_context = sub.get("summary_prompt", "")
     except Exception as ne:
@@ -880,9 +944,16 @@ def generate_ai_reply(
         system_prompt += profile_block
 
     if neo_graph_context:
-        system_prompt += "\n\n" + neo_graph_context
+        system_prompt += "\n\n" + "\n".join(neo_graph_context.splitlines()[:10])
     if graph_context:
-        system_prompt += "\n\n" + graph_context
+        system_prompt += "\n\n" + graph_context[:600]
+
+    system_prompt += (
+        "\n\n=== RESPONSE RELEVANCE RULE (HIGHEST PRIORITY) ===\n"
+        "Answer the customer's CURRENT message directly, concisely, and accurately. "
+        "Use the stored profile / knowledge graph ONLY when it directly helps answer their current question — "
+        "NEVER drift into unrelated services, old topics, or random memory facts they did not ask about."
+    )
 
     # Retrieve Multi-Turn Conversation History from Database (tenant-isolated)
     conversation_history = []
@@ -908,6 +979,37 @@ def generate_ai_reply(
     if not llm_messages or llm_messages[-1].get("content") != user_prompt:
         llm_messages.append({"role": "user", "content": user_prompt})
 
+    def _grounded_retry_reply() -> Optional[str]:
+        """Fast targeted retry when cross-check flags an off-topic LLM reply."""
+        retry_msgs = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful, concise WhatsApp Business Assistant. "
+                    "Answer ONLY the user's exact current question directly in 2-5 short lines. "
+                    "Do NOT bring up unrelated topics."
+                ),
+            },
+            {"role": "user", "content": user_prompt},
+        ]
+        # Prefer Groq for ultra-fast (<1s) grounded correction
+        if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
+            try:
+                g_model = groq_model.strip() if groq_model and groq_model.strip() else "llama-3.3-70b-versatile"
+                with httpx.Client(timeout=5.0) as client:
+                    r2 = client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_api_key.strip()}", "Content-Type": "application/json"},
+                        json={"model": g_model, "messages": retry_msgs, "temperature": 0.3, "max_tokens": 350},
+                    )
+                    if r2.status_code == 200:
+                        txt = (r2.json()["choices"][0]["message"]["content"] or "").strip()
+                        if txt:
+                            return txt
+            except Exception:
+                pass
+        return None
+
     def _finalize_llm_reply(raw_reply: str, engine_label: str) -> tuple[str, float, str]:
         from api import security_guard
         cleaned_reply, llm_profile = parse_and_strip_profile_tag(raw_reply)
@@ -923,19 +1025,32 @@ def generate_ai_reply(
                 from api.supabase_store import get_cloud_store
                 cloud_store = get_cloud_store()
                 if cloud_store:
-                    cloud_store.record_customer_knowledge_graph(
-                        tenant_id=tid,
-                        phone=customer_id,
-                        profile=profile,
-                        competitors=llm_competitors,
-                    )
-                if dna_manager and getattr(dna_manager, "system", None):
+                    threading.Thread(
+                        target=cloud_store.record_customer_knowledge_graph,
+                        kwargs={
+                            "tenant_id": tid,
+                            "phone": customer_id,
+                            "profile": profile,
+                            "competitors": llm_competitors,
+                        },
+                        daemon=True,
+                    ).start()
+                if dynamic_dna_ref and getattr(dynamic_dna_ref, "system", None):
                     for comp in llm_competitors:
                         comp_val = f"{comp['name']} ({comp['url']})" if comp.get("url") else comp["name"]
-                        dna_manager.system.remember_user_fact(scoped_cust, "has_competitor", comp_val)
-                    dna_manager.save()
+                        dynamic_dna_ref.system.remember_user_fact(scoped_cust, "has_competitor", comp_val)
+                    dynamic_dna_ref.save()
             except Exception as ex:
                 logger.debug(f"Could not save LLM competitor graph edges: {ex}")
+
+        # Output Relevance Cross-Check against user's current query
+        if not _is_reply_relevant_to_query(user_prompt, cleaned_reply):
+            logger.warning(f"[RelevanceGuard] Off-topic reply detected for query '{user_prompt[:60]}'. Retrying grounded...")
+            retried = _grounded_retry_reply()
+            if retried:
+                cleaned_reply, _ = parse_and_strip_profile_tag(retried)
+                engine_label = f"{engine_label} [Relevance-Verified]"
+
         safe_reply = security_guard.sanitize_outbound_reply(cleaned_reply)
         latency_val = round((time.time() - start) * 1000, 2)
         return safe_reply or "How can I assist your business today?", latency_val, engine_label
@@ -951,10 +1066,10 @@ def generate_ai_reply(
             payload = {
                 "model": model_to_use,
                 "messages": llm_messages,
-                "temperature": 0.7,
-                "max_tokens": 1024
+                "temperature": 0.5,
+                "max_tokens": 512
             }
-            with httpx.Client(timeout=25.0) as client:
+            with httpx.Client(timeout=10.0) as client:
                 res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()
@@ -975,10 +1090,10 @@ def generate_ai_reply(
             payload = {
                 "model": model_to_use,
                 "messages": llm_messages,
-                "temperature": 0.7,
-                "max_tokens": 1024
+                "temperature": 0.5,
+                "max_tokens": 512
             }
-            with httpx.Client(timeout=25.0) as client:
+            with httpx.Client(timeout=8.0) as client:
                 res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()

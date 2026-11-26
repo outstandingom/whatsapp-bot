@@ -151,7 +151,7 @@ def check_openrouter_guard(
     text: str,
     api_key: str = "",
     model: str = "",
-    timeout_sec: float = 6.5,
+    timeout_sec: float = 3.0,
     fail_closed: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
