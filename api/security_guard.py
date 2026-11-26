@@ -135,15 +135,30 @@ def _parse_openrouter_guard_response(content: str, model_used: str) -> Dict[str,
     return {"safe": True, "blocked": False, "reason": "", "raw": raw}
 
 
+_SENSITIVE_PRIVILEGED_PATTERNS = re.compile(
+    r"(?i)\b(?:refund|transfer\s+money|pay\s*out|wallet|coins?|delete\s+all|drop\s+table|"
+    r"export\s+(?:data|users|customers)|api[\s_-]*key|secret|token|password|system\s+prompt|"
+    r"admin|webhook|database|override|bypass)\b"
+)
+
+
+def is_sensitive_or_privileged_input(text: str) -> bool:
+    """Detect whether input involves privileged operations, secrets, billing, or exports."""
+    return bool(_SENSITIVE_PRIVILEGED_PATTERNS.search(str(text or "")))
+
+
 def check_openrouter_guard(
     text: str,
     api_key: str = "",
     model: str = "",
     timeout_sec: float = 6.5,
+    fail_closed: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Layer 2 classifier via OpenRouter (`meta-llama/llama-guard-4-12b` by default).
     Checks untrusted user input before it reaches business memory or LLM response generation.
+    Fail-safe behavior: when SECURITY_FAIL_CLOSED is enabled (default) or the message contains
+    privileged/sensitive keywords, an unavailable OpenRouter guard blocks safely instead of passing.
     """
     key = (api_key or os.getenv("OPENROUTER_API_KEY", "")).strip()
     if not key or key.startswith("sk-or-v1-your"):
@@ -207,6 +222,21 @@ def check_openrouter_guard(
     if res is not None:
         return res
 
+    should_fail_closed = (
+        (os.getenv("SECURITY_FAIL_CLOSED", "true").strip().lower() not in {"0", "false", "no"})
+        if fail_closed is None
+        else bool(fail_closed)
+    )
+    if should_fail_closed or is_sensitive_or_privileged_input(clean):
+        return {
+            "configured": True,
+            "safe": False,
+            "blocked": True,
+            "fail_safe": True,
+            "reason": "Security verification service temporarily unavailable; blocked safely.",
+            "detector": f"Fail-Safe Guard ({chosen_model})",
+        }
+
     return {
         "configured": True,
         "safe": True,
@@ -220,11 +250,12 @@ def evaluate_user_input(
     text: str,
     openrouter_key: str = "",
     guard_model: str = "",
+    fail_closed: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Run full prompt-injection evaluation on incoming text:
       1. Fast deterministic heuristic check (catches instruction overrides, secret dumps, DB injection).
-      2. Live OpenRouter Guard (`meta-llama/llama-guard-4-12b`) check.
+      2. Live OpenRouter Guard (`meta-llama/llama-guard-4-12b`) check with fail-safe blocking.
     """
     t0 = time.time()
     clean = str(text or "").strip()
@@ -243,14 +274,16 @@ def evaluate_user_input(
             "latency_ms": round((time.time() - t0) * 1000, 2),
         }
 
-    # Layer 2 (OpenRouter)
-    l2 = check_openrouter_guard(clean, api_key=openrouter_key, model=guard_model)
+    # Layer 2 (OpenRouter + Fail-Safe)
+    l2 = check_openrouter_guard(clean, api_key=openrouter_key, model=guard_model, fail_closed=fail_closed)
     latency_ms = round((time.time() - t0) * 1000, 2)
+    rule = "fail_safe_guard" if l2.get("fail_safe") else ("openrouter_guard" if l2.get("blocked") else "")
     return {
         "safe": bool(l2.get("safe", True)),
         "blocked": bool(l2.get("blocked", False)),
+        "fail_safe": bool(l2.get("fail_safe", False)),
         "reason": l2.get("reason", ""),
-        "rule": "openrouter_guard" if l2.get("blocked") else "",
+        "rule": rule,
         "detector": l2.get("detector", "OpenRouter"),
         "latency_ms": latency_ms,
     }

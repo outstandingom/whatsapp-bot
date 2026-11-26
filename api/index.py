@@ -2,6 +2,8 @@ import os
 import re
 import json
 import time
+import hmac
+import hashlib
 import asyncio
 import logging
 import httpx
@@ -26,6 +28,8 @@ try:
     from api.supabase_store import get_cloud_store
     from api import security_guard
     from api import auth_billing
+    from api import webhook_runtime
+    from api import voice_service
     from api.whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
@@ -42,6 +46,8 @@ except ImportError:
     from supabase_store import get_cloud_store
     import security_guard
     import auth_billing
+    import webhook_runtime
+    import voice_service
     from whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
@@ -146,7 +152,9 @@ def _resolve_tenant_credentials(tenant: dict) -> dict:
         wa_phone_id = ""
         has_own_meta = False
 
-    verify_token = own_verify_token or get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")
+    verify_token = own_verify_token or get_env_var("WHATSAPP_VERIFY_TOKEN", "")
+    own_secret = (tenant.get("meta_app_secret") or "").strip()
+    app_secret = own_secret or (get_env_var("META_APP_SECRET", "") if (is_admin or not has_own_meta) else "")
     return {
         "tenant_id": tid,
         "deepseek_api_key": deepseek_key,
@@ -158,6 +166,7 @@ def _resolve_tenant_credentials(tenant: dict) -> dict:
         "whatsapp_token": wa_token,
         "whatsapp_phone_number_id": wa_phone_id,
         "whatsapp_verify_token": verify_token,
+        "meta_app_secret": app_secret,
         "has_own_meta": has_own_meta,
     }
 
@@ -226,8 +235,15 @@ def render_template_placeholders(
     return out
 
 
-def get_ai_reply(prompt: str, customer_id: str = "", tenant: Optional[dict] = None) -> tuple[str, float, str]:
-    """Route AI responses through Security Shield -> Cloud DNA Graph -> DeepSeek/Groq -> Sanitizer."""
+def get_ai_reply(
+    prompt: str,
+    customer_id: str = "",
+    tenant: Optional[dict] = None,
+    channel: str = "whatsapp",
+    sender_name: str = "",
+    is_voice: bool = False,
+) -> tuple[str, float, str]:
+    """Route AI responses through Fail-Safe Security Shield -> Agent Guardrails -> DNA Graph -> DeepSeek/Groq -> Sanitizer."""
     tcfg = tenant or {"tenant_id": "default"}
     creds = _resolve_tenant_credentials(tcfg)
     return generate_ai_reply(
@@ -241,6 +257,9 @@ def get_ai_reply(prompt: str, customer_id: str = "", tenant: Optional[dict] = No
         tenant_config=tcfg,
         openrouter_api_key=creds["openrouter_api_key"],
         openrouter_guard_model=creds["openrouter_guard_model"],
+        channel=channel,
+        sender_name=sender_name,
+        is_voice=is_voice,
     )
 
 
@@ -257,6 +276,9 @@ async def health_check():
         "neo4j_connected": cloud.get("connected", False),
         "cloud_error": cloud.get("error"),
         "openrouter_guard_configured": bool(get_env_var("OPENROUTER_API_KEY")),
+        "security_fail_closed": os.getenv("SECURITY_FAIL_CLOSED", "true").strip().lower() not in {"0", "false", "no"},
+        "webhook_signature_enforced": bool(get_env_var("META_APP_SECRET")) or os.getenv("WEBHOOK_SIGNATURE_REQUIRED", "false").lower() in {"1", "true", "yes"},
+        "queue": webhook_runtime.webhook_queue.get_stats(),
         "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
         "timestamp": int(time.time()),
     })
@@ -290,7 +312,16 @@ async def startup_tasks():
     # Restore persistent chats, tenants, profiles, templates & billing from Supabase Cloud DB
     sync_summary = await asyncio.to_thread(db.sync_with_neo4j_on_boot)
     logger.info(f"[Startup] Cloud DB sync summary: {sync_summary}")
+    webhook_runtime.webhook_queue.set_handler(_process_meta_webhook_job)
+    await webhook_runtime.webhook_queue.start()
     asyncio.create_task(keep_alive_worker())
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("X-Forwarded-For", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 # ====================================================================
@@ -299,6 +330,9 @@ async def startup_tasks():
 
 @app.post("/api/auth/login")
 async def auth_login(request: Request):
+    allowed, retry_after = webhook_runtime.rate_limiter.allow(f"auth_login:{_client_ip(request)}", max_calls=20, window_sec=60)
+    if not allowed:
+        return JSONResponse({"error": f"Too many login attempts. Retry in {retry_after}s."}, status_code=429)
     data = await request.json()
     email = (data.get("email") or "").strip()
     password = data.get("password") or ""
@@ -327,6 +361,9 @@ async def auth_login(request: Request):
 
 @app.post("/api/auth/register")
 async def auth_register(request: Request):
+    allowed, retry_after = webhook_runtime.rate_limiter.allow(f"auth_reg:{_client_ip(request)}", max_calls=15, window_sec=60)
+    if not allowed:
+        return JSONResponse({"error": f"Too many registration attempts. Retry in {retry_after}s."}, status_code=429)
     data = await request.json()
     full_name = (data.get("full_name") or "").strip()
     email = (data.get("email") or "").strip()
@@ -451,31 +488,238 @@ async def _verify_meta_webhook_impl(
     received_token = (hub_verify_token or "").strip().strip('"').strip("'")
     tenant = db.find_tenant_for_webhook(tenant_id=tenant_id, verify_token=received_token)
     tid = tenant.get("tenant_id", "default")
-    expected_token = (tenant.get("whatsapp_verify_token") or get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")).strip()
-    is_valid = received_token == expected_token or (
-        tid == "default" and received_token == get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")
-    )
+    expected_token = (tenant.get("whatsapp_verify_token") or get_env_var("WHATSAPP_VERIFY_TOKEN", "")).strip()
+    is_valid = bool(received_token and expected_token and webhook_runtime.hmac.compare_digest(received_token, expected_token))
+    if not is_valid and tid == "default":
+        env_tok = (get_env_var("WHATSAPP_VERIFY_TOKEN", "") or "").strip()
+        is_valid = bool(received_token and env_tok and webhook_runtime.hmac.compare_digest(received_token, env_tok))
 
     db.save_webhook_log(
         endpoint=f"/api/webhook/{tid}" if tenant_id else "/api/webhook",
         method="GET",
-        payload={"hub.mode": hub_mode, "hub.verify_token": hub_verify_token, "hub.challenge": hub_challenge},
+        payload={"hub.mode": hub_mode, "hub.verify_token": "***", "hub.challenge": hub_challenge},
         status_code=200 if (hub_mode == "subscribe" and is_valid) else 403,
         tenant_id=tid,
     )
 
     if hub_mode == "subscribe" and is_valid:
         return PlainTextResponse(content=str(hub_challenge), status_code=200)
-    return PlainTextResponse(content="Forbidden: Verification token mismatch", status_code=403)
+    return PlainTextResponse(content="Forbidden: Verification token mismatch or unconfigured", status_code=403)
+
+
+async def _process_meta_webhook_job(job: dict):
+    """Background worker handler executed with exponential-backoff retries + DLQ."""
+    tid = str(job.get("tenant_id") or "default")
+    tenant = db.get_tenant(tid)
+    creds = _resolve_tenant_credentials(tenant)
+    incoming_phone_id = str(job.get("incoming_phone_id") or "")
+    sender_name = str(job.get("sender_name") or "Customer")
+    msg = dict(job.get("msg") or {})
+    msg_type = msg.get("type")
+    sender_id = str(msg.get("from") or "")
+    if not sender_id:
+        return
+
+    user_text = ""
+    media_type = None
+    media_url = None
+    media_filename = None
+    is_voice = False
+    voice_unclear_reply = ""
+
+    if msg_type == "text":
+        user_text = msg.get("text", {}).get("body", "").strip()
+    elif msg_type == "image":
+        media_type = "image"
+        img_data = msg.get("image", {})
+        user_text = img_data.get("caption", "").strip()
+        media_id = img_data.get("id")
+        if media_id:
+            media_url, media_filename, _ = await asyncio.to_thread(
+                download_meta_media, media_id, ".jpg", creds["whatsapp_token"]
+            )
+        if not user_text:
+            user_text = "📷 [Photo Received]"
+    elif msg_type == "document":
+        media_type = "document"
+        doc_data = msg.get("document", {})
+        user_text = doc_data.get("caption", "").strip()
+        media_id = doc_data.get("id")
+        orig_fname = doc_data.get("filename", "")
+        if media_id:
+            media_url, media_filename, _ = await asyncio.to_thread(
+                download_meta_media, media_id, ".pdf", creds["whatsapp_token"]
+            )
+        if orig_fname:
+            media_filename = orig_fname
+        if not user_text:
+            user_text = f"📄 [Document: {media_filename or 'File'}]"
+    elif msg_type == "audio":
+        media_type = "audio"
+        is_voice = True
+        aud_data = msg.get("audio", {})
+        media_id = aud_data.get("id")
+        if media_id:
+            media_url, media_filename, _ = await asyncio.to_thread(
+                download_meta_media, media_id, ".ogg", creds["whatsapp_token"]
+            )
+        if media_filename:
+            local_audio = os.path.join(UPLOAD_DIR, media_filename)
+            tx = await asyncio.to_thread(voice_service.transcribe_audio_with_groq, local_audio, creds["groq_api_key"])
+            if tx.get("ok") and tx.get("text"):
+                user_text = tx["text"].strip()
+            else:
+                voice_unclear_reply = (
+                    "🎤 I couldn't hear that voice message clearly (or transcription confidence was low). "
+                    "Could you please type your message or send a clearer audio note?"
+                )
+                user_text = f"🎤 [Voice Note: {media_filename}]"
+        else:
+            user_text = "🎤 [Voice Note Received]"
+            voice_unclear_reply = "🎤 Received your voice note, though I couldn't download it cleanly. Could you type your inquiry?"
+
+    db.save_message(
+        phone_number=sender_id,
+        sender_name=sender_name,
+        message=user_text,
+        direction="inbound",
+        channel="meta_whatsapp",
+        raw_payload=msg,
+        media_type=media_type,
+        media_url=media_url,
+        media_filename=media_filename,
+        tenant_id=tid,
+    )
+    if sender_name and sender_name.strip().lower() not in {"customer", "user", "unknown"}:
+        db.upsert_customer_profile(
+            sender_id,
+            overwrite_existing=False,
+            tenant_id=tid,
+            contact_name=sender_name.strip(),
+            data_source="whatsapp_chat",
+        )
+
+    bot_active = db.is_bot_enabled_for_contact(sender_id, tenant_id=tid)
+    if not bot_active:
+        return
+
+    incoming_wamid = msg.get("id")
+    target_phone_id = incoming_phone_id or creds["whatsapp_phone_number_id"]
+    if incoming_wamid and creds["whatsapp_token"]:
+        try:
+            await asyncio.to_thread(send_meta_typing_indicator, incoming_wamid, target_phone_id, creds["whatsapp_token"])
+        except Exception as _te:
+            logger.debug(f"Typing indicator warning: {_te}")
+
+    set_typing_state(sender_id, True, tenant_id=tid)
+    try:
+        if media_type in ("image", "document"):
+            reply = (
+                f"Thank you for sharing your {media_type}! 📄\n\n"
+                f"We have received your file at *{tenant.get('business_name') or 'Growhaz'}*. "
+                "Our team is reviewing it and will update you shortly."
+            )
+            latency_ms = 0.0
+            engine_used = "Growhaz Assistant"
+        elif voice_unclear_reply:
+            reply = voice_unclear_reply
+            latency_ms = 0.0
+            engine_used = "Voice Pipeline (Clarification)"
+        else:
+            try:
+                dynamic_dna.record_interaction(
+                    customer_id=f"{tid}:{sender_id}",
+                    action="received_message",
+                    target_id="chat_interaction",
+                    attributes={"snippet": user_text[:60]},
+                )
+            except Exception:
+                pass
+            reply, latency_ms, engine_used = await asyncio.to_thread(
+                get_ai_reply,
+                user_text,
+                sender_id,
+                tenant,
+                "meta_whatsapp",
+                sender_name,
+                is_voice,
+            )
+    finally:
+        set_typing_state(sender_id, False, tenant_id=tid)
+
+    success, send_res = await asyncio.to_thread(
+        send_meta_whatsapp_message,
+        sender_id,
+        reply,
+        target_phone_id,
+        creds["whatsapp_token"],
+    )
+
+    db.save_message(
+        phone_number=sender_id,
+        sender_name="Support Agent (AI)",
+        message=reply,
+        direction="outbound",
+        channel="meta_whatsapp",
+        status="sent" if success else "failed",
+        raw_payload=send_res,
+        ai_model=engine_used,
+        latency_ms=latency_ms,
+        tenant_id=tid,
+    )
+
+
+webhook_runtime.webhook_queue.set_handler(_process_meta_webhook_job)
 
 
 async def _handle_meta_webhook_impl(request: Request, explicit_tenant_id: str = ""):
+    ip_ok, retry_after = webhook_runtime.rate_limiter.allow(
+        f"webhook_ip:{_client_ip(request)}", max_calls=120, window_sec=60
+    )
+    if not ip_ok:
+        return JSONResponse({"error": f"Rate limit exceeded. Retry in {retry_after}s."}, status_code=429)
+
+    raw_body = await request.body()
     try:
-        body = await request.json()
+        body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
     except Exception as e:
-        db.save_webhook_log(endpoint="/api/webhook", method="POST", payload=str(e), status_code=400, tenant_id=explicit_tenant_id or "default")
+        db.save_webhook_log(
+            endpoint="/api/webhook",
+            method="POST",
+            payload=str(e),
+            status_code=400,
+            tenant_id=explicit_tenant_id or "default",
+        )
         return JSONResponse({"status": "invalid json"}, status_code=400)
 
+    # Identify tenant for HMAC signature check
+    first_phone_id = ""
+    try:
+        entries = body.get("entry", [])
+        if entries:
+            changes = entries[0].get("changes", [])
+            if changes:
+                first_phone_id = (changes[0].get("value", {}).get("metadata", {}).get("phone_number_id") or "").strip()
+    except Exception:
+        first_phone_id = ""
+
+    pre_tenant = db.find_tenant_for_webhook(tenant_id=explicit_tenant_id, phone_number_id=first_phone_id)
+    pre_tid = pre_tenant.get("tenant_id", "default")
+    pre_creds = _resolve_tenant_credentials(pre_tenant)
+    sig_required = os.getenv("WEBHOOK_SIGNATURE_REQUIRED", "false").strip().lower() in {"1", "true", "yes"}
+    app_secret = pre_creds.get("meta_app_secret", "")
+
+    if app_secret or sig_required:
+        sig_hdr = request.headers.get("X-Hub-Signature-256", "")
+        if sig_required and not app_secret:
+            return JSONResponse({"error": "Webhook signature verification required but META_APP_SECRET is not configured."}, status_code=403)
+        sig_ok, sig_reason = webhook_runtime.verify_meta_signature(raw_body, sig_hdr, app_secret)
+        if not sig_ok:
+            db.save_security_event(pre_tid, "meta_webhook", f"Rejected webhook POST: {sig_reason}", "X-Hub-Signature-256", sig_reason, True)
+            db.log_action_audit(pre_tid, _client_ip(request), "webhook_signature_check", "rejected", "high", "", {"reason": sig_reason})
+            return JSONResponse({"error": sig_reason}, status_code=403)
+
+    webhook_runtime.webhook_queue.set_handler(_process_meta_webhook_job)
     try:
         entries = body.get("entry", [])
         for entry in entries:
@@ -486,7 +730,6 @@ async def _handle_meta_webhook_impl(request: Request, explicit_tenant_id: str = 
 
                 tenant = db.find_tenant_for_webhook(tenant_id=explicit_tenant_id, phone_number_id=incoming_phone_id)
                 tid = tenant.get("tenant_id", "default")
-                creds = _resolve_tenant_credentials(tenant)
                 if tid == "default" and incoming_phone_id:
                     os.environ["WHATSAPP_PHONE_NUMBER_ID"] = incoming_phone_id
 
@@ -503,119 +746,31 @@ async def _handle_meta_webhook_impl(request: Request, explicit_tenant_id: str = 
 
                 for msg in val.get("messages", []):
                     msg_type = msg.get("type")
-                    if msg_type in ["text", "image", "document"]:
+                    if msg_type in ["text", "image", "document", "audio"]:
                         sender_id = msg.get("from")
                         if not sender_id:
                             continue
 
-                        user_text = ""
-                        media_type = None
-                        media_url = None
-                        media_filename = None
+                        event_id = str(msg.get("id") or hashlib.sha256(json.dumps(msg, sort_keys=True).encode()).hexdigest()[:24])
+                        if not db.claim_webhook_event(tid, event_id, sender_id):
+                            logger.info(f"[Webhook Dedup] Skipping duplicate message event {event_id} for tenant={tid}")
+                            continue
 
-                        if msg_type == "text":
-                            user_text = msg.get("text", {}).get("body", "").strip()
-                        elif msg_type == "image":
-                            media_type = "image"
-                            img_data = msg.get("image", {})
-                            user_text = img_data.get("caption", "").strip()
-                            media_id = img_data.get("id")
-                            if media_id:
-                                media_url, media_filename, _ = download_meta_media(media_id, ".jpg", token=creds["whatsapp_token"])
-                            if not user_text:
-                                user_text = "📷 [Photo Received]"
-                        elif msg_type == "document":
-                            media_type = "document"
-                            doc_data = msg.get("document", {})
-                            user_text = doc_data.get("caption", "").strip()
-                            media_id = doc_data.get("id")
-                            orig_fname = doc_data.get("filename", "")
-                            if media_id:
-                                media_url, media_filename, _ = download_meta_media(media_id, ".pdf", token=creds["whatsapp_token"])
-                            if orig_fname:
-                                media_filename = orig_fname
-                            if not user_text:
-                                user_text = f"📄 [Document: {media_filename or 'File'}]"
-
-                        db.save_message(
-                            phone_number=sender_id,
-                            sender_name=sender_name,
-                            message=user_text,
-                            direction="inbound",
-                            channel="meta_whatsapp",
-                            raw_payload=msg,
-                            media_type=media_type,
-                            media_url=media_url,
-                            media_filename=media_filename,
-                            tenant_id=tid,
+                        s_ok, _ = webhook_runtime.rate_limiter.allow(
+                            f"wh_sender:{tid}:{sender_id}", max_calls=30, window_sec=60
                         )
-                        if sender_name and sender_name.strip().lower() not in {"customer", "user", "unknown"}:
-                            db.upsert_customer_profile(
-                                sender_id,
-                                overwrite_existing=False,
-                                tenant_id=tid,
-                                contact_name=sender_name.strip(),
-                                data_source="whatsapp_chat",
-                            )
+                        if not s_ok:
+                            db.log_action_audit(tid, sender_id, "webhook_sender_rate_limit", "throttled", "medium", sender_id, {"event_id": event_id})
+                            continue
 
-                        bot_active = db.is_bot_enabled_for_contact(sender_id, tenant_id=tid)
-                        is_handover_request = bool(user_text and any(w in user_text.lower() for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]))
-                        if is_handover_request:
-                            db.set_bot_enabled_for_contact(sender_id, False, tenant_id=tid)
-
-                        if bot_active:
-                            incoming_wamid = msg.get("id")
-                            target_phone_id = incoming_phone_id or creds["whatsapp_phone_number_id"]
-                            if incoming_wamid and creds["whatsapp_token"]:
-                                try:
-                                    await asyncio.to_thread(send_meta_typing_indicator, incoming_wamid, target_phone_id, creds["whatsapp_token"])
-                                except Exception as _te:
-                                    logger.debug(f"Typing indicator warning: {_te}")
-
-                            set_typing_state(sender_id, True, tenant_id=tid)
-                            try:
-                                if media_type:
-                                    reply = (
-                                        f"Thank you for sharing your {media_type}! 📄\n\n"
-                                        f"We have received your file at *{tenant.get('business_name') or 'Growhaz'}*. "
-                                        "Our team is reviewing it and will update you shortly."
-                                    )
-                                    latency_ms = 0.0
-                                    engine_used = "Growhaz Assistant"
-                                else:
-                                    try:
-                                        dynamic_dna.record_interaction(
-                                            customer_id=f"{tid}:{sender_id}",
-                                            action="received_message",
-                                            target_id="chat_interaction",
-                                            attributes={"snippet": user_text[:60]},
-                                        )
-                                    except Exception:
-                                        pass
-                                    reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_text, sender_id, tenant)
-                            finally:
-                                set_typing_state(sender_id, False, tenant_id=tid)
-
-                            success, send_res = await asyncio.to_thread(
-                                send_meta_whatsapp_message,
-                                sender_id,
-                                reply,
-                                target_phone_id,
-                                creds["whatsapp_token"],
-                            )
-
-                            db.save_message(
-                                phone_number=sender_id,
-                                sender_name="Support Agent (AI)",
-                                message=reply,
-                                direction="outbound",
-                                channel="meta_whatsapp",
-                                status="sent" if success else "failed",
-                                raw_payload=send_res,
-                                ai_model=engine_used,
-                                latency_ms=latency_ms,
-                                tenant_id=tid,
-                            )
+                        await webhook_runtime.webhook_queue.enqueue({
+                            "tenant_id": tid,
+                            "incoming_phone_id": incoming_phone_id,
+                            "sender_name": sender_name,
+                            "event_id": event_id,
+                            "phone_number": sender_id,
+                            "msg": msg,
+                        })
     except Exception as err:
         logger.error(f"Error handling Meta WhatsApp webhook: {err}")
 
@@ -820,6 +975,20 @@ async def list_security_events(request: Request):
     })
 
 
+@app.get("/api/dashboard/audit-logs")
+async def list_audit_logs(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    audits = db.get_action_audits(tenant_id=tenant["tenant_id"], limit=50)
+    return JSONResponse({"success": True, "audits": audits})
+
+
+@app.get("/api/dashboard/dead-letters")
+async def list_dead_letters(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    jobs = db.get_dead_letter_jobs(tenant_id=tenant["tenant_id"], limit=30)
+    return JSONResponse({"success": True, "jobs": jobs, "queue": webhook_runtime.webhook_queue.get_stats()})
+
+
 @app.post("/api/dashboard/test-guard")
 async def test_prompt_guard(request: Request):
     tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
@@ -960,6 +1129,9 @@ async def send_dashboard_reply(request: Request):
     """Send or simulate a dashboard message (enforcing 3 free demos + 24h billing window)."""
     tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
     tid = tenant["tenant_id"]
+    ok_rate, retry_sec = webhook_runtime.rate_limiter.allow(f"dash_send:{tid}", max_calls=60, window_sec=60)
+    if not ok_rate:
+        return JSONResponse({"error": f"Send rate limit exceeded. Retry in {retry_sec}s."}, status_code=429)
     creds = _resolve_tenant_credentials(tenant)
 
     data = await request.json()
@@ -1278,12 +1450,14 @@ async def get_settings(request: Request):
     own_groq = (tenant.get("groq_api_key") or "").strip()
     own_wa = (tenant.get("whatsapp_token") or "").strip()
     own_or = (tenant.get("openrouter_api_key") or "").strip()
+    own_app_sec = (tenant.get("meta_app_secret") or "").strip()
 
     if is_admin:
         own_ds = own_ds or get_env_var("DEEPSEEK_API_KEY")
         own_groq = own_groq or get_env_var("GROQ_API_KEY")
         own_wa = own_wa or get_env_var("WHATSAPP_TOKEN")
         own_or = own_or or get_env_var("OPENROUTER_API_KEY")
+        own_app_sec = own_app_sec or get_env_var("META_APP_SECRET")
 
     base_url = (get_env_var("APP_URL") or str(request.base_url)).rstrip("/")
     webhook_url = f"{base_url}/api/webhook" if tid == "default" else f"{base_url}/api/webhook/{tid}"
@@ -1304,7 +1478,9 @@ async def get_settings(request: Request):
         "whatsapp_token_set": bool(own_wa and not own_wa.startswith("your_meta")),
         "whatsapp_token_masked": _mask(own_wa),
         "whatsapp_phone_number_id": (tenant.get("whatsapp_phone_number_id") or (get_env_var("WHATSAPP_PHONE_NUMBER_ID") if is_admin else "")),
-        "whatsapp_verify_token": (tenant.get("whatsapp_verify_token") or get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")),
+        "whatsapp_verify_token": (tenant.get("whatsapp_verify_token") or get_env_var("WHATSAPP_VERIFY_TOKEN", "")),
+        "meta_app_secret_set": bool(own_app_sec),
+        "meta_app_secret_masked": _mask(own_app_sec),
         "openrouter_guard_set": bool(own_or or get_env_var("OPENROUTER_API_KEY")),
         "openrouter_guard_masked": _mask(own_or) if is_admin else ("Platform Shield Active" if get_env_var("OPENROUTER_API_KEY") else ""),
         "openrouter_guard_model": tenant.get("openrouter_guard_model") or get_env_var("OPENROUTER_GUARD_MODEL", security_guard.DEFAULT_GUARD_MODEL),
@@ -1327,6 +1503,7 @@ async def save_settings(request: Request):
         ("deepseek_api_key", "DEEPSEEK_API_KEY"),
         ("groq_api_key", "GROQ_API_KEY"),
         ("whatsapp_token", "WHATSAPP_TOKEN"),
+        ("meta_app_secret", "META_APP_SECRET"),
         ("openrouter_api_key", "OPENROUTER_API_KEY"),
     ]:
         val = (data.get(secret_key) or "").strip()

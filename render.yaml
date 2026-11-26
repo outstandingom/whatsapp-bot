@@ -16,7 +16,13 @@ services:
       - key: WHATSAPP_PHONE_NUMBER_ID
         sync: false
       - key: WHATSAPP_VERIFY_TOKEN
-        value: whatsapp_groq_bot_secret_123
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: WEBHOOK_SIGNATURE_REQUIRED
+        value: "false"
+      - key: SECURITY_FAIL_CLOSED
+        value: "true"
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_GUARD_MODEL

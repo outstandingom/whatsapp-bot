@@ -463,11 +463,26 @@ class DynamicDNAManager:
         }
 
     def save(self):
-        """Saves current state to disk."""
+        """Saves current state to disk and mirrors compact JSON snapshot to Supabase (`wa_dna_snapshots`)."""
         if self.system:
             try:
                 self.system.save_to_disk(DNA_STATE_FILE)
             except Exception as e:
+                print(f"[DNAService] Disk save warning: {e}")
+            try:
+                from api.supabase_store import get_cloud_store
+                store = get_cloud_store()
+                if store and hasattr(store, "save_dna_snapshot") and os.path.exists(DNA_STATE_FILE):
+                    with open(DNA_STATE_FILE, "r", encoding="utf-8") as f:
+                        snap = f.read()
+                    # Store compact structural summary so cloud DB persists across ephemeral deploys
+                    import json as _json
+                    parsed = _json.loads(snap)
+                    atoms_str = _json.dumps(parsed.get("atoms", {}))[:48000]
+                    rels_str = _json.dumps(parsed.get("relations", []))[:48000]
+                    store.save_dna_snapshot("default", atoms_str, rels_str)
+            except Exception:
+                pass
                 logger.error(f"Error saving dynamic DNA state: {e}")
 
 # Global instance

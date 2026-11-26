@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 
 # Database path
@@ -175,10 +176,16 @@ def init_db(force: bool = False):
                 groq_model TEXT DEFAULT 'llama-3.3-70b-versatile',
                 openrouter_api_key TEXT DEFAULT '',
                 openrouter_guard_model TEXT DEFAULT 'meta-llama/llama-guard-4-12b',
+                meta_app_secret TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        for tcol in ("meta_app_secret TEXT DEFAULT ''",):
+            try:
+                cursor.execute(f"ALTER TABLE tenants ADD COLUMN {tcol}")
+            except Exception:
+                pass
 
         # Messages Table
         cursor.execute("""
@@ -344,11 +351,69 @@ def init_db(force: bool = False):
             )
         """)
 
+        # Webhook Event Deduplication / Idempotency Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS processed_events (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                event_id TEXT NOT NULL,
+                phone_number TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (tenant_id, event_id)
+            )
+        """)
+
+        # Multi-Turn Conversation State & Pending Action Confirmation Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_state (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                stage TEXT DEFAULT 'idle',
+                pending_action_json TEXT DEFAULT '',
+                pending_expires_at TEXT DEFAULT '',
+                last_intent TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
+                PRIMARY KEY (tenant_id, phone_number)
+            )
+        """)
+
+        # Centralised Agent Action Audit Trail
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS action_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                actor TEXT DEFAULT '',
+                phone_number TEXT DEFAULT '',
+                action_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                risk_level TEXT DEFAULT 'low',
+                details_json TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Failed Webhook Job Dead-Letter Queue
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dead_letter_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                event_id TEXT DEFAULT '',
+                phone_number TEXT DEFAULT '',
+                payload_json TEXT DEFAULT '{}',
+                error_message TEXT DEFAULT '',
+                attempts INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'failed',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         _migrate_composite_tables(cursor)
 
-        # Ensure default workspace tenant row exists
+        # Ensure default workspace tenant row exists (verify token comes from env or random secret)
+        env_vtoken = (os.getenv("WHATSAPP_VERIFY_TOKEN", "") or "").strip() or f"gh_v_{secrets.token_urlsafe(16)}"
         cursor.execute(
-            "INSERT OR IGNORE INTO tenants (tenant_id, business_name, billing_mode) VALUES ('default', 'Growhaz Support Desk', 'managed_meta')"
+            "INSERT OR IGNORE INTO tenants (tenant_id, business_name, billing_mode, whatsapp_verify_token) VALUES ('default', 'Growhaz Support Desk', 'managed_meta', ?)",
+            (env_vtoken,),
         )
 
         # Seed default support templates for default tenant if completely empty
@@ -396,7 +461,7 @@ def ensure_tenant(tenant_id: str, email: str = "", full_name: str = "") -> dict:
     cur = conn.cursor()
     row = cur.execute("SELECT * FROM tenants WHERE tenant_id = ?", (tid,)).fetchone()
     if not row:
-        default_vtoken = f"growhaz_{tid[:8]}" if tid != "default" else "whatsapp_groq_bot_secret_123"
+        default_vtoken = f"gh_v_{secrets.token_urlsafe(24)}" if tid != "default" else ((os.getenv("WHATSAPP_VERIFY_TOKEN", "") or "").strip() or f"gh_v_{secrets.token_urlsafe(24)}")
         bname = f"{full_name}'s Business" if full_name else "My Business"
         cur.execute(
             """
@@ -450,7 +515,7 @@ def update_tenant_settings(tenant_id: str, **fields) -> dict:
     ensure_tenant(tid)
     allowed = {
         "business_name", "custom_system_prompt", "billing_mode",
-        "whatsapp_token", "whatsapp_phone_number_id", "whatsapp_verify_token",
+        "whatsapp_token", "whatsapp_phone_number_id", "whatsapp_verify_token", "meta_app_secret",
         "deepseek_api_key", "deepseek_model", "groq_api_key", "groq_model",
         "openrouter_api_key", "openrouter_guard_model",
     }
@@ -1610,3 +1675,212 @@ def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, 
     if neo:
         neo.upsert_customer_profile_node(tid, full_prof)
     return full_prof
+
+
+# ==================== RELIABILITY, DEDUP, STATE, AUDIT & DLQ ====================
+
+def claim_webhook_event(tenant_id: str, event_id: str, phone_number: str = "") -> bool:
+    """
+    Atomically claim a webhook message/event ID for idempotent processing.
+    Returns True if newly claimed, False if already processed (duplicate retry).
+    """
+    eid = str(event_id or "").strip()
+    if not eid:
+        return True
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT OR IGNORE INTO processed_events (tenant_id, event_id, phone_number) VALUES (?, ?, ?)",
+        (tid, eid, str(phone_number or "")),
+    )
+    claimed = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    if not claimed:
+        return False
+
+    store = _get_cloud_store()
+    if store and hasattr(store, "has_processed_event") and store.has_processed_event(tid, eid):
+        return False
+    if store and hasattr(store, "save_processed_event"):
+        store.save_processed_event({
+            "tenant_id": tid,
+            "event_id": eid,
+            "phone_number": str(phone_number or ""),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    return True
+
+
+def get_conversation_state(tenant_id: str, phone_number: str) -> dict:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    norm = normalize_phone_key(phone_number) or str(phone_number or "").replace("+", "").strip()
+    if not norm:
+        return {"tenant_id": tid, "phone_number": "", "stage": "idle", "pending_action": None}
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM conversation_state WHERE tenant_id = ? AND phone_number = ?",
+        (tid, norm),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {"tenant_id": tid, "phone_number": norm, "stage": "idle", "pending_action": None, "pending_expires_at": "", "last_intent": ""}
+    d = dict(row)
+    pending = None
+    if d.get("pending_action_json"):
+        try:
+            pending = json.loads(d["pending_action_json"])
+        except Exception:
+            pending = None
+    d["pending_action"] = pending
+    return d
+
+
+def set_conversation_state(
+    tenant_id: str,
+    phone_number: str,
+    stage: str = "idle",
+    pending_action: dict = None,
+    pending_expires_at: str = "",
+    last_intent: str = "",
+) -> dict:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    norm = normalize_phone_key(phone_number) or str(phone_number or "").replace("+", "").strip()
+    if not norm:
+        return {}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    pending_str = json.dumps(pending_action) if pending_action else ""
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO conversation_state (tenant_id, phone_number, stage, pending_action_json, pending_expires_at, last_intent, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tenant_id, phone_number) DO UPDATE SET
+            stage = excluded.stage,
+            pending_action_json = excluded.pending_action_json,
+            pending_expires_at = excluded.pending_expires_at,
+            last_intent = excluded.last_intent,
+            updated_at = excluded.updated_at
+        """,
+        (tid, norm, str(stage or "idle"), pending_str, str(pending_expires_at or ""), str(last_intent or ""), now_iso),
+    )
+    conn.commit()
+    conn.close()
+    store = _get_cloud_store()
+    if store and hasattr(store, "upsert_conversation_state"):
+        store.upsert_conversation_state({
+            "tenant_id": tid,
+            "phone_number": norm,
+            "stage": str(stage or "idle"),
+            "pending_action_json": pending_str,
+            "pending_expires_at": str(pending_expires_at or ""),
+            "last_intent": str(last_intent or ""),
+            "updated_at": now_iso,
+        })
+    return get_conversation_state(tid, norm)
+
+
+def clear_conversation_state(tenant_id: str, phone_number: str) -> bool:
+    set_conversation_state(tenant_id, phone_number, stage="idle", pending_action=None, pending_expires_at="", last_intent="cleared")
+    return True
+
+
+def log_action_audit(
+    tenant_id: str,
+    actor: str,
+    action_name: str,
+    status: str,
+    risk_level: str = "low",
+    phone_number: str = "",
+    details: dict = None,
+) -> int:
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        details_str = json.dumps(details or {})[:2000]
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO action_audit (tenant_id, actor, phone_number, action_name, status, risk_level, details_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (tid, str(actor or ""), str(phone_number or ""), str(action_name), str(status), str(risk_level), details_str),
+        )
+        aid = cur.lastrowid
+        conn.commit()
+        row = cur.execute("SELECT * FROM action_audit WHERE id = ?", (aid,)).fetchone()
+        conn.close()
+        store = _get_cloud_store()
+        if row and store and hasattr(store, "save_action_audit"):
+            store.save_action_audit(dict(row))
+        return aid or 0
+    except Exception:
+        return 0
+
+
+def get_action_audits(tenant_id: str = "default", limit: int = 50) -> list:
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM action_audit WHERE tenant_id = ? ORDER BY id DESC LIMIT ?",
+            (tid, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def save_dead_letter_job(
+    tenant_id: str,
+    event_id: str,
+    phone_number: str,
+    payload: dict,
+    error_message: str,
+    attempts: int = 3,
+) -> int:
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        payload_str = json.dumps(payload or {})[:4000]
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO dead_letter_jobs (tenant_id, event_id, phone_number, payload_json, error_message, attempts, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'failed')
+            """,
+            (tid, str(event_id or ""), str(phone_number or ""), payload_str, str(error_message or "")[:1000], int(attempts)),
+        )
+        jid = cur.lastrowid
+        conn.commit()
+        row = cur.execute("SELECT * FROM dead_letter_jobs WHERE id = ?", (jid,)).fetchone()
+        conn.close()
+        store = _get_cloud_store()
+        if row and store and hasattr(store, "save_dead_letter_job"):
+            store.save_dead_letter_job(dict(row))
+        return jid or 0
+    except Exception:
+        return 0
+
+
+def get_dead_letter_jobs(tenant_id: str = "default", limit: int = 30) -> list:
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM dead_letter_jobs WHERE tenant_id = ? ORDER BY id DESC LIMIT ?",
+            (tid, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []

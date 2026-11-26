@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS public.wa_tenants (
     whatsapp_token TEXT NOT NULL DEFAULT '',
     whatsapp_phone_number_id TEXT NOT NULL DEFAULT '',
     whatsapp_verify_token TEXT NOT NULL DEFAULT '',
+    meta_app_secret TEXT NOT NULL DEFAULT '',
     deepseek_api_key TEXT NOT NULL DEFAULT '',
     deepseek_model TEXT NOT NULL DEFAULT 'deepseek-chat',
     groq_api_key TEXT NOT NULL DEFAULT '',
@@ -181,7 +182,69 @@ CREATE TABLE IF NOT EXISTS public.wa_graph_episodes (
 );
 CREATE INDEX IF NOT EXISTS idx_wa_graph_episodes_lookup ON public.wa_graph_episodes (tenant_id, phone, timestamp DESC);
 
--- Lock down all tables via RLS (only backend service/secret key bypasses RLS)
+-- 13. Webhook Event Idempotency / Message Deduplication
+CREATE TABLE IF NOT EXISTS public.wa_processed_events (
+    event_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    event_id TEXT NOT NULL,
+    phone_number TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wa_processed_events_tenant ON public.wa_processed_events (tenant_id, created_at DESC);
+
+-- 14. Multi-Turn Conversation State & Pending Action Confirmations
+CREATE TABLE IF NOT EXISTS public.wa_conversation_state (
+    state_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    phone_number TEXT NOT NULL,
+    stage TEXT NOT NULL DEFAULT 'idle',
+    pending_action_json TEXT NOT NULL DEFAULT '',
+    pending_expires_at TEXT NOT NULL DEFAULT '',
+    last_intent TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+
+-- 15. Immutable Agent Tool Request, Approval & Execution Audit Trail
+CREATE TABLE IF NOT EXISTS public.wa_action_audit (
+    audit_key TEXT PRIMARY KEY,
+    id BIGINT NOT NULL DEFAULT 0,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    actor TEXT NOT NULL DEFAULT '',
+    phone_number TEXT NOT NULL DEFAULT '',
+    action_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    risk_level TEXT NOT NULL DEFAULT 'low',
+    details_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wa_action_audit_tenant ON public.wa_action_audit (tenant_id, id DESC);
+
+-- 16. Failed Webhook Job Dead-Letter Queue
+CREATE TABLE IF NOT EXISTS public.wa_dead_letter_jobs (
+    job_key TEXT PRIMARY KEY,
+    id BIGINT NOT NULL DEFAULT 0,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    event_id TEXT NOT NULL DEFAULT '',
+    phone_number TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    error_message TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'failed',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wa_dead_letter_tenant ON public.wa_dead_letter_jobs (tenant_id, id DESC);
+
+-- 17. DNA Holographic Memory Persistent Vector Snapshots (HRR/VSA Backup)
+CREATE TABLE IF NOT EXISTS public.wa_dna_snapshots (
+    snapshot_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    atoms_json TEXT NOT NULL DEFAULT '{}',
+    relations_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+
+-- Lock down all 17 tables via RLS (only backend service/secret key bypasses RLS)
 ALTER TABLE public.wa_tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wa_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wa_customer_profiles ENABLE ROW LEVEL SECURITY;
@@ -194,3 +257,8 @@ ALTER TABLE public.wa_security_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wa_graph_nodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wa_graph_edges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wa_graph_episodes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wa_processed_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wa_conversation_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wa_action_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wa_dead_letter_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wa_dna_snapshots ENABLE ROW LEVEL SECURITY;

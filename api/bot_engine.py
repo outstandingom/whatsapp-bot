@@ -614,10 +614,14 @@ def generate_ai_reply(
     tenant_config: Optional[dict] = None,
     openrouter_api_key: str = "",
     openrouter_guard_model: str = "",
+    channel: str = "whatsapp",
+    sender_name: str = "",
+    is_voice: bool = False,
 ) -> tuple[str, float, str]:
     """
     Generate consultative Customer Support response with:
-      0. OpenRouter + Regex Prompt-Injection & Sensitive-Data Shield
+      0. OpenRouter + Regex Fail-Safe Prompt-Injection & Sensitive-Data Shield
+      0.5 Centralised Agent Guardrails (Structured Intent, Confirmations, Allowlisted Tools, Audit)
       1. Tenant-isolated DB Profile + Supabase Live DNA Knowledge Graph + DNA Modal Memory
       2. DeepSeek AI -> Groq AI -> Smart Consultative Fallback
       3. Outbound Secret & Prompt Redaction Shield
@@ -626,7 +630,7 @@ def generate_ai_reply(
     tid = str(tenant_id or "default").strip() or "default"
     tcfg = tenant_config or {}
 
-    # STEP 0: Prompt-Injection & Data-Exfiltration Guard (before touching memory/DB/LLM)
+    # STEP 0: Prompt-Injection & Data-Exfiltration Guard (fail-safe before touching memory/DB/LLM)
     try:
         from api import db, security_guard
         guard_key = (openrouter_api_key or tcfg.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY", "")).strip()
@@ -645,10 +649,37 @@ def generate_ai_reply(
                 reason=guard_res.get("reason", "Prompt injection / sensitive data attempt"),
                 blocked=True,
             )
+            db.log_action_audit(
+                tenant_id=tid,
+                actor=f"{channel}:{customer_id or 'anon'}",
+                phone_number=customer_id or "",
+                action_name="security_guard_block",
+                status="blocked",
+                risk_level="high",
+                details={"detector": guard_res.get("detector", ""), "rule": guard_res.get("rule", "")},
+            )
             latency_val = round((time.time() - start) * 1000, 2)
             return security_guard.SAFE_BLOCK_REPLY, max(latency_val, 5.0), f"Security Shield ({guard_res.get('detector', 'Guard')})"
     except Exception as ge:
         logger.debug(f"Security guard check warning: {ge}")
+
+    # STEP 0.5: Centralised Guardrails, Action Confirmation & Allowlisted Tool Execution
+    if customer_id:
+        try:
+            from api import agent_guardrails
+            guarded = agent_guardrails.handle_guarded_turn(
+                tenant_id=tid,
+                phone_number=customer_id,
+                user_text=user_prompt,
+                sender_name=sender_name,
+                channel=channel,
+                is_voice=is_voice,
+            )
+            if guarded:
+                latency_val = round((time.time() - start) * 1000, 2)
+                return guarded["reply"], max(latency_val, 5.0), guarded["engine"]
+        except Exception as age:
+            logger.debug(f"Agent guardrail check warning: {age}")
 
     # Load persistent customer/business profile & extract any newly stated facts right away
     profile: dict = {}

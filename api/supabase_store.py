@@ -295,6 +295,7 @@ class SupabaseStore:
             "whatsapp_token": str(tenant.get("whatsapp_token") or ""),
             "whatsapp_phone_number_id": str(tenant.get("whatsapp_phone_number_id") or ""),
             "whatsapp_verify_token": str(tenant.get("whatsapp_verify_token") or ""),
+            "meta_app_secret": str(tenant.get("meta_app_secret") or ""),
             "deepseek_api_key": str(tenant.get("deepseek_api_key") or ""),
             "deepseek_model": str(tenant.get("deepseek_model") or "deepseek-chat"),
             "groq_api_key": str(tenant.get("groq_api_key") or ""),
@@ -504,6 +505,99 @@ class SupabaseStore:
             "created_at": str(ev.get("created_at") or _now_iso()),
         }
         return self._upsert("wa_security_events", row, on_conflict="event_key")
+
+    def save_processed_event(self, ev: dict) -> bool:
+        tid = str(ev.get("tenant_id") or "default")
+        eid = str(ev.get("event_id") or "")
+        if not eid:
+            return True
+        row = {
+            "event_key": f"{tid}:{eid}",
+            "tenant_id": tid,
+            "event_id": eid,
+            "phone_number": str(ev.get("phone_number") or ""),
+            "created_at": str(ev.get("created_at") or _now_iso()),
+        }
+        return self._upsert("wa_processed_events", row, on_conflict="event_key")
+
+    def has_processed_event(self, tenant_id: str, event_id: str) -> bool:
+        tid = str(tenant_id or "default")
+        eid = str(event_id or "").strip()
+        if not eid:
+            return False
+        rows = self._select("wa_processed_events", params={"event_key": f"eq.{tid}:{eid}", "limit": 1}, select="event_key")
+        return bool(rows)
+
+    def upsert_conversation_state(self, state: dict) -> bool:
+        tid = str(state.get("tenant_id") or "default")
+        phone = str(state.get("phone_number") or "")
+        if not phone:
+            return False
+        row = {
+            "state_key": f"{tid}:{phone}",
+            "tenant_id": tid,
+            "phone_number": phone,
+            "stage": str(state.get("stage") or "idle"),
+            "pending_action_json": str(state.get("pending_action_json") or ""),
+            "pending_expires_at": str(state.get("pending_expires_at") or ""),
+            "last_intent": str(state.get("last_intent") or ""),
+            "updated_at": str(state.get("updated_at") or _now_iso()),
+        }
+        return self._upsert("wa_conversation_state", row, on_conflict="state_key")
+
+    def save_action_audit(self, audit: dict) -> bool:
+        tid = str(audit.get("tenant_id") or "default")
+        aid = int(audit.get("id") or 0)
+        row = {
+            "audit_key": f"{tid}:{aid}",
+            "id": aid,
+            "tenant_id": tid,
+            "actor": str(audit.get("actor") or ""),
+            "phone_number": str(audit.get("phone_number") or ""),
+            "action_name": str(audit.get("action_name") or ""),
+            "status": str(audit.get("status") or ""),
+            "risk_level": str(audit.get("risk_level") or "low"),
+            "details_json": str(audit.get("details_json") or "{}")[:2000],
+            "created_at": str(audit.get("created_at") or _now_iso()),
+        }
+        return self._upsert("wa_action_audit", row, on_conflict="audit_key")
+
+    def save_dead_letter_job(self, job: dict) -> bool:
+        tid = str(job.get("tenant_id") or "default")
+        jid = int(job.get("id") or 0)
+        row = {
+            "job_key": f"{tid}:{jid}",
+            "id": jid,
+            "tenant_id": tid,
+            "event_id": str(job.get("event_id") or ""),
+            "phone_number": str(job.get("phone_number") or ""),
+            "payload_json": str(job.get("payload_json") or "{}")[:4000],
+            "error_message": str(job.get("error_message") or "")[:1000],
+            "attempts": int(job.get("attempts") or 0),
+            "status": str(job.get("status") or "failed"),
+            "created_at": str(job.get("created_at") or _now_iso()),
+            "updated_at": str(job.get("updated_at") or _now_iso()),
+        }
+        return self._upsert("wa_dead_letter_jobs", row, on_conflict="job_key")
+
+    def save_dna_snapshot(self, tenant_id: str, atoms_json: str, relations_json: str) -> bool:
+        tid = str(tenant_id or "default")
+        return self._upsert(
+            "wa_dna_snapshots",
+            {
+                "snapshot_key": tid,
+                "tenant_id": tid,
+                "atoms_json": atoms_json,
+                "relations_json": relations_json,
+                "updated_at": _now_iso(),
+            },
+            on_conflict="snapshot_key",
+        )
+
+    def load_dna_snapshot(self, tenant_id: str) -> Optional[dict]:
+        tid = str(tenant_id or "default")
+        rows = self._select("wa_dna_snapshots", params={"snapshot_key": f"eq.{tid}", "limit": 1})
+        return rows[0] if rows else None
 
     # ====================================================================
     # LIVE DNA KNOWLEDGE GRAPH IN SUPABASE POSTGRES
@@ -804,10 +898,10 @@ class SupabaseStore:
                     INSERT INTO tenants (
                         tenant_id, email, full_name, business_name, custom_system_prompt,
                         billing_mode, plan_tier, plan_quota, plan_used, plan_expires_at, demo_used,
-                        whatsapp_token, whatsapp_phone_number_id, whatsapp_verify_token,
+                        whatsapp_token, whatsapp_phone_number_id, whatsapp_verify_token, meta_app_secret,
                         deepseek_api_key, deepseek_model, groq_api_key, groq_model,
                         openrouter_api_key, openrouter_guard_model
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         tid, p.get("email", ""), p.get("full_name", ""), p.get("business_name", ""),
@@ -815,7 +909,8 @@ class SupabaseStore:
                         p.get("plan_tier", "payg"), int(p.get("plan_quota") or 0), int(p.get("plan_used") or 0),
                         p.get("plan_expires_at", ""), int(p.get("demo_used") or 0),
                         p.get("whatsapp_token", ""), p.get("whatsapp_phone_number_id", ""),
-                        p.get("whatsapp_verify_token", ""), p.get("deepseek_api_key", ""),
+                        p.get("whatsapp_verify_token", ""), p.get("meta_app_secret", ""),
+                        p.get("deepseek_api_key", ""),
                         p.get("deepseek_model", "deepseek-chat"), p.get("groq_api_key", ""),
                         p.get("groq_model", "llama-3.3-70b-versatile"),
                         p.get("openrouter_api_key", ""),
@@ -972,6 +1067,72 @@ class SupabaseStore:
             except Exception:
                 pass
 
+        for p in self._select_all("wa_processed_events"):
+            if not p.get("event_id"):
+                continue
+            try:
+                cur.execute(
+                    "INSERT OR IGNORE INTO processed_events (tenant_id, event_id, phone_number, created_at) VALUES (?, ?, ?, ?)",
+                    (p.get("tenant_id") or "default", p["event_id"], p.get("phone_number") or "", p.get("created_at") or _now_iso()),
+                )
+            except Exception:
+                pass
+
+        for p in self._select_all("wa_conversation_state"):
+            if not p.get("phone_number"):
+                continue
+            try:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO conversation_state (tenant_id, phone_number, stage, pending_action_json, pending_expires_at, last_intent, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        p.get("tenant_id") or "default", p["phone_number"], p.get("stage") or "idle",
+                        p.get("pending_action_json") or "", p.get("pending_expires_at") or "",
+                        p.get("last_intent") or "", p.get("updated_at") or _now_iso(),
+                    ),
+                )
+            except Exception:
+                pass
+
+        for p in self._select_all("wa_action_audit"):
+            if p.get("id") is None:
+                continue
+            try:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO action_audit (id, tenant_id, actor, phone_number, action_name, status, risk_level, details_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(p["id"]), p.get("tenant_id") or "default", p.get("actor") or "",
+                        p.get("phone_number") or "", p.get("action_name") or "", p.get("status") or "",
+                        p.get("risk_level") or "low", p.get("details_json") or "{}", p.get("created_at") or _now_iso(),
+                    ),
+                )
+            except Exception:
+                pass
+
+        for p in self._select_all("wa_dead_letter_jobs"):
+            if p.get("id") is None:
+                continue
+            try:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO dead_letter_jobs (id, tenant_id, event_id, phone_number, payload_json, error_message, attempts, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(p["id"]), p.get("tenant_id") or "default", p.get("event_id") or "",
+                        p.get("phone_number") or "", p.get("payload_json") or "{}", p.get("error_message") or "",
+                        int(p.get("attempts") or 0), p.get("status") or "failed",
+                        p.get("created_at") or _now_iso(), p.get("updated_at") or _now_iso(),
+                    ),
+                )
+            except Exception:
+                pass
+
         conn.commit()
 
         # 7. Batch-backfill local SQLite rows missing in Supabase
@@ -993,6 +1154,7 @@ class SupabaseStore:
                     "whatsapp_token": str(t.get("whatsapp_token") or ""),
                     "whatsapp_phone_number_id": str(t.get("whatsapp_phone_number_id") or ""),
                     "whatsapp_verify_token": str(t.get("whatsapp_verify_token") or ""),
+                    "meta_app_secret": str(t.get("meta_app_secret") or ""),
                     "deepseek_api_key": str(t.get("deepseek_api_key") or ""),
                     "deepseek_model": str(t.get("deepseek_model") or "deepseek-chat"),
                     "groq_api_key": str(t.get("groq_api_key") or ""),

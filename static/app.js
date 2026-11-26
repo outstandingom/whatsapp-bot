@@ -2304,9 +2304,13 @@ function deleteChatFromMenu() {
                 document.getElementById('set-groq-model').value = s.groq_model || 'llama-3.3-70b-versatile';
                 if (s.whatsapp_token_set) document.getElementById('set-meta-token').placeholder = `Configured: ${s.whatsapp_token_masked}`;
                 document.getElementById('set-meta-phone-id').value = s.whatsapp_phone_number_id || '';
-                document.getElementById('set-meta-verify-token').value = s.whatsapp_verify_token || 'whatsapp_groq_bot_secret_123';
+                document.getElementById('set-meta-verify-token').value = s.whatsapp_verify_token || '';
+                const appSecEl = document.getElementById('set-meta-app-secret');
+                if (appSecEl && s.meta_app_secret_set) {
+                    appSecEl.placeholder = `Configured: ${s.meta_app_secret_masked}`;
+                }
                 const whTokLbl = document.getElementById('webhook-token-label');
-                if (whTokLbl) whTokLbl.innerText = s.whatsapp_verify_token || 'whatsapp_groq_bot_secret_123';
+                if (whTokLbl) whTokLbl.innerText = s.whatsapp_verify_token || '(configured in Settings)';
 
                 const orSec = document.getElementById('set-openrouter-section');
                 if (orSec) {
@@ -2341,6 +2345,7 @@ function deleteChatFromMenu() {
             const metaToken = document.getElementById('set-meta-token').value.trim();
             const phoneId = document.getElementById('set-meta-phone-id').value.trim();
             const verifyToken = document.getElementById('set-meta-verify-token').value.trim();
+            const metaAppSecret = (document.getElementById('set-meta-app-secret')?.value || '').trim();
             const orSec = document.getElementById('set-openrouter-section');
             const orKey = (orSec && !orSec.classList.contains('hidden')) ? (document.getElementById('set-openrouter-key')?.value || '').trim() : '';
             const orModel = (orSec && !orSec.classList.contains('hidden')) ? (document.getElementById('set-openrouter-model')?.value || '') : '';
@@ -2360,6 +2365,7 @@ function deleteChatFromMenu() {
                 whatsapp_phone_number_id: phoneId,
                 whatsapp_verify_token: verifyToken
             };
+            if (metaAppSecret) bodyPayload.meta_app_secret = metaAppSecret;
             if (orKey) bodyPayload.openrouter_api_key = orKey;
             if (orModel) bodyPayload.openrouter_guard_model = orModel;
 

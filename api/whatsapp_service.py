@@ -206,6 +206,16 @@ def download_meta_media(media_id: str, default_ext: str = ".bin", token: str = N
                     ext = ".pdf"
                 elif "webp" in mime_type:
                     ext = ".webp"
+                elif "ogg" in mime_type or "opus" in mime_type:
+                    ext = ".ogg"
+                elif "mpeg" in mime_type or "mp3" in mime_type:
+                    ext = ".mp3"
+                elif "mp4" in mime_type or "m4a" in mime_type or "aac" in mime_type:
+                    ext = ".m4a"
+                elif "wav" in mime_type:
+                    ext = ".wav"
+                elif "webm" in mime_type:
+                    ext = ".webm"
 
                 fname = f"wa_{media_id}{ext}"
                 local_path = os.path.join(UPLOAD_DIR, fname)
