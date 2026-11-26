@@ -116,11 +116,22 @@ async def receive_message(request: Request):
                         bot_active = db.is_bot_enabled_for_contact(sender)
 
                         if user_text and bot_active:
+                            deepseek_key = get_env_var("DEEPSEEK_API_KEY")
+                            deepseek_model = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
                             groq_key = get_env_var("GROQ_API_KEY")
                             groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
                             
-                            # 2. Generate Customer Support reply
-                            reply, latency_ms, engine_used = generate_ai_reply(user_text, groq_key, groq_model)
+                            # 2. Generate Customer Support reply with full customer identity
+                            reply, latency_ms, engine_used = generate_ai_reply(
+                                user_prompt=user_text,
+                                deepseek_api_key=deepseek_key,
+                                deepseek_model=deepseek_model,
+                                groq_api_key=groq_key,
+                                groq_model=groq_model,
+                                customer_id=sender,
+                                tenant_id="default",
+                                sender_name=sender_name,
+                            )
                             
                             # 3. Send back to WhatsApp user
                             success, send_res = send_meta_whatsapp_message(sender, reply)

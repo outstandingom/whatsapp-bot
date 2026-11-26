@@ -827,9 +827,24 @@ def generate_ai_reply(
             logger.debug(f"Cloud knowledge graph warning: {ne}")
         return None, ""
 
-    with ThreadPoolExecutor(max_workers=2) as pre_pool:
+    scoped_cust = f"{tid}:{customer_id or 'guest'}"
+
+    def _run_dna_fetch():
+        try:
+            from api.dna_service import dynamic_dna
+            res = dynamic_dna.process_message_through_dna(
+                customer_id=scoped_cust,
+                message=user_prompt,
+            )
+            return dynamic_dna, res
+        except Exception as de:
+            logger.debug(f"DNA processing error: {de}")
+            return None, {}
+
+    with ThreadPoolExecutor(max_workers=3) as pre_pool:
         f_guard = pre_pool.submit(_run_security_guard)
         f_subgraph = pre_pool.submit(_run_subgraph_fetch)
+        f_dna = pre_pool.submit(_run_dna_fetch)
         guard_res = f_guard.result()
 
         if guard_res.get("blocked"):
@@ -858,6 +873,12 @@ def generate_ai_reply(
             cloud_store, neo_graph_context = f_subgraph.result(timeout=1.5)
         except Exception:
             cloud_store, neo_graph_context = None, ""
+
+        try:
+            dynamic_dna_ref, dna_analysis = f_dna.result(timeout=2.0)
+        except Exception:
+            dynamic_dna_ref, dna_analysis = None, {}
+        graph_context = dna_analysis.get("graph_context", "") if isinstance(dna_analysis, dict) else ""
 
     # STEP 0.5: Centralised Guardrails, Action Confirmation & Allowlisted Tool Execution
     if customer_id:
@@ -896,21 +917,6 @@ def generate_ai_reply(
             logger.debug(f"Profile DB error: {e}")
 
     # STEP 1 & 2: Sync Episode & Relationships into Supabase Cloud DB + DNA Modal Knowledge Graph
-    dna_analysis = {}
-    graph_context = ""
-    scoped_cust = f"{tid}:{customer_id or 'guest'}"
-    dynamic_dna_ref = None
-    try:
-        from api.dna_service import dynamic_dna
-        dynamic_dna_ref = dynamic_dna
-        dna_analysis = dynamic_dna.process_message_through_dna(
-            customer_id=scoped_cust,
-            message=user_prompt
-        )
-        graph_context = dna_analysis.get("graph_context", "")
-    except Exception as e:
-        logger.debug(f"DNA processing error: {e}")
-
     detected_competitors = extract_competitors_from_text(user_prompt)
     if detected_competitors and dynamic_dna_ref and getattr(dynamic_dna_ref, "system", None):
         try:
