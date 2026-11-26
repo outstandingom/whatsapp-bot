@@ -251,7 +251,8 @@ def extract_profile_updates_from_text(user_text: str, existing_profile: Optional
 
     # 3. Business name extraction (English, Hinglish, Hindi, shorthand `business = X`, `business name X`, etc.)
     _is_asking_own_bname = bool(re.search(
-        r"\b(?:what(?:'s|\s+is|\s+was)?|tell\s+me|do\s+you\s+know|remember|kya\s+hai|kya\s+tha|batao)\s+(?:my|our|mera|mere|hamara)?\s*(?:business|shop|store|company|brand|firm)\s*(?:name|naam|nam)?\b",
+        r"\b(?:what(?:'s|\s+is|\s+was)?|tell\s+me|do\s+you\s+know|remember|kya\s+hai|kya\s+tha|batao)\s+(?:my|our|mera|mere|hamara)?\s*(?:business|shop|store|company|brand|firm)\s*(?:name|naam|nam)?\b"
+        r"|\b(?:my|our|mera|mere|hamara)\s+(?:business|shop|store|company|brand|firm)\s*(?:ka|ki|ke)?\s*(?:name|naam|nam)?\s+(?:kya|what|which|kaun|konsa)\b",
         low,
     ))
     bname_patterns = [
