@@ -982,7 +982,7 @@ class SupabaseStore:
             if cur.rowcount > 0:
                 summary["restored_messages"] += 1
 
-        # 3. Customer Profiles
+        # 3. Customer Profiles (use REPLACE so Supabase overwrites stale local data)
         profs = self._select_all("wa_customer_profiles")
         for p in profs:
             phone = p.get("phone_number")
@@ -990,7 +990,7 @@ class SupabaseStore:
                 continue
             cur.execute(
                 """
-                INSERT OR IGNORE INTO customer_profiles (
+                INSERT OR REPLACE INTO customer_profiles (
                     phone_number, tenant_id, contact_name, business_name, business_category,
                     area, has_website, website_url, existing_ecosystem, pain_points, goals,
                     data_source, updated_at, created_at

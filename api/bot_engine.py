@@ -471,6 +471,14 @@ def run_smart_customer_support_fallback(
     customer_name = contact_name or customer_facts.get("has_name") or ""
     direct_answers = dna.get("direct_answers", {})
 
+    # Anti-repetition: if last bot reply already asked for business details, do NOT ask again
+    _DISCOVERY_PHRASES = [
+        "business name", "what type of business", "what kind of business",
+        "type of work", "share your business", "tell me about your business",
+        "could you share", "could you also share",
+    ]
+    last_already_asked_discovery = any(phrase in last_bot_reply.lower() for phrase in _DISCOVERY_PHRASES) if last_bot_reply else False
+
     # 0a. Immediate business discovery acknowledgment & tailored ecosystem recommendation
     if any(k in new_info for k in ("business_name", "business_category", "has_website", "website_url", "area", "existing_ecosystem")):
         if b_name or b_cat:
@@ -482,6 +490,8 @@ def run_smart_customer_support_fallback(
             ack = f"Got it — I've saved {' '.join(ack_parts) or 'your business details'} to our memory! 😊\n\n"
             return ack + _build_ecosystem_recommendation(p_data)
         web_note = "you don't have a website yet" if new_info.get("has_website") == "no" else "your online setup details"
+        if last_already_asked_discovery:
+            return f"Got it — noted that {web_note}! 😊 Feel free to share more whenever you're ready."
         return (
             f"Got it — noted that {web_note}! 😊\n\n"
             "Before I suggest the best way to plug technology into your workflow, could you also share your *business name* and *what type of business* you run?"
@@ -639,6 +649,8 @@ def run_smart_customer_support_fallback(
                 "• Full Pricing: https://www.growhaz.in/pricing"
             )
         if not has_business_ctx:
+            if last_already_asked_discovery:
+                return "I'd be happy to help! Just share whatever details you're comfortable with, and I'll suggest what fits best for your setup. 😊"
             first_greet = f"Hi {customer_name.split()[0]}! 👋 " if customer_name else "Hi there! 👋 "
             return (
                 f"{first_greet}Before I suggest any service, I'd love to understand your business first so I only recommend technology that actually fits your existing workflow.\n\n"
@@ -678,6 +690,8 @@ def run_smart_customer_support_fallback(
     # 8. Confirmation / "Yes" / "Sure"
     if any(w in words for w in ["yes", "yeah", "yep", "sure", "ok", "okay", "interested", "proceed"]) or any(phrase in p for phrase in ["go ahead", "start now"]):
         if not has_business_ctx:
+            if last_already_asked_discovery:
+                return "No worries! Whenever you're ready, just share your business details and I'll prepare a tailored recommendation. 😊"
             return (
                 "Wonderful! 😊 First, please share:\n"
                 "1️⃣ Your *business name* & category\n"

@@ -1564,6 +1564,34 @@ def get_customer_profile(phone_number: str, tenant_id: str = "default") -> dict:
     has_web = _is_meaningful_profile_val(profile["has_website"], "has_website") or bool(profile["website_url"])
     has_eco = _is_meaningful_profile_val(profile["existing_ecosystem"], "existing_ecosystem")
 
+    # Fallback: If local SQLite profile is mostly empty, try fetching from Supabase cloud
+    if not has_bname and not has_bcat:
+        try:
+            store = _get_cloud_store()
+            if store:
+                cloud_prof_key = f"{tid}:{key or raw_clean}"
+                cloud_rows = store._select(
+                    "wa_customer_profiles",
+                    params={"profile_key": f"eq.{cloud_prof_key}", "limit": 1},
+                )
+                if cloud_rows:
+                    cp = cloud_rows[0]
+                    for col in (
+                        "contact_name", "business_name", "business_category", "area",
+                        "has_website", "website_url", "existing_ecosystem",
+                        "pain_points", "goals", "data_source",
+                    ):
+                        cloud_val = str(cp.get(col) or "").strip()
+                        if cloud_val and not profile.get(col):
+                            profile[col] = cloud_val
+                    # Re-evaluate after cloud hydration
+                    has_bname = _is_meaningful_profile_val(profile["business_name"], "business_name")
+                    has_bcat = _is_meaningful_profile_val(profile["business_category"], "business_category")
+                    has_web = _is_meaningful_profile_val(profile["has_website"], "has_website") or bool(profile["website_url"])
+                    has_eco = _is_meaningful_profile_val(profile["existing_ecosystem"], "existing_ecosystem")
+        except Exception as cloud_err:
+            print(f"[DB] Supabase profile fallback warning: {cloud_err}")
+
     missing = []
     if not has_bname:
         missing.append("business_name")
