@@ -145,14 +145,14 @@ def _is_reply_relevant_to_query(user_query: str, reply_text: str) -> bool:
 
 def _clean_captured_phrase(phrase: str) -> str:
     """Trim trailing clauses/punctuation from regex-captured business names or areas."""
-    s = str(phrase or "").strip(" \t\r\n.,;:-'\"")
+    s = str(phrase or "").strip(" \t\r\n.,;:-='\"")
     s = re.split(
-        r"(?:\s*[,\n;|]|\s+(?:in|at|from|near|with|and\s+(?:my|our|the)?\s*(?:website|site|url|link|we|i)|and we|we take|we use|having|which|that|no website|website|already have|don'?t have)\b)",
+        r"(?:\s*[,\n;|]|\s+(?:in|at|from|near|with|and\s+(?:my|our|the)?\s*(?:website|site|url|link|we|i)|and we|we take|we use|having|which|that|no website|website|already have|don'?t have|hai|hain|tha|thi|aur|है|हैं|था|थी)\b|\s+\bh\b(?:\s|$))",
         s,
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
-    return s.strip(" \t\r\n.,;:-'\"")
+    return s.strip(" \t\r\n.,;:-='\"")
 
 
 _URL_RE = re.compile(
@@ -249,30 +249,47 @@ def extract_profile_updates_from_text(user_text: str, existing_profile: Optional
         ]):
             updates["has_website"] = "yes"
 
-    # 3. Business name extraction from explicit introduction patterns
+    # 3. Business name extraction (English, Hinglish, Hindi, shorthand `business = X`, `business name X`, etc.)
+    _is_asking_own_bname = bool(re.search(
+        r"\b(?:what(?:'s|\s+is|\s+was)?|tell\s+me|do\s+you\s+know|remember|kya\s+hai|kya\s+tha|batao)\s+(?:my|our|mera|mere|hamara)?\s*(?:business|shop|store|company|brand|firm)\s*(?:name|naam|nam)?\b",
+        low,
+    ))
     bname_patterns = [
-        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+name\s+(?:is|was|were|hai|h|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
-        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+(?:is|was)\s+(?:a\s+)?([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        # "this was my business name X" / "this is my business name X"
+        r"\bthis\s+(?:is|was)\s+(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+name\s*(?:is|was|were|hai|h|=|:|-)?\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        # "this my business is X" / "my/our business name is/was/=/: X"
+        r"\b(?:this\s+)?(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+name\s*(?:is|was|were|hai|h|=|:|-)?\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:this\s+)?(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+(?:is|was|=|:)\s+(?:a\s+)?([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        # Hinglish: "mere/mera/hamare/hamara business/dukan/shop ka nam/naam/name X hai"
+        r"\b(?:mera|mere|meri|hamara|hamare|humara|humare|apna|apne)\s+(?:business|dukan|dukaan|shop|store|company|brand|firm|kaam)\s+(?:ka|ki|ke)\s+(?:naam|nam|name)\s*(?:is|was|hai|h|=|:|-)?\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:mera|mere|meri|hamara|hamare|humara|humare)\s+(?:business|dukan|dukaan|shop|store|company|brand|firm)\s*(?:=|:|-)?\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        # Hindi Devanagari: "मेरा/मेरे/मेरी बिज़नेस/दुकान/कंपनी का नाम X है"
+        r"(?:मेरा|मेरे|मेरी|हमारा|हमारे)\s+(?:बिज़नेस|बिजनेस|व्यापार|दुकान|कंपनी|शॉप)\s+(?:का|की|के)\s+नाम\s*[:=\-]?\s*([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        # Shorthand: "business name: X" / "business name = X" / "business name X" / "business = X"
         r"\b(?:business|shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+(?:is\s+|was\s+)?(?:called|named)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
-        r"\b(?:shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+name\s+(?:is|was|hai|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:business|shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+(?:name|naam|nam)\s*(?:is|was|hai|=|:|-)?\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:business|shop|store|company|brand|firm)\s*[:=]\s*([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
         r"\b(?:we|i)\s+(?:run|own|manage)\s+([A-Z][A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
     ]
     generic_bname_rejects = {
         "a", "an", "the", "my business", "our business", "online", "offline", "local business",
-        "small business", "new business", "a shop", "a store", "a business", "website"
+        "small business", "new business", "a shop", "a store", "a business", "website",
+        "what", "which", "kya", "kaun", "konsa", "name", "naam", "nam", "hai", "was", "is"
     }
-    for pat in bname_patterns:
-        m = re.search(pat, text, flags=0 if r"([A-Z]" in pat else re.IGNORECASE)
-        if m and m.group(1):
-            candidate = _clean_captured_phrase(m.group(1))
-            if (
-                candidate
-                and len(candidate) >= 2
-                and candidate.lower() not in generic_bname_rejects
-                and not re.match(r"^(?:a|an|the)\s+(?:small|local|new|online|offline)?\s*\w+$", candidate.lower())
-            ):
-                updates["business_name"] = candidate
-                break
+    if not _is_asking_own_bname:
+        for pat in bname_patterns:
+            m = re.search(pat, text, flags=0 if r"([A-Z]" in pat else re.IGNORECASE)
+            if m and m.group(1):
+                candidate = _clean_captured_phrase(m.group(1))
+                if (
+                    candidate
+                    and len(candidate) >= 2
+                    and candidate.lower() not in generic_bname_rejects
+                    and not re.match(r"^(?:what|which|who|kya|kaun|konsa|how)\b", candidate.lower())
+                    and not re.match(r"^(?:a|an|the)\s+(?:small|local|new|online|offline)?\s*\w+$", candidate.lower())
+                ):
+                    updates["business_name"] = candidate
+                    break
 
     # 4. Business category extraction
     for kw_list, label in _CATEGORY_KEYWORD_MAP:
