@@ -12,6 +12,7 @@ logger = logging.getLogger("bot_engine")
 
 _ORIG_HTTPX_CLIENT = httpx.Client
 _SHARED_LLM_CLIENT: Optional[httpx.Client] = None
+_PRE_POOL = ThreadPoolExecutor(max_workers=12)
 
 
 def _get_llm_client(timeout_sec: float) -> tuple[httpx.Client, bool]:
@@ -146,7 +147,7 @@ def _clean_captured_phrase(phrase: str) -> str:
     """Trim trailing clauses/punctuation from regex-captured business names or areas."""
     s = str(phrase or "").strip(" \t\r\n.,;:-'\"")
     s = re.split(
-        r"(?:\s*[,\n;|]|\s+(?:in|at|from|near|with|and we|we take|we use|having|which|that|no website|website|already have|don'?t have)\b)",
+        r"(?:\s*[,\n;|]|\s+(?:in|at|from|near|with|and\s+(?:my|our|the)?\s*(?:website|site|url|link|we|i)|and we|we take|we use|having|which|that|no website|website|already have|don'?t have)\b)",
         s,
         maxsplit=1,
         flags=re.IGNORECASE,
@@ -250,10 +251,10 @@ def extract_profile_updates_from_text(user_text: str, existing_profile: Optional
 
     # 3. Business name extraction from explicit introduction patterns
     bname_patterns = [
-        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+name\s+(?:is|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
-        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+is\s+(?:a\s+)?([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
-        r"\b(?:business|shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+(?:is\s+)?(?:called|named)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
-        r"\b(?:shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+name\s+(?:is|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+name\s+(?:is|was|were|hai|h|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:my|our)\s+(?:business|shop|store|company|brand|firm)\s+(?:is|was)\s+(?:a\s+)?([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:business|shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+(?:is\s+|was\s+)?(?:called|named)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
+        r"\b(?:shop|store|company|cafe|restaurant|bakery|salon|clinic)\s+name\s+(?:is|was|hai|:)\s+([A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
         r"\b(?:we|i)\s+(?:run|own|manage)\s+([A-Z][A-Za-z0-9\u0900-\u097F&'._\- ]{2,60})",
     ]
     generic_bname_rejects = {
@@ -841,44 +842,43 @@ def generate_ai_reply(
             logger.debug(f"DNA processing error: {de}")
             return None, {}
 
-    with ThreadPoolExecutor(max_workers=3) as pre_pool:
-        f_guard = pre_pool.submit(_run_security_guard)
-        f_subgraph = pre_pool.submit(_run_subgraph_fetch)
-        f_dna = pre_pool.submit(_run_dna_fetch)
-        guard_res = f_guard.result()
+    f_guard = _PRE_POOL.submit(_run_security_guard)
+    f_subgraph = _PRE_POOL.submit(_run_subgraph_fetch)
+    f_dna = _PRE_POOL.submit(_run_dna_fetch)
+    guard_res = f_guard.result()
 
-        if guard_res.get("blocked"):
-            from api import db, security_guard
-            db.save_security_event(
-                tenant_id=tid,
-                phone_number=customer_id or "",
-                input_text=user_prompt,
-                detector=guard_res.get("detector", "Security Guard"),
-                reason=guard_res.get("reason", "Prompt injection / sensitive data attempt"),
-                blocked=True,
-            )
-            db.log_action_audit(
-                tenant_id=tid,
-                actor=f"{channel}:{customer_id or 'anon'}",
-                phone_number=customer_id or "",
-                action_name="security_guard_block",
-                status="blocked",
-                risk_level="high",
-                details={"detector": guard_res.get("detector", ""), "rule": guard_res.get("rule", "")},
-            )
-            latency_val = round((time.time() - start) * 1000, 2)
-            return security_guard.SAFE_BLOCK_REPLY, max(latency_val, 5.0), f"Security Shield ({guard_res.get('detector', 'Guard')})"
+    if guard_res.get("blocked"):
+        from api import db, security_guard
+        db.save_security_event(
+            tenant_id=tid,
+            phone_number=customer_id or "",
+            input_text=user_prompt,
+            detector=guard_res.get("detector", "Security Guard"),
+            reason=guard_res.get("reason", "Prompt injection / sensitive data attempt"),
+            blocked=True,
+        )
+        db.log_action_audit(
+            tenant_id=tid,
+            actor=f"{channel}:{customer_id or 'anon'}",
+            phone_number=customer_id or "",
+            action_name="security_guard_block",
+            status="blocked",
+            risk_level="high",
+            details={"detector": guard_res.get("detector", ""), "rule": guard_res.get("rule", "")},
+        )
+        latency_val = round((time.time() - start) * 1000, 2)
+        return security_guard.SAFE_BLOCK_REPLY, max(latency_val, 5.0), f"Security Shield ({guard_res.get('detector', 'Guard')})"
 
-        try:
-            cloud_store, neo_graph_context = f_subgraph.result(timeout=1.5)
-        except Exception:
-            cloud_store, neo_graph_context = None, ""
+    try:
+        cloud_store, neo_graph_context = f_subgraph.result(timeout=1.2)
+    except Exception:
+        cloud_store, neo_graph_context = None, ""
 
-        try:
-            dynamic_dna_ref, dna_analysis = f_dna.result(timeout=2.0)
-        except Exception:
-            dynamic_dna_ref, dna_analysis = None, {}
-        graph_context = dna_analysis.get("graph_context", "") if isinstance(dna_analysis, dict) else ""
+    try:
+        dynamic_dna_ref, dna_analysis = f_dna.result(timeout=1.5)
+    except Exception:
+        dynamic_dna_ref, dna_analysis = None, {}
+    graph_context = dna_analysis.get("graph_context", "") if isinstance(dna_analysis, dict) else ""
 
     # STEP 0.5: Centralised Guardrails, Action Confirmation & Allowlisted Tool Execution
     if customer_id:
