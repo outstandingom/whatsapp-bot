@@ -25,12 +25,21 @@ DEFAULT_TEMPLATES = [
 ]
 
 
-def _get_neo4j():
+def _get_cloud_store():
     try:
-        from api.neo4j_store import neo4j_store
-        return neo4j_store
+        from api.supabase_store import get_cloud_store
+        return get_cloud_store()
+    except ImportError:
+        try:
+            from supabase_store import get_cloud_store
+            return get_cloud_store()
+        except Exception:
+            return None
     except Exception:
         return None
+
+
+_get_neo4j = _get_cloud_store
 
 
 def get_connection():
@@ -363,18 +372,18 @@ def init_db(force: bool = False):
 
 
 def sync_with_neo4j_on_boot() -> dict:
-    """Hydrate local SQLite from persistent Neo4j AuraDB (keeping all historical chats across deploys)."""
+    """Hydrate local SQLite from persistent Supabase Cloud Postgres (keeping all historical chats across deploys)."""
     init_db()
-    neo = _get_neo4j()
-    if not neo:
+    store = _get_cloud_store()
+    if not store:
         return {"connected": False}
     try:
         conn = get_connection()
-        res = neo.hydrate_and_sync_sqlite(conn)
+        res = store.hydrate_and_sync_sqlite(conn)
         conn.close()
-        return {"connected": neo.get_status().get("connected", False), **res}
+        return {"connected": store.get_status().get("connected", False), **res}
     except Exception as e:
-        print(f"[DB] Neo4j boot sync warning: {e}")
+        print(f"[DB] Cloud boot sync warning: {e}")
         return {"connected": False, "error": str(e)}
 
 

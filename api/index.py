@@ -18,12 +18,12 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 
 load_dotenv(ENV_PATH)
 
-# Import internal modules AFTER loading .env so NEO4J_URI & keys are immediately available
+# Import internal modules AFTER loading .env so Supabase Cloud URL & keys are immediately available
 try:
     from api import db
     from api.bot_engine import generate_ai_reply
     from api.dna_service import dynamic_dna
-    from api.neo4j_store import neo4j_store
+    from api.supabase_store import get_cloud_store
     from api import security_guard
     from api import auth_billing
     from api.whatsapp_service import (
@@ -39,7 +39,7 @@ except ImportError:
     import db
     from bot_engine import generate_ai_reply
     from dna_service import dynamic_dna
-    from neo4j_store import neo4j_store
+    from supabase_store import get_cloud_store
     import security_guard
     import auth_billing
     from whatsapp_service import (
@@ -51,6 +51,8 @@ except ImportError:
         download_meta_media,
         UPLOAD_DIR,
     )
+
+neo4j_store = get_cloud_store()
 
 db.init_db()
 
@@ -225,7 +227,7 @@ def render_template_placeholders(
 
 
 def get_ai_reply(prompt: str, customer_id: str = "", tenant: Optional[dict] = None) -> tuple[str, float, str]:
-    """Route AI responses through Security Shield -> Neo4j & DNA Graph -> DeepSeek/Groq -> Sanitizer."""
+    """Route AI responses through Security Shield -> Cloud DNA Graph -> DeepSeek/Groq -> Sanitizer."""
     tcfg = tenant or {"tenant_id": "default"}
     creds = _resolve_tenant_credentials(tcfg)
     return generate_ai_reply(
@@ -246,11 +248,14 @@ def get_ai_reply(prompt: str, customer_id: str = "", tenant: Optional[dict] = No
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Render, UptimeRobot, and cron services."""
-    neo = neo4j_store.get_status()
+    cloud = get_cloud_store().get_status()
     return JSONResponse({
         "status": "healthy",
         "service": "growhaz-whatsapp-saas",
-        "neo4j_connected": neo.get("connected", False),
+        "provider": cloud.get("provider", "supabase"),
+        "cloud_connected": cloud.get("connected", False),
+        "neo4j_connected": cloud.get("connected", False),
+        "cloud_error": cloud.get("error"),
         "openrouter_guard_configured": bool(get_env_var("OPENROUTER_API_KEY")),
         "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
         "timestamp": int(time.time()),
@@ -282,9 +287,9 @@ async def keep_alive_worker():
 
 @app.on_event("startup")
 async def startup_tasks():
-    # Restore persistent chats, tenants, profiles, templates & billing from Neo4j AuraDB
+    # Restore persistent chats, tenants, profiles, templates & billing from Supabase Cloud DB
     sync_summary = await asyncio.to_thread(db.sync_with_neo4j_on_boot)
-    logger.info(f"[Startup] Neo4j AuraDB sync summary: {sync_summary}")
+    logger.info(f"[Startup] Cloud DB sync summary: {sync_summary}")
     asyncio.create_task(keep_alive_worker())
 
 

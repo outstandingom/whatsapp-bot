@@ -493,10 +493,15 @@ async function refreshGraphAndSecurityPanels() {
             const neo = gData.neo4j || {};
             const pill = document.getElementById('neo4j-status-pill');
             if (pill) {
-                pill.textContent = neo.connected ? 'Neo4j Aura Live' : (neo.mode || 'Local Fallback');
-                pill.className = neo.connected
-                    ? 'px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold'
-                    : 'px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold';
+                if (neo.connected) {
+                    pill.textContent = neo.provider === 'supabase' ? 'Supabase Cloud Live' : 'Neo4j Aura Live';
+                    pill.className = 'px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold';
+                    pill.title = neo.uri_host ? `Connected to ${neo.uri_host}` : 'Cloud database connected';
+                } else {
+                    pill.textContent = neo.mode || 'Local Fallback';
+                    pill.className = 'px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold';
+                    pill.title = neo.error || 'Using local SQLite fallback';
+                }
             }
             const nc = document.getElementById('neo4j-node-count');
             const ec = document.getElementById('neo4j-edge-count');
@@ -535,7 +540,7 @@ async function refreshGraphAndSecurityPanels() {
 async function queryNeo4jGraph() {
     const q = (document.getElementById('neo4j-search-input')?.value || '').trim();
     const box = document.getElementById('neo4j-query-results');
-    if (box) box.innerHTML = '<span class="text-purple-600"><i class="fas fa-spinner fa-spin mr-1"></i> Querying Neo4j AuraDB...</span>';
+    if (box) box.innerHTML = '<span class="text-purple-600"><i class="fas fa-spinner fa-spin mr-1"></i> Querying Supabase Cloud DB...</span>';
     try {
         const res = await fetch('/api/dashboard/graph/query', {
             method: 'POST',
@@ -547,7 +552,7 @@ async function queryNeo4jGraph() {
         const dna = data.dna_matches || [];
         if (box) {
             if (edges.length === 0 && dna.length === 0) {
-                box.innerHTML = '<span class="text-slate-400 italic">No matching Neo4j edges or DNA facts found.</span>';
+                box.innerHTML = '<span class="text-slate-400 italic">No matching Knowledge Graph edges or DNA facts found.</span>';
                 return;
             }
             const edgeHtml = edges.map(e => `
@@ -612,7 +617,7 @@ async function testPromptGuardFromDashboard() {
 async function openCustomerGraphModal() {
     if (typeof closeChatActionsMenu === 'function') closeChatActionsMenu();
     if (!currentPhone) {
-        alert('Select a customer chat first to inspect their Neo4j Knowledge Graph.');
+        alert('Select a customer chat first to inspect their Customer Knowledge Graph.');
         return;
     }
     const modal = document.getElementById('graph-modal');
@@ -623,7 +628,7 @@ async function openCustomerGraphModal() {
     const epBox = document.getElementById('graph-modal-episodes');
     const titleEl = document.getElementById('graph-modal-title');
     if (titleEl) titleEl.textContent = `Knowledge Graph • ${currentPhone}`;
-    if (profileBox) profileBox.textContent = 'Fetching Neo4j AuraDB subgraph...';
+    if (profileBox) profileBox.textContent = 'Fetching Supabase Cloud subgraph...';
 
     try {
         const res = await fetch(`/api/dashboard/graph/customer/${encodeURIComponent(currentPhone)}`);
@@ -664,7 +669,7 @@ async function openCustomerGraphModal() {
                 }).join('');
         }
     } catch (err) {
-        if (profileBox) profileBox.textContent = 'Error loading Neo4j graph: ' + err.message;
+        if (profileBox) profileBox.textContent = 'Error loading Knowledge Graph: ' + err.message;
     }
 }
 
