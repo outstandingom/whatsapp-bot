@@ -610,6 +610,7 @@ class SupabaseStore:
         message_text: str = "",
         profile: Optional[dict] = None,
         service_hint: str = "",
+        competitors: Optional[List[Dict[str, str]]] = None,
     ) -> bool:
         if not phone:
             return False
@@ -727,6 +728,38 @@ class SupabaseStore:
             })
             _add_edge(cust_key, contact_name, "INQUIRED_ABOUT", svc_key, sh, "Service")
 
+        for comp in (competitors or []):
+            if not isinstance(comp, dict):
+                continue
+            comp_name = str(comp.get("name") or "").strip()
+            comp_url = str(comp.get("url") or "").strip()
+            if not comp_name and not comp_url:
+                continue
+            comp_label = comp_name or comp_url
+            comp_key = f"{tid}:comp:{_slug(comp_label)}"
+            nodes.append({
+                "node_key": comp_key,
+                "tenant_id": tid,
+                "label": "Competitor",
+                "name": comp_label,
+                "meta": {"url": comp_url} if comp_url else {},
+                "updated_at": now_iso,
+            })
+            _add_edge(cust_key, contact_name, "HAS_COMPETITOR", comp_key, comp_label, "Competitor")
+            if bname:
+                _add_edge(f"{tid}:biz:{_slug(bname)}", bname, "HAS_COMPETITOR", comp_key, comp_label, "Competitor")
+            if comp_url:
+                cweb_key = f"{tid}:web:{_slug(comp_url)}"
+                nodes.append({
+                    "node_key": cweb_key,
+                    "tenant_id": tid,
+                    "label": "Website",
+                    "name": comp_url,
+                    "meta": {"url": comp_url, "owner_type": "competitor"},
+                    "updated_at": now_iso,
+                })
+                _add_edge(comp_key, comp_label, "HAS_WEBSITE", cweb_key, comp_url, "Website")
+
         ok = self._upsert("wa_graph_nodes", nodes, on_conflict="node_key")
         if edges:
             ok = self._upsert("wa_graph_edges", edges, on_conflict="edge_key") and ok
@@ -746,7 +779,7 @@ class SupabaseStore:
             )
         return ok
 
-    def get_customer_subgraph(self, tenant_id: str, phone: str) -> Dict[str, Any]:
+    def get_customer_subgraph(self, tenant_id: str, phone: str, relation_filter: Optional[str] = None) -> Dict[str, Any]:
         tid = str(tenant_id or "default").strip()
         clean = str(phone or "").replace("+", "").strip()
         cust_key = f"{tid}:customer:{clean}"
@@ -793,12 +826,15 @@ class SupabaseStore:
         summary_lines: List[str] = []
         seen_edges = set()
 
+        rel_filter_clean = str(relation_filter or "").strip().upper()
         for row in hop1 + hop2:
             tkey = row.get("target_key") or ""
             tname = row.get("target_name") or ""
             tlabel = row.get("target_label") or "Entity"
             sname = row.get("source_name") or cust_name
             rel = row.get("relation") or ""
+            if rel_filter_clean and rel.upper() != rel_filter_clean:
+                continue
             if tkey and tkey not in nodes_map:
                 nodes_map[tkey] = {"id": tkey, "label": tlabel, "name": tname}
             ek = (sname, rel, tname)
