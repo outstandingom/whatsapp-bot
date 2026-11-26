@@ -12,7 +12,10 @@ import logging
 import datetime
 from typing import Dict, Any, List, Optional
 
-# Link to dna-modal package
+# Ensure local whatapp/dna_memory and sibling dna-modal package are importable
+REPO_ROOT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if REPO_ROOT_PATH not in sys.path:
+    sys.path.insert(0, REPO_ROOT_PATH)
 DNA_MODAL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "dna-modal"))
 if os.path.exists(DNA_MODAL_PATH) and DNA_MODAL_PATH not in sys.path:
     sys.path.insert(0, DNA_MODAL_PATH)
@@ -362,7 +365,7 @@ class DynamicDNAManager:
         lines.append("• Prompt Guideline: Adapt naturally to this customer's known preferences and cadence without sounding robotic.")
         return "\n".join(lines)
 
-    def extract_and_encode_user_facts(self, customer_id: str, message: str) -> Dict[str, str]:
+    def extract_and_encode_user_facts(self, customer_id: str, message: str, tenant_id: str = "default") -> Dict[str, str]:
         """
         Universal DNA Fact Extraction & Encoding:
         Uses the core UniversalUserMemory engine to learn user identities and traits into Relational DNA.
@@ -370,13 +373,14 @@ class DynamicDNAManager:
         if not self.system:
             return {}
         clean_cust_id = customer_id.strip()
-        learned = self.system.extract_and_remember(clean_cust_id, message)
+        scoped_id = f"{tenant_id}:{clean_cust_id}" if ":" not in clean_cust_id else clean_cust_id
+        learned = self.system.extract_and_remember(scoped_id, message)
         if learned:
-            # Sync contact name to DB if learned
             if "has_name" in learned:
                 try:
                     from api import db
-                    db.save_contact(phone_number=clean_cust_id, name=learned["has_name"])
+                    raw_phone = clean_cust_id.split(":", 1)[-1]
+                    db.upsert_customer_profile(raw_phone, overwrite_existing=False, tenant_id=tenant_id, contact_name=learned["has_name"])
                 except Exception:
                     pass
             self.save()

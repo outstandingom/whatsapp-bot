@@ -25,12 +25,12 @@ def get_meta_api_version() -> str:
     return get_env_var("WHATSAPP_API_VERSION", "v23.0") or "v23.0"
 
 
-def send_meta_typing_indicator(message_id: str, phone_id: str = None) -> tuple[bool, str]:
+def send_meta_typing_indicator(message_id: str, phone_id: str = None, token: str = None) -> tuple[bool, str]:
     """
     Mark an incoming WhatsApp message as read and trigger the native WhatsApp 'typing...' bubble.
     Falls back to a plain read receipt if the API version/endpoint rejects typing_indicator.
     """
-    token = get_env_var("WHATSAPP_TOKEN")
+    token = (token or get_env_var("WHATSAPP_TOKEN")).strip()
     phone_id = (phone_id or get_env_var("WHATSAPP_PHONE_NUMBER_ID")).strip()
     msg_id = (message_id or "").strip()
 
@@ -68,12 +68,12 @@ def send_meta_typing_indicator(message_id: str, phone_id: str = None) -> tuple[b
         return False, str(e)
 
 
-def send_meta_whatsapp_message(recipient_number: str, message_text: str, phone_id: str = None):
+def send_meta_whatsapp_message(recipient_number: str, message_text: str, phone_id: str = None, token: str = None):
     """
     Send text message to user via Meta WhatsApp Cloud API.
     Returns (success: bool, response_or_error: str).
     """
-    token = get_env_var("WHATSAPP_TOKEN")
+    token = (token or get_env_var("WHATSAPP_TOKEN")).strip()
     phone_id = (phone_id or get_env_var("WHATSAPP_PHONE_NUMBER_ID")).strip()
 
     if not token or not phone_id:
@@ -101,12 +101,12 @@ def send_meta_whatsapp_message(recipient_number: str, message_text: str, phone_i
         return False, str(e)
 
 
-def upload_meta_media(file_bytes: bytes, filename: str, mime_type: str = "application/octet-stream") -> str:
+def upload_meta_media(file_bytes: bytes, filename: str, mime_type: str = "application/octet-stream", phone_id: str = None, token: str = None) -> str:
     """
     Uploads photo or document binary to Meta WhatsApp Media API and returns media_id.
     """
-    token = get_env_var("WHATSAPP_TOKEN")
-    phone_id = get_env_var("WHATSAPP_PHONE_NUMBER_ID")
+    token = (token or get_env_var("WHATSAPP_TOKEN")).strip()
+    phone_id = (phone_id or get_env_var("WHATSAPP_PHONE_NUMBER_ID")).strip()
     if not token or not phone_id:
         return None
 
@@ -129,12 +129,12 @@ def upload_meta_media(file_bytes: bytes, filename: str, mime_type: str = "applic
         return None
 
 
-def send_meta_whatsapp_media(recipient_number: str, media_type: str, media_id: str = None, media_link: str = None, caption: str = "", filename: str = "", phone_id: str = None):
+def send_meta_whatsapp_media(recipient_number: str, media_type: str, media_id: str = None, media_link: str = None, caption: str = "", filename: str = "", phone_id: str = None, token: str = None):
     """
     Send photo or document to user via Meta WhatsApp Cloud API.
     Returns (success: bool, response_or_error: str).
     """
-    token = get_env_var("WHATSAPP_TOKEN")
+    token = (token or get_env_var("WHATSAPP_TOKEN")).strip()
     phone_id = (phone_id or get_env_var("WHATSAPP_PHONE_NUMBER_ID")).strip()
     if not token or not phone_id:
         return False, "Meta WhatsApp Token or Phone Number ID is not configured."
@@ -173,12 +173,12 @@ def send_meta_whatsapp_media(recipient_number: str, media_type: str, media_id: s
         return False, str(e)
 
 
-def download_meta_media(media_id: str, default_ext: str = ".bin") -> tuple:
+def download_meta_media(media_id: str, default_ext: str = ".bin", token: str = None) -> tuple:
     """
     Downloads incoming media from Meta WhatsApp Cloud API and saves locally to /uploads.
     Returns (url, filename, mime_type).
     """
-    token = get_env_var("WHATSAPP_TOKEN")
+    token = (token or get_env_var("WHATSAPP_TOKEN")).strip()
     if not token or not media_id:
         return None, None, None
 

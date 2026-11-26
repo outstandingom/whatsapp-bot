@@ -5,16 +5,27 @@ import time
 import asyncio
 import logging
 import httpx
-from fastapi import FastAPI, Request, Response, Form, Query, UploadFile, File
+from fastapi import FastAPI, Request, Response, Form, Query, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv, set_key
 
-# Import internal modules
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+
+load_dotenv(ENV_PATH)
+
+# Import internal modules AFTER loading .env so NEO4J_URI & keys are immediately available
 try:
     from api import db
     from api.bot_engine import generate_ai_reply
     from api.dna_service import dynamic_dna
+    from api.neo4j_store import neo4j_store
+    from api import security_guard
+    from api import auth_billing
     from api.whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
@@ -28,6 +39,9 @@ except ImportError:
     import db
     from bot_engine import generate_ai_reply
     from dna_service import dynamic_dna
+    from neo4j_store import neo4j_store
+    import security_guard
+    import auth_billing
     from whatsapp_service import (
         get_env_var,
         send_meta_whatsapp_message,
@@ -38,18 +52,20 @@ except ImportError:
         UPLOAD_DIR,
     )
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENV_PATH = os.path.join(BASE_DIR, ".env")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-
-load_dotenv(ENV_PATH)
 db.init_db()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("whatsapp_support_bot")
 
-app = FastAPI(title="Growhaz • WhatsApp Support Hub & Dashboard")
+app = FastAPI(title="Growhaz • Multi-Tenant WhatsApp AI SaaS & CRM")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount static files and uploaded media
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -59,33 +75,89 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 SERVER_START_TIME = time.time()
 
-# In-memory typing status tracker for Live Chat UI & Simulator
+# In-memory typing status tracker scoped by (tenant_id, phone)
 ACTIVE_TYPING_CHATS: dict[str, float] = {}
 
 
-def set_typing_state(phone: str, active: bool):
-    """Mark a conversation as currently composing an AI/agent reply."""
+def _typing_key(phone: str, tenant_id: str = "default") -> str:
     key = db.normalize_phone_key(phone) or str(phone or "").replace("+", "").strip()
-    if not key:
+    tid = str(tenant_id or "default").strip() or "default"
+    return f"{tid}:{key}" if key else ""
+
+
+def set_typing_state(phone: str, active: bool, tenant_id: str = "default"):
+    tkey = _typing_key(phone, tenant_id)
+    if not tkey:
         return
     if active:
-        ACTIVE_TYPING_CHATS[key] = time.time()
+        ACTIVE_TYPING_CHATS[tkey] = time.time()
     else:
-        ACTIVE_TYPING_CHATS.pop(key, None)
+        ACTIVE_TYPING_CHATS.pop(tkey, None)
 
 
-def is_chat_typing(phone: str) -> bool:
-    """Return True if a reply is actively being composed (auto-expires after 30s)."""
-    key = db.normalize_phone_key(phone) or str(phone or "").replace("+", "").strip()
-    if not key:
+def is_chat_typing(phone: str, tenant_id: str = "default") -> bool:
+    tkey = _typing_key(phone, tenant_id)
+    if not tkey:
         return False
-    ts = ACTIVE_TYPING_CHATS.get(key)
+    ts = ACTIVE_TYPING_CHATS.get(tkey)
     if not ts:
         return False
     if (time.time() - ts) > 30.0:
-        ACTIVE_TYPING_CHATS.pop(key, None)
+        ACTIVE_TYPING_CHATS.pop(tkey, None)
         return False
     return True
+
+
+def _resolve_tenant_credentials(tenant: dict) -> dict:
+    """Resolve effective AI + Meta + OpenRouter Guard credentials for a tenant without leaking platform keys."""
+    tid = str((tenant or {}).get("tenant_id") or "default")
+    is_admin = bool((tenant or {}).get("is_admin")) or tid == "default"
+
+    deepseek_key = (tenant.get("deepseek_api_key") or "").strip()
+    if not deepseek_key or deepseek_key.startswith("sk_your"):
+        deepseek_key = get_env_var("DEEPSEEK_API_KEY")
+    deepseek_model = (tenant.get("deepseek_model") or get_env_var("DEEPSEEK_MODEL", "deepseek-chat")).strip()
+
+    groq_key = (tenant.get("groq_api_key") or "").strip()
+    if not groq_key or groq_key.startswith("gsk_your"):
+        groq_key = get_env_var("GROQ_API_KEY")
+    groq_model = (tenant.get("groq_model") or get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")).strip()
+
+    openrouter_key = (tenant.get("openrouter_api_key") or get_env_var("OPENROUTER_API_KEY")).strip()
+    openrouter_guard_model = (tenant.get("openrouter_guard_model") or get_env_var("OPENROUTER_GUARD_MODEL", security_guard.DEFAULT_GUARD_MODEL)).strip()
+
+    own_wa_token = (tenant.get("whatsapp_token") or "").strip()
+    own_wa_phone_id = (tenant.get("whatsapp_phone_number_id") or "").strip()
+    own_verify_token = (tenant.get("whatsapp_verify_token") or "").strip()
+
+    billing_mode = (tenant.get("billing_mode") or "managed_meta").strip()
+    if own_wa_token and own_wa_phone_id:
+        wa_token = own_wa_token
+        wa_phone_id = own_wa_phone_id
+        has_own_meta = True
+    elif is_admin or billing_mode == "managed_meta":
+        wa_token = get_env_var("WHATSAPP_TOKEN")
+        wa_phone_id = get_env_var("WHATSAPP_PHONE_NUMBER_ID")
+        has_own_meta = False
+    else:
+        wa_token = ""
+        wa_phone_id = ""
+        has_own_meta = False
+
+    verify_token = own_verify_token or get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")
+    return {
+        "tenant_id": tid,
+        "deepseek_api_key": deepseek_key,
+        "deepseek_model": deepseek_model,
+        "groq_api_key": groq_key,
+        "groq_model": groq_model,
+        "openrouter_api_key": openrouter_key,
+        "openrouter_guard_model": openrouter_guard_model,
+        "whatsapp_token": wa_token,
+        "whatsapp_phone_number_id": wa_phone_id,
+        "whatsapp_verify_token": verify_token,
+        "has_own_meta": has_own_meta,
+    }
 
 
 def _pick_real_recipient_name(explicit_name: str, profile: dict, phone_key: str) -> str:
@@ -113,19 +185,17 @@ def render_template_placeholders(
     text: str,
     phone: str = "",
     explicit_name: str = "",
-    profile: dict = None
+    profile: dict = None,
+    tenant_id: str = "default",
 ) -> str:
-    """
-    Resolve template placeholders ({{name}}, {{business}}, {{area}}, {{phone}}, {{service}}, {{date_time}})
-    per recipient using explicit metadata and persistent customer_profiles DB. Never leaves literal {{name}}.
-    """
+    """Resolve {{name}}, {{business}}, {{area}}, {{phone}}, {{service}}, {{date_time}} per recipient."""
     raw = str(text or "")
     if "{{" not in raw:
         return raw
 
     phone_key = db.normalize_phone_key(phone) if phone else ""
     clean_phone = phone_key or re.sub(r"\D", "", str(phone or ""))
-    prof = profile if profile is not None else (db.get_customer_profile(phone) if phone else {})
+    prof = profile if profile is not None else (db.get_customer_profile(phone, tenant_id=tenant_id) if phone else {})
 
     resolved_name = _pick_real_recipient_name(explicit_name, prof, clean_phone) or "there"
     resolved_business = (
@@ -154,96 +224,251 @@ def render_template_placeholders(
     return out
 
 
-def get_ai_reply(prompt: str, customer_id: str = "") -> tuple[str, float, str]:
-    """Helper to route AI responses: DeepSeek AI -> Groq AI -> Smart Customer Support Agent with DNA Memory."""
-    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
-    deepseek_model = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
-    groq_key = get_env_var("GROQ_API_KEY")
-    groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
+def get_ai_reply(prompt: str, customer_id: str = "", tenant: Optional[dict] = None) -> tuple[str, float, str]:
+    """Route AI responses through Security Shield -> Neo4j & DNA Graph -> DeepSeek/Groq -> Sanitizer."""
+    tcfg = tenant or {"tenant_id": "default"}
+    creds = _resolve_tenant_credentials(tcfg)
     return generate_ai_reply(
         user_prompt=prompt,
-        deepseek_api_key=deepseek_key,
-        deepseek_model=deepseek_model,
-        groq_api_key=groq_key,
-        groq_model=groq_model,
-        customer_id=customer_id
+        deepseek_api_key=creds["deepseek_api_key"],
+        deepseek_model=creds["deepseek_model"],
+        groq_api_key=creds["groq_api_key"],
+        groq_model=creds["groq_model"],
+        customer_id=customer_id,
+        tenant_id=creds["tenant_id"],
+        tenant_config=tcfg,
+        openrouter_api_key=creds["openrouter_api_key"],
+        openrouter_guard_model=creds["openrouter_guard_model"],
     )
+
 
 @app.get("/api/health")
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Render, UptimeRobot, and cron services."""
+    neo = neo4j_store.get_status()
     return JSONResponse({
         "status": "healthy",
-        "service": "whatsapp-ai-bot",
+        "service": "growhaz-whatsapp-saas",
+        "neo4j_connected": neo.get("connected", False),
+        "openrouter_guard_configured": bool(get_env_var("OPENROUTER_API_KEY")),
         "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
-        "timestamp": int(time.time())
+        "timestamp": int(time.time()),
     })
 
+
 async def keep_alive_worker():
-    """Background task that pings the public URL every 3-5 minutes so Render never sleeps."""
-    await asyncio.sleep(30)  # Initial grace period on boot
+    """Background task that pings the public URL every 4 minutes so Render never sleeps."""
+    await asyncio.sleep(30)
     while True:
         try:
             render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
             base_url = (
-                (f"https://{render_hostname}" if render_hostname else None) or
-                os.getenv("RENDER_EXTERNAL_URL") or 
-                os.getenv("APP_URL") or 
-                "https://whatapp-v59g.onrender.com"
+                (f"https://{render_hostname}" if render_hostname else None)
+                or os.getenv("RENDER_EXTERNAL_URL")
+                or os.getenv("APP_URL")
+                or "https://whatsapp-bot-qtm1.onrender.com"
             ).rstrip("/")
 
             if "localhost" not in base_url and "127.0.0.1" not in base_url:
                 health_url = f"{base_url}/api/health"
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     resp = await client.get(health_url)
-                    logger.info(f"[Keep-Alive] 5-min heartbeat ping to {health_url} -> Status {resp.status_code}")
-                    print(f"[Keep-Alive] Keep-alive ping sent to {health_url} (HTTP {resp.status_code})")
+                    logger.info(f"[Keep-Alive] Heartbeat {health_url} -> {resp.status_code}")
         except Exception as e:
             logger.warning(f"[Keep-Alive] Warning: self-ping failed: {e}")
-        
-        # Ping every 4 minutes (240 seconds) to ensure Render's 15-minute inactivity timer never triggers
         await asyncio.sleep(240)
 
+
 @app.on_event("startup")
-async def startup_keep_alive():
+async def startup_tasks():
+    # Restore persistent chats, tenants, profiles, templates & billing from Neo4j AuraDB
+    sync_summary = await asyncio.to_thread(db.sync_with_neo4j_on_boot)
+    logger.info(f"[Startup] Neo4j AuraDB sync summary: {sync_summary}")
     asyncio.create_task(keep_alive_worker())
 
+
 # ====================================================================
-# 1. WEBHOOKS (META CLOUD API & TWILIO)
+# 0. GROWHAZ AUTHENTICATION & BILLING / WALLET ENDPOINTS
 # ====================================================================
 
-@app.get("/api/webhook")
-@app.get("/webhook")
-async def verify_webhook(
-    hub_mode: str = Query(None, alias="hub.mode"),
-    hub_verify_token: str = Query(None, alias="hub.verify_token"),
-    hub_challenge: str = Query(None, alias="hub.challenge")
+@app.post("/api/auth/login")
+async def auth_login(request: Request):
+    data = await request.json()
+    email = (data.get("email") or "").strip()
+    password = data.get("password") or ""
+    if not email or not password:
+        return JSONResponse({"error": "Email and password are required."}, status_code=400)
+
+    sb_res = await asyncio.to_thread(auth_billing.supabase_sign_in, email, password)
+    access_token = sb_res.get("access_token", "")
+    user = await asyncio.to_thread(auth_billing.supabase_verify_jwt, access_token)
+    if not user:
+        return JSONResponse({"error": "Failed to verify Growhaz session."}, status_code=401)
+
+    is_admin = await asyncio.to_thread(auth_billing.supabase_check_is_admin, access_token, user["user_id"], user["email"])
+    workspace_id = "default" if is_admin else user["user_id"]
+    tenant = db.ensure_tenant(workspace_id, email=user["email"], full_name=user["full_name"])
+    tenant.update({"is_admin": is_admin, "supabase_user_id": user["user_id"], "access_token": access_token})
+    billing = await asyncio.to_thread(auth_billing.get_billing_summary, tenant, access_token)
+
+    return JSONResponse({
+        "success": True,
+        "access_token": access_token,
+        "user": {**user, "is_admin": is_admin},
+        "billing": billing,
+    })
+
+
+@app.post("/api/auth/register")
+async def auth_register(request: Request):
+    data = await request.json()
+    full_name = (data.get("full_name") or "").strip()
+    email = (data.get("email") or "").strip()
+    password = data.get("password") or ""
+    if not email or len(password) < 6:
+        return JSONResponse({"error": "Valid email and password (min 6 characters) are required."}, status_code=400)
+
+    sb_res = await asyncio.to_thread(auth_billing.supabase_sign_up, email, password, full_name)
+    access_token = sb_res.get("access_token") or (sb_res.get("session") or {}).get("access_token") or ""
+    if not access_token:
+        return JSONResponse({
+            "success": True,
+            "needs_email_verification": True,
+            "message": "Account created on Growhaz! Please check your email to verify your account, then sign in.",
+        })
+
+    user = await asyncio.to_thread(auth_billing.supabase_verify_jwt, access_token)
+    tenant = db.ensure_tenant(user["user_id"], email=user["email"], full_name=user["full_name"])
+    tenant.update({"is_admin": False, "supabase_user_id": user["user_id"], "access_token": access_token})
+    billing = await asyncio.to_thread(auth_billing.get_billing_summary, tenant, access_token)
+
+    return JSONResponse({
+        "success": True,
+        "access_token": access_token,
+        "user": {**user, "is_admin": False},
+        "billing": billing,
+    })
+
+
+@app.post("/api/auth/sso")
+async def auth_sso(request: Request):
+    data = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    tok = (data.get("access_token") or auth_billing.extract_bearer_token(request) or "").strip()
+    if not tok:
+        raise HTTPException(status_code=401, detail="Missing Growhaz SSO token.")
+    user = await asyncio.to_thread(auth_billing.supabase_verify_jwt, tok)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired Growhaz session.")
+
+    is_admin = await asyncio.to_thread(auth_billing.supabase_check_is_admin, tok, user["user_id"], user["email"])
+    workspace_id = "default" if is_admin else user["user_id"]
+    tenant = db.ensure_tenant(workspace_id, email=user["email"], full_name=user["full_name"])
+    tenant.update({"is_admin": is_admin, "supabase_user_id": user["user_id"], "access_token": tok})
+    billing = await asyncio.to_thread(auth_billing.get_billing_summary, tenant, tok)
+
+    return JSONResponse({
+        "success": True,
+        "access_token": tok,
+        "user": {**user, "is_admin": is_admin},
+        "billing": billing,
+    })
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    billing = await asyncio.to_thread(auth_billing.get_billing_summary, tenant, tenant.get("access_token", ""))
+    return JSONResponse({
+        "success": True,
+        "user": {
+            "user_id": tenant.get("supabase_user_id"),
+            "tenant_id": tenant.get("tenant_id"),
+            "email": tenant.get("email"),
+            "full_name": tenant.get("full_name"),
+            "is_admin": tenant.get("is_admin", False),
+        },
+        "billing": billing,
+    })
+
+
+@app.get("/api/billing/status")
+async def billing_status(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    summary = await asyncio.to_thread(auth_billing.get_billing_summary, tenant, tenant.get("access_token", ""))
+    return JSONResponse({"success": True, "billing": summary})
+
+
+@app.post("/api/billing/mode")
+async def billing_update_mode(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    data = await request.json()
+    mode = (data.get("billing_mode") or "").strip()
+    if mode not in ("managed_meta", "byo_meta"):
+        return JSONResponse({"error": "Invalid billing_mode. Must be 'managed_meta' or 'byo_meta'."}, status_code=400)
+    updated = db.update_tenant_settings(tenant["tenant_id"], billing_mode=mode)
+    updated.update({"is_admin": tenant.get("is_admin"), "supabase_user_id": tenant.get("supabase_user_id"), "access_token": tenant.get("access_token")})
+    summary = await asyncio.to_thread(auth_billing.get_billing_summary, updated, tenant.get("access_token", ""))
+    return JSONResponse({"success": True, "billing": summary})
+
+
+@app.post("/api/billing/subscribe")
+async def billing_subscribe(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    data = await request.json()
+    plan_id = (data.get("plan_id") or "").strip()
+    mode = (data.get("billing_mode") or tenant.get("billing_mode") or "managed_meta").strip()
+    res = await asyncio.to_thread(auth_billing.subscribe_tenant_plan, tenant, plan_id, mode, tenant.get("access_token", ""))
+    return JSONResponse(res)
+
+
+@app.post("/api/billing/estimate")
+async def billing_estimate(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    data = await request.json()
+    phones = data.get("phone_numbers") or []
+    if isinstance(phones, str):
+        phones = [p.strip() for p in re.split(r"[\n,;]+", phones) if p.strip()]
+    est = await asyncio.to_thread(auth_billing.estimate_send_billing, tenant, phones, tenant.get("access_token", ""))
+    return JSONResponse({"success": True, "estimate": est})
+
+
+# ====================================================================
+# 1. WEBHOOKS (META CLOUD API & TWILIO — TENANT AWARE)
+# ====================================================================
+
+async def _verify_meta_webhook_impl(
+    tenant_id: str,
+    hub_mode: str,
+    hub_verify_token: str,
+    hub_challenge: str,
 ):
-    expected_token = get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")
     received_token = (hub_verify_token or "").strip().strip('"').strip("'")
-    is_valid = (received_token == expected_token or received_token == "whatsapp_groq_bot_secret_123")
+    tenant = db.find_tenant_for_webhook(tenant_id=tenant_id, verify_token=received_token)
+    tid = tenant.get("tenant_id", "default")
+    expected_token = (tenant.get("whatsapp_verify_token") or get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")).strip()
+    is_valid = received_token == expected_token or (
+        tid == "default" and received_token == get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")
+    )
 
     db.save_webhook_log(
-        endpoint="/api/webhook",
+        endpoint=f"/api/webhook/{tid}" if tenant_id else "/api/webhook",
         method="GET",
         payload={"hub.mode": hub_mode, "hub.verify_token": hub_verify_token, "hub.challenge": hub_challenge},
-        status_code=200 if (hub_mode == "subscribe" and is_valid) else 403
+        status_code=200 if (hub_mode == "subscribe" and is_valid) else 403,
+        tenant_id=tid,
     )
 
     if hub_mode == "subscribe" and is_valid:
         return PlainTextResponse(content=str(hub_challenge), status_code=200)
     return PlainTextResponse(content="Forbidden: Verification token mismatch", status_code=403)
 
-@app.post("/api/webhook")
-@app.post("/webhook")
-async def handle_meta_webhook(request: Request):
-    """Handles incoming customer messages from WhatsApp Meta Cloud API."""
+
+async def _handle_meta_webhook_impl(request: Request, explicit_tenant_id: str = ""):
     try:
         body = await request.json()
-        db.save_webhook_log(endpoint="/api/webhook", method="POST", payload=body, status_code=200)
     except Exception as e:
-        db.save_webhook_log(endpoint="/api/webhook", method="POST", payload=str(e), status_code=400)
+        db.save_webhook_log(endpoint="/api/webhook", method="POST", payload=str(e), status_code=400, tenant_id=explicit_tenant_id or "default")
         return JSONResponse({"status": "invalid json"}, status_code=400)
 
     try:
@@ -252,13 +477,25 @@ async def handle_meta_webhook(request: Request):
             for change in entry.get("changes", []):
                 val = change.get("value", {})
                 metadata = val.get("metadata", {})
-                incoming_phone_id = metadata.get("phone_number_id")
-                if incoming_phone_id:
+                incoming_phone_id = (metadata.get("phone_number_id") or "").strip()
+
+                tenant = db.find_tenant_for_webhook(tenant_id=explicit_tenant_id, phone_number_id=incoming_phone_id)
+                tid = tenant.get("tenant_id", "default")
+                creds = _resolve_tenant_credentials(tenant)
+                if tid == "default" and incoming_phone_id:
                     os.environ["WHATSAPP_PHONE_NUMBER_ID"] = incoming_phone_id
+
+                db.save_webhook_log(
+                    endpoint=f"/api/webhook/{tid}" if explicit_tenant_id else "/api/webhook",
+                    method="POST",
+                    payload=body,
+                    status_code=200,
+                    tenant_id=tid,
+                )
 
                 contacts = val.get("contacts", [])
                 sender_name = contacts[0].get("profile", {}).get("name", "Customer") if contacts else "Customer"
-                
+
                 for msg in val.get("messages", []):
                     msg_type = msg.get("type")
                     if msg_type in ["text", "image", "document"]:
@@ -279,7 +516,7 @@ async def handle_meta_webhook(request: Request):
                             user_text = img_data.get("caption", "").strip()
                             media_id = img_data.get("id")
                             if media_id:
-                                media_url, media_filename, _ = download_meta_media(media_id, ".jpg")
+                                media_url, media_filename, _ = download_meta_media(media_id, ".jpg", token=creds["whatsapp_token"])
                             if not user_text:
                                 user_text = "📷 [Photo Received]"
                         elif msg_type == "document":
@@ -289,13 +526,12 @@ async def handle_meta_webhook(request: Request):
                             media_id = doc_data.get("id")
                             orig_fname = doc_data.get("filename", "")
                             if media_id:
-                                media_url, media_filename, _ = download_meta_media(media_id, ".pdf")
+                                media_url, media_filename, _ = download_meta_media(media_id, ".pdf", token=creds["whatsapp_token"])
                             if orig_fname:
                                 media_filename = orig_fname
                             if not user_text:
                                 user_text = f"📄 [Document: {media_filename or 'File'}]"
 
-                        # 1. Save Inbound Message & Record Real Contact Name
                         db.save_message(
                             phone_number=sender_id,
                             sender_name=sender_name,
@@ -305,59 +541,64 @@ async def handle_meta_webhook(request: Request):
                             raw_payload=msg,
                             media_type=media_type,
                             media_url=media_url,
-                            media_filename=media_filename
+                            media_filename=media_filename,
+                            tenant_id=tid,
                         )
                         if sender_name and sender_name.strip().lower() not in {"customer", "user", "unknown"}:
                             db.upsert_customer_profile(
                                 sender_id,
                                 overwrite_existing=False,
+                                tenant_id=tid,
                                 contact_name=sender_name.strip(),
-                                data_source="whatsapp_chat"
+                                data_source="whatsapp_chat",
                             )
 
-                        # Check if automated bot is enabled for this customer
-                        bot_active = db.is_bot_enabled_for_contact(sender_id)
-
-                        # If customer message asks for human agent, auto-pause bot for next messages
+                        bot_active = db.is_bot_enabled_for_contact(sender_id, tenant_id=tid)
                         is_handover_request = bool(user_text and any(w in user_text.lower() for w in ["human", "agent", "person", "representative", "specialist", "talk to someone", "call me"]))
                         if is_handover_request:
-                            db.set_bot_enabled_for_contact(sender_id, False)
+                            db.set_bot_enabled_for_contact(sender_id, False, tenant_id=tid)
 
                         if bot_active:
                             incoming_wamid = msg.get("id")
-                            if incoming_wamid:
+                            target_phone_id = incoming_phone_id or creds["whatsapp_phone_number_id"]
+                            if incoming_wamid and creds["whatsapp_token"]:
                                 try:
-                                    await asyncio.to_thread(send_meta_typing_indicator, incoming_wamid, incoming_phone_id)
+                                    await asyncio.to_thread(send_meta_typing_indicator, incoming_wamid, target_phone_id, creds["whatsapp_token"])
                                 except Exception as _te:
-                                    logger.debug(f"Typing indicator dispatch warning: {_te}")
+                                    logger.debug(f"Typing indicator warning: {_te}")
 
-                            set_typing_state(sender_id, True)
+                            set_typing_state(sender_id, True, tenant_id=tid)
                             try:
                                 if media_type:
                                     reply = (
                                         f"Thank you for sharing your {media_type}! 📄\n\n"
-                                        "We have received your file at *Growhaz*. "
-                                        "Our technical team is reviewing it and will update you shortly."
+                                        f"We have received your file at *{tenant.get('business_name') or 'Growhaz'}*. "
+                                        "Our team is reviewing it and will update you shortly."
                                     )
                                     latency_ms = 0.0
                                     engine_used = "Growhaz Assistant"
                                 else:
-                                    # Track interaction dynamically in DNA memory
                                     try:
-                                        dynamic_dna.record_interaction(customer_id=sender_id, action="received_message", target_id="chat_interaction", attributes={"snippet": user_text[:60]})
-                                    except Exception as _e:
-                                        logger.debug(f"DNA record error: {_e}")
-
-                                    reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_text, sender_id)
+                                        dynamic_dna.record_interaction(
+                                            customer_id=f"{tid}:{sender_id}",
+                                            action="received_message",
+                                            target_id="chat_interaction",
+                                            attributes={"snippet": user_text[:60]},
+                                        )
+                                    except Exception:
+                                        pass
+                                    reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_text, sender_id, tenant)
                             finally:
-                                set_typing_state(sender_id, False)
+                                set_typing_state(sender_id, False, tenant_id=tid)
 
-                            # Send to WhatsApp (dynamically routes to incoming phone_number_id)
                             success, send_res = await asyncio.to_thread(
-                                send_meta_whatsapp_message, sender_id, reply, incoming_phone_id
+                                send_meta_whatsapp_message,
+                                sender_id,
+                                reply,
+                                target_phone_id,
+                                creds["whatsapp_token"],
                             )
 
-                            # Save Outbound Message
                             db.save_message(
                                 phone_number=sender_id,
                                 sender_name="Support Agent (AI)",
@@ -367,94 +608,145 @@ async def handle_meta_webhook(request: Request):
                                 status="sent" if success else "failed",
                                 raw_payload=send_res,
                                 ai_model=engine_used,
-                                latency_ms=latency_ms
+                                latency_ms=latency_ms,
+                                tenant_id=tid,
                             )
-                        elif not bot_active:
-                            logger.info(f"[Meta Webhook] AI bot is paused for {sender_id}. {msg_type} saved for human agent.")
     except Exception as err:
         logger.error(f"Error handling Meta WhatsApp webhook: {err}")
 
     return JSONResponse({"status": "success"}, status_code=200)
 
+
+@app.get("/api/webhook")
+@app.get("/webhook")
+async def verify_webhook(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+):
+    return await _verify_meta_webhook_impl("", hub_mode, hub_verify_token, hub_challenge)
+
+
+@app.get("/api/webhook/{tenant_id}")
+@app.get("/webhook/{tenant_id}")
+async def verify_tenant_webhook(
+    tenant_id: str,
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+):
+    return await _verify_meta_webhook_impl(tenant_id, hub_mode, hub_verify_token, hub_challenge)
+
+
+@app.post("/api/webhook")
+@app.post("/webhook")
+async def handle_meta_webhook(request: Request):
+    return await _handle_meta_webhook_impl(request, "")
+
+
+@app.post("/api/webhook/{tenant_id}")
+@app.post("/webhook/{tenant_id}")
+async def handle_tenant_meta_webhook(tenant_id: str, request: Request):
+    return await _handle_meta_webhook_impl(request, tenant_id)
+
+
 @app.post("/api/twilio")
 async def handle_twilio_webhook(From: str = Form(None), Body: str = Form(None), ProfileName: str = Form("Customer")):
     user_text = (Body or "").strip()
     sender_id = (From or "unknown").replace("whatsapp:", "")
-    
-    db.save_webhook_log(endpoint="/api/twilio", method="POST", payload={"From": From, "Body": Body, "ProfileName": ProfileName})
+    tid = "default"
+    tenant = db.get_tenant(tid)
+
+    db.save_webhook_log(endpoint="/api/twilio", method="POST", payload={"From": From, "Body": Body, "ProfileName": ProfileName}, tenant_id=tid)
 
     if not user_text:
         return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>', media_type="application/xml")
 
-    db.save_message(phone_number=sender_id, sender_name=ProfileName, message=user_text, direction="inbound", channel="twilio")
+    db.save_message(phone_number=sender_id, sender_name=ProfileName, message=user_text, direction="inbound", channel="twilio", tenant_id=tid)
     if ProfileName and ProfileName.strip().lower() not in {"customer", "user", "unknown"}:
-        db.upsert_customer_profile(sender_id, overwrite_existing=False, contact_name=ProfileName.strip(), data_source="twilio")
+        db.upsert_customer_profile(sender_id, overwrite_existing=False, tenant_id=tid, contact_name=ProfileName.strip(), data_source="twilio")
 
-    bot_active = db.is_bot_enabled_for_contact(sender_id)
+    bot_active = db.is_bot_enabled_for_contact(sender_id, tenant_id=tid)
     reply = "Your message has been received by our support team."
     engine_used = "Support Desk"
     latency_ms = 0.0
 
     if bot_active:
-        set_typing_state(sender_id, True)
+        set_typing_state(sender_id, True, tenant_id=tid)
         try:
-            reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_text, sender_id)
+            reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_text, sender_id, tenant)
         finally:
-            set_typing_state(sender_id, False)
+            set_typing_state(sender_id, False, tenant_id=tid)
 
-    db.save_message(phone_number=sender_id, sender_name="Support Agent (AI)", message=reply, direction="outbound", channel="twilio", status="sent", ai_model=engine_used, latency_ms=latency_ms)
+    db.save_message(phone_number=sender_id, sender_name="Support Agent (AI)", message=reply, direction="outbound", channel="twilio", status="sent", ai_model=engine_used, latency_ms=latency_ms, tenant_id=tid)
 
     escaped = reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;")
     return Response(content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{escaped}</Message></Response>', media_type="application/xml")
 
+
 # ====================================================================
-# 2. DASHBOARD DATA, TEMPLATES, & ACTIONS
+# 2. TENANT DASHBOARD DATA, KNOWLEDGE GRAPH, SECURITY, & ACTIONS
 # ====================================================================
 
 @app.get("/api/dashboard/stats")
-async def get_dashboard_stats():
-    stats = db.get_stats()
-    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
-    stats["deepseek_configured"] = bool(deepseek_key and not deepseek_key.startswith("sk_your"))
-    stats["deepseek_model"] = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
-    groq_key = get_env_var("GROQ_API_KEY")
-    stats["groq_configured"] = bool(groq_key and not groq_key.startswith("gsk_your"))
-    stats["groq_model"] = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-    stats["meta_configured"] = bool(get_env_var("WHATSAPP_TOKEN") and get_env_var("WHATSAPP_PHONE_NUMBER_ID"))
+async def get_dashboard_stats(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+    stats = db.get_stats(tenant_id=tid)
+    stats["deepseek_configured"] = bool(creds["deepseek_api_key"] and not creds["deepseek_api_key"].startswith("sk_your"))
+    stats["deepseek_model"] = creds["deepseek_model"]
+    stats["groq_configured"] = bool(creds["groq_api_key"] and not creds["groq_api_key"].startswith("gsk_your"))
+    stats["groq_model"] = creds["groq_model"]
+    stats["meta_configured"] = bool(creds["whatsapp_token"] and creds["whatsapp_phone_number_id"])
+    stats["openrouter_guard_configured"] = bool(creds["openrouter_api_key"])
+    stats["openrouter_guard_model"] = creds["openrouter_guard_model"]
+    stats["neo4j"] = neo4j_store.get_status(tenant_id=tid)
     return JSONResponse(stats)
 
+
 @app.get("/api/dashboard/conversations")
-async def get_conversations():
-    convs = db.get_conversations()
+async def get_conversations(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    convs = db.get_conversations(tenant_id=tid)
     for c in convs:
-        c["is_typing"] = is_chat_typing(c.get("phone_number", ""))
+        c["is_typing"] = is_chat_typing(c.get("phone_number", ""), tenant_id=tid)
     return JSONResponse({"conversations": convs})
 
+
 @app.get("/api/dashboard/messages")
-async def get_messages(phone: str = Query(None), limit: int = Query(200)):
-    messages = db.get_messages(phone_number=phone, limit=limit)
-    bot_enabled = db.is_bot_enabled_for_contact(phone) if phone else True
-    is_typing = is_chat_typing(phone) if phone else False
-    profile = db.get_customer_profile(phone) if phone else None
+async def get_messages(request: Request, phone: str = Query(None), limit: int = Query(200)):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    messages = db.get_messages(phone_number=phone, limit=limit, tenant_id=tid)
+    bot_enabled = db.is_bot_enabled_for_contact(phone, tenant_id=tid) if phone else True
+    is_typing = is_chat_typing(phone, tenant_id=tid) if phone else False
+    profile = db.get_customer_profile(phone, tenant_id=tid) if phone else None
     return JSONResponse({
         "messages": messages,
         "phone": phone,
         "bot_enabled": bot_enabled,
         "is_typing": is_typing,
-        "customer_profile": profile
+        "customer_profile": profile,
     })
 
+
 @app.get("/api/dashboard/dna/{phone}")
-async def get_customer_dna(phone: str):
-    """Retrieves customer's dynamic DNA predictions, decoded long-term facts, and relational bonds."""
+async def get_customer_dna(phone: str, request: Request):
+    """Retrieves customer's dynamic DNA predictions, Neo4j subgraph, and relational bonds."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
     try:
         clean_phone = phone.strip()
-        pred = dynamic_dna.predict_customer_behavior(clean_phone)
-        facts = dynamic_dna.decode_customer_facts(clean_phone)
+        scoped_id = f"{tid}:{clean_phone}"
+        pred = dynamic_dna.predict_customer_behavior(scoped_id)
+        facts = dynamic_dna.decode_customer_facts(scoped_id)
+        neo_sub = await asyncio.to_thread(neo4j_store.get_customer_subgraph, tid, clean_phone)
 
         rels_data = []
         if dynamic_dna.system:
-            rels = dynamic_dna.system.relation_registry.retrieve_relations(subject_id=clean_phone)
+            rels = dynamic_dna.system.relation_registry.retrieve_relations(subject_id=scoped_id)
             for r in rels:
                 rels_data.append({
                     "id": r.id,
@@ -463,62 +755,141 @@ async def get_customer_dna(phone: str):
                     "object": r.object_id,
                     "confidence": r.confidence,
                     "strength": r.strength,
-                    "timestamp": r.timestamp
+                    "timestamp": r.timestamp,
                 })
 
         return JSONResponse({
             "success": True,
-            "dna": {
-                "prediction": pred,
-                "facts": facts,
-                "relations": rels_data
-            }
+            "dna": {"prediction": pred, "facts": facts, "relations": rels_data},
+            "neo4j_graph": neo_sub,
         })
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
+
+@app.get("/api/dashboard/graph/status")
+async def get_graph_status(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    neo_status = await asyncio.to_thread(neo4j_store.get_status, tid)
+    dna_atoms = dynamic_dna.system.dna_registry.count() if dynamic_dna.system else 0
+    dna_assemblies = dynamic_dna.system.assembly_engine.count() if dynamic_dna.system else 0
+    return JSONResponse({
+        "success": True,
+        "neo4j": neo_status,
+        "dna_memory": {"atoms": dna_atoms, "assemblies": dna_assemblies},
+    })
+
+
+@app.get("/api/dashboard/graph/customer/{phone}")
+async def get_graph_customer(phone: str, request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    sub = await asyncio.to_thread(neo4j_store.get_customer_subgraph, tid, phone)
+    profile = db.get_customer_profile(phone, tenant_id=tid)
+    return JSONResponse({"success": True, "profile": profile, "graph": sub})
+
+
+@app.post("/api/dashboard/graph/query")
+async def query_graph(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    data = await request.json()
+    query = (data.get("query") or "").strip()
+    res = await asyncio.to_thread(neo4j_store.query_tenant_graph, tid, query, 35)
+    dna_hits = dynamic_dna.search_related_concepts(query, top_k=5) if query else []
+    return JSONResponse({"success": True, "neo4j": res, "dna_matches": dna_hits})
+
+
+@app.get("/api/dashboard/security-events")
+async def list_security_events(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+    events = db.get_security_events(tenant_id=tid, limit=30)
+    return JSONResponse({
+        "success": True,
+        "openrouter_configured": bool(creds["openrouter_api_key"]),
+        "guard_model": creds["openrouter_guard_model"],
+        "events": events,
+    })
+
+
+@app.post("/api/dashboard/test-guard")
+async def test_prompt_guard(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+    data = await request.json()
+    text = (data.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "Text to inspect is required."}, status_code=400)
+
+    res = await asyncio.to_thread(
+        security_guard.evaluate_user_input,
+        text,
+        creds["openrouter_api_key"],
+        creds["openrouter_guard_model"],
+    )
+    if res.get("blocked"):
+        db.save_security_event(tid, "security_tester", text, res.get("detector", "Guard"), res.get("reason", ""), True)
+    return JSONResponse({"success": True, **res})
+
+
 @app.get("/api/dashboard/templates")
-async def get_templates():
-    templates = db.get_templates()
-    return JSONResponse({"templates": templates})
+async def get_templates(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    return JSONResponse({"templates": db.get_templates(tenant_id=tenant["tenant_id"])})
+
 
 @app.post("/api/dashboard/templates")
 async def add_template(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
     data = await request.json()
     t_id = db.save_template(
         title=data.get("title", "Custom Template"),
         category=data.get("category", "General"),
         content=data.get("content", ""),
-        shortcut=data.get("shortcut", "")
+        shortcut=data.get("shortcut", ""),
+        tenant_id=tenant["tenant_id"],
     )
     return JSONResponse({"success": bool(t_id), "id": t_id})
 
+
 @app.delete("/api/dashboard/templates")
-async def delete_template(id: int = Query(...)):
-    success = db.delete_template(id)
+async def delete_template(request: Request, id: int = Query(...)):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    success = db.delete_template(id, tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success})
+
 
 @app.post("/api/dashboard/contact/bot-toggle")
 async def toggle_contact_bot(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
     data = await request.json()
     phone = data.get("phone", "")
     enabled = bool(data.get("enabled", True))
-    success = db.set_bot_enabled_for_contact(phone, enabled)
+    success = db.set_bot_enabled_for_contact(phone, enabled, tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success, "phone": phone, "bot_enabled": enabled})
 
+
 @app.get("/api/dashboard/bookings")
-async def get_bookings():
-    bookings = db.get_bookings()
-    return JSONResponse({"bookings": bookings})
+async def get_bookings(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    return JSONResponse({"bookings": db.get_bookings(tenant_id=tenant["tenant_id"])})
+
 
 @app.post("/api/dashboard/bookings/update")
 async def update_booking(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
     data = await request.json()
-    success = db.update_booking_status(data.get("id"), data.get("status"))
+    success = db.update_booking_status(data.get("id"), data.get("status"), tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success})
+
 
 @app.post("/api/dashboard/bookings/add")
 async def add_booking(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
     data = await request.json()
     b_id = db.add_manual_booking(
         phone_number=data.get("phone", ""),
@@ -526,31 +897,35 @@ async def add_booking(request: Request):
         service=data.get("service", "General Support"),
         date_time=data.get("date_time", "Pending Schedule"),
         status=data.get("status", "confirmed"),
-        notes=data.get("notes", "")
+        notes=data.get("notes", ""),
+        tenant_id=tenant["tenant_id"],
     )
     return JSONResponse({"success": bool(b_id), "id": b_id})
+
 
 @app.post("/api/dashboard/trigger-ai-reply")
 async def trigger_ai_reply(request: Request):
     """Force generate an AI bot reply to a specific customer's latest message."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
     data = await request.json()
     phone = (data.get("phone") or "").strip()
     prompt = (data.get("prompt") or "").strip()
-    
+
     if not prompt and phone:
-        msgs = db.get_messages(phone_number=phone, limit=5)
+        msgs = db.get_messages(phone_number=phone, limit=5, tenant_id=tid)
         inbounds = [m for m in msgs if m["direction"] == "inbound"]
         if inbounds:
             prompt = inbounds[-1]["message"]
-    
-    if not prompt:
-        prompt = "Hello! How can Growhaz customer support help me today?"
 
-    set_typing_state(phone, True)
+    if not prompt:
+        prompt = "Hello! How can customer support help me today?"
+
+    set_typing_state(phone, True, tenant_id=tid)
     try:
-        reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, prompt, phone)
+        reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, prompt, phone, tenant)
     finally:
-        set_typing_state(phone, False)
+        set_typing_state(phone, False, tenant_id=tid)
 
     msg_id = None
     if phone:
@@ -562,7 +937,8 @@ async def trigger_ai_reply(request: Request):
             channel="meta_whatsapp",
             status="sent",
             ai_model=engine_used,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
+            tenant_id=tid,
         )
 
     return JSONResponse({
@@ -570,28 +946,39 @@ async def trigger_ai_reply(request: Request):
         "message_id": msg_id,
         "reply": reply,
         "engine": engine_used,
-        "latency_ms": latency_ms
+        "latency_ms": latency_ms,
     })
+
 
 @app.post("/api/dashboard/send")
 async def send_dashboard_reply(request: Request):
-    """
-    Send message from dashboard.
-    If role is 'customer': simulates customer asking question + triggers AI auto reply!
-    If role is 'agent': sends manual response from agent (resolving template variables like {{name}}).
-    If role is 'ai': generates AI response as agent.
-    """
+    """Send or simulate a dashboard message (enforcing 3 free demos + 24h billing window)."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+
     data = await request.json()
     phone = (data.get("phone") or "+14155550199").strip()
     customer_name = (data.get("name") or "Customer").strip()
     msg_input = (data.get("message") or "").strip()
-    role = data.get("role", "customer") # "customer" (default for testing AI reply), "agent", "ai"
-    send_via_meta = data.get("send_via_meta", False)
-    
+    role = data.get("role", "customer")
+    send_via_meta = bool(data.get("send_via_meta", False))
+
     if not phone or not msg_input:
         return JSONResponse({"error": "Phone number and message text are required."}, status_code=400)
 
-    # Case 1: Message is typed as Customer -> save inbound and trigger AI reply!
+    is_demo_channel = not (send_via_meta and creds["whatsapp_token"] and creds["whatsapp_phone_number_id"])
+    bill = await asyncio.to_thread(
+        auth_billing.charge_and_open_window,
+        tenant,
+        phone,
+        tenant.get("access_token", ""),
+        is_demo_channel=is_demo_channel,
+    )
+    if not bill.get("allowed"):
+        return JSONResponse(bill, status_code=402)
+
+    # Case 1: Customer Simulator turn
     if role == "customer":
         inbound_id = db.save_message(
             phone_number=phone,
@@ -599,23 +986,24 @@ async def send_dashboard_reply(request: Request):
             message=msg_input,
             direction="inbound",
             channel="simulator",
-            status="received"
+            status="received",
+            tenant_id=tid,
         )
         if customer_name and customer_name.lower() not in {"customer", "user", "unknown"}:
-            db.upsert_customer_profile(phone, overwrite_existing=False, contact_name=customer_name, data_source="simulator")
+            db.upsert_customer_profile(phone, overwrite_existing=False, tenant_id=tid, contact_name=customer_name, data_source="simulator")
 
-        bot_active = db.is_bot_enabled_for_contact(phone)
+        bot_active = db.is_bot_enabled_for_contact(phone, tenant_id=tid)
         ai_reply = ""
         latency_ms = 0.0
         engine_used = ""
         outbound_id = None
 
         if bot_active:
-            set_typing_state(phone, True)
+            set_typing_state(phone, True, tenant_id=tid)
             try:
-                ai_reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, msg_input, phone)
+                ai_reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, msg_input, phone, tenant)
             finally:
-                set_typing_state(phone, False)
+                set_typing_state(phone, False, tenant_id=tid)
 
             outbound_id = db.save_message(
                 phone_number=phone,
@@ -625,7 +1013,8 @@ async def send_dashboard_reply(request: Request):
                 channel="simulator",
                 status="sent",
                 ai_model=engine_used,
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
+                tenant_id=tid,
             )
 
         return JSONResponse({
@@ -635,29 +1024,35 @@ async def send_dashboard_reply(request: Request):
             "customer_message": msg_input,
             "ai_reply": ai_reply,
             "engine": engine_used,
-            "latency_ms": latency_ms
+            "latency_ms": latency_ms,
+            "billing": bill,
         })
 
-    # Case 2: Message is typed as Agent or AI generator
+    # Case 2: Agent or AI Reply
     if role == "ai":
-        set_typing_state(phone, True)
+        set_typing_state(phone, True, tenant_id=tid)
         try:
-            reply_body, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, msg_input, phone)
+            reply_body, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, msg_input, phone, tenant)
         finally:
-            set_typing_state(phone, False)
+            set_typing_state(phone, False, tenant_id=tid)
         sender_name = "Support Agent (AI)"
     else:
-        reply_body = render_template_placeholders(msg_input, phone=phone, explicit_name=customer_name)
+        reply_body = render_template_placeholders(msg_input, phone=phone, explicit_name=customer_name, tenant_id=tid)
         latency_ms = 0.0
         engine_used = None
-        sender_name = "Growhaz Support"
-        # When an agent replies directly, automatically pause AI bot for this contact so the AI does not interrupt!
-        db.set_bot_enabled_for_contact(phone, False)
+        sender_name = tenant.get("business_name") or "Growhaz Support"
+        db.set_bot_enabled_for_contact(phone, False, tenant_id=tid)
 
     status = "sent"
     meta_payload = {}
     if send_via_meta:
-        success, meta_res = await asyncio.to_thread(send_meta_whatsapp_message, phone, reply_body)
+        success, meta_res = await asyncio.to_thread(
+            send_meta_whatsapp_message,
+            phone,
+            reply_body,
+            creds["whatsapp_phone_number_id"],
+            creds["whatsapp_token"],
+        )
         status = "sent" if success else "failed"
         meta_payload = {"meta_api_response": meta_res}
 
@@ -670,7 +1065,8 @@ async def send_dashboard_reply(request: Request):
         status=status,
         raw_payload=meta_payload,
         ai_model=engine_used,
-        latency_ms=latency_ms
+        latency_ms=latency_ms,
+        tenant_id=tid,
     )
 
     return JSONResponse({
@@ -680,23 +1076,35 @@ async def send_dashboard_reply(request: Request):
         "message": reply_body,
         "engine": engine_used,
         "status": status,
-        "latency_ms": latency_ms
+        "latency_ms": latency_ms,
+        "billing": bill,
     })
+
 
 @app.post("/api/dashboard/send-media")
 async def send_dashboard_media(
+    request: Request,
     phone: str = Form(...),
     caption: str = Form(""),
     media_type: str = Form("image"),
     send_via_meta: bool = Form(True),
     file: UploadFile = File(None),
-    media_url: str = Form(None)
+    media_url: str = Form(None),
 ):
-    """Send photo or document to customer from dashboard, forward to WhatsApp, and pause bot."""
+    """Send photo or document to customer from dashboard."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+
     phone = (phone or "").strip()
     caption = (caption or "").strip()
     if not phone:
         return JSONResponse({"error": "Phone number is required"}, status_code=400)
+
+    is_demo_channel = not (send_via_meta and creds["whatsapp_token"] and creds["whatsapp_phone_number_id"])
+    bill = await asyncio.to_thread(auth_billing.charge_and_open_window, tenant, phone, tenant.get("access_token", ""), is_demo_channel)
+    if not bill.get("allowed"):
+        return JSONResponse(bill, status_code=402)
 
     filename = ""
     saved_url = media_url or ""
@@ -705,27 +1113,23 @@ async def send_dashboard_media(
     meta_payload = {}
     status = "sent"
 
-    # Handle file upload if provided
     if file and file.filename:
         filename = file.filename
         mime_type = file.content_type or ("image/jpeg" if media_type == "image" else "application/pdf")
         contents = await file.read()
 
-        # Save locally in uploads folder
         clean_fname = f"{int(time.time())}_{filename.replace(' ', '_')}"
         local_path = os.path.join(UPLOAD_DIR, clean_fname)
         with open(local_path, "wb") as f:
             f.write(contents)
         saved_url = f"/uploads/{clean_fname}"
 
-        # Upload directly to Meta WhatsApp Media API
-        if send_via_meta:
-            meta_id = upload_meta_media(contents, filename, mime_type)
+        if send_via_meta and creds["whatsapp_token"] and creds["whatsapp_phone_number_id"]:
+            meta_id = upload_meta_media(contents, filename, mime_type, phone_id=creds["whatsapp_phone_number_id"], token=creds["whatsapp_token"])
 
     if not saved_url and not meta_id:
         return JSONResponse({"error": "Please provide a file or media URL"}, status_code=400)
 
-    # Send via Meta WhatsApp Cloud API
     if send_via_meta:
         success, meta_res = send_meta_whatsapp_media(
             recipient_number=phone,
@@ -733,16 +1137,17 @@ async def send_dashboard_media(
             media_id=meta_id,
             media_link=saved_url if not meta_id and saved_url.startswith("http") else None,
             caption=caption,
-            filename=filename or ("document.pdf" if media_type == "document" else "image.jpg")
+            filename=filename or ("document.pdf" if media_type == "document" else "image.jpg"),
+            phone_id=creds["whatsapp_phone_number_id"],
+            token=creds["whatsapp_token"],
         )
         status = "sent" if success else "failed"
         meta_payload = {"meta_api_response": meta_res}
 
-    # Save to database
-    display_msg = caption if caption else (f"📷 Photo" if media_type == "image" else f"📄 Document: {filename or 'File'}")
+    display_msg = caption if caption else ("📷 Photo" if media_type == "image" else f"📄 Document: {filename or 'File'}")
     msg_id = db.save_message(
         phone_number=phone,
-        sender_name="Growhaz Support",
+        sender_name=tenant.get("business_name") or "Growhaz Support",
         message=display_msg,
         direction="outbound",
         channel="manual_admin",
@@ -750,11 +1155,11 @@ async def send_dashboard_media(
         raw_payload=meta_payload,
         media_type=media_type,
         media_url=saved_url,
-        media_filename=filename
+        media_filename=filename,
+        tenant_id=tid,
     )
 
-    # Automatically pause bot since human agent sent media
-    db.set_bot_enabled_for_contact(phone, False)
+    db.set_bot_enabled_for_contact(phone, False, tenant_id=tid)
 
     return JSONResponse({
         "success": True,
@@ -764,16 +1169,24 @@ async def send_dashboard_media(
         "media_url": saved_url,
         "media_filename": filename,
         "caption": caption,
-        "status": status
+        "status": status,
+        "billing": bill,
     })
+
 
 @app.post("/api/dashboard/simulate-inbound")
 async def simulate_inbound(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
     data = await request.json()
     phone = (data.get("phone") or "+14155550199").strip()
     name = (data.get("name") or "Sarah Jenkins").strip()
     user_msg = (data.get("message") or "Hi! I need help with a website security scan.").strip()
     auto_reply = data.get("auto_reply", True)
+
+    bill = await asyncio.to_thread(auth_billing.charge_and_open_window, tenant, phone, tenant.get("access_token", ""), is_demo_channel=True)
+    if not bill.get("allowed"):
+        return JSONResponse(bill, status_code=402)
 
     in_id = db.save_message(
         phone_number=phone,
@@ -781,24 +1194,24 @@ async def simulate_inbound(request: Request):
         message=user_msg,
         direction="inbound",
         channel="simulator",
-        status="received"
+        status="received",
+        tenant_id=tid,
     )
     if name and name.lower() not in {"customer", "user", "unknown"}:
-        db.upsert_customer_profile(phone, overwrite_existing=False, contact_name=name, data_source="simulator")
+        db.upsert_customer_profile(phone, overwrite_existing=False, tenant_id=tid, contact_name=name, data_source="simulator")
 
     out_id = None
     ai_reply = ""
     latency_ms = 0.0
     engine_used = ""
 
-    bot_active = db.is_bot_enabled_for_contact(phone)
-
+    bot_active = db.is_bot_enabled_for_contact(phone, tenant_id=tid)
     if auto_reply and bot_active:
-        set_typing_state(phone, True)
+        set_typing_state(phone, True, tenant_id=tid)
         try:
-            ai_reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_msg, phone)
+            ai_reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, user_msg, phone, tenant)
         finally:
-            set_typing_state(phone, False)
+            set_typing_state(phone, False, tenant_id=tid)
 
         out_id = db.save_message(
             phone_number=phone,
@@ -808,7 +1221,8 @@ async def simulate_inbound(request: Request):
             channel="simulator",
             status="sent",
             ai_model=engine_used,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
+            tenant_id=tid,
         )
 
     return JSONResponse({
@@ -819,160 +1233,206 @@ async def simulate_inbound(request: Request):
         "user_message": user_msg,
         "ai_reply": ai_reply,
         "engine": engine_used,
-        "latency_ms": latency_ms
+        "latency_ms": latency_ms,
+        "billing": bill,
     })
+
 
 @app.post("/api/dashboard/test-ai")
 async def test_ai_endpoint(request: Request):
-    """Test AI bot reply to any text prompt directly."""
+    """Test AI bot reply (including OpenRouter security guard & Neo4j graph)."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    creds = _resolve_tenant_credentials(tenant)
     data = await request.json()
     prompt = data.get("prompt", "Hello, what services does Growhaz provide?")
     phone = (data.get("phone") or "").strip()
-    reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, prompt, phone)
-    groq_key = get_env_var("GROQ_API_KEY")
-    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
+    reply, latency_ms, engine_used = await asyncio.to_thread(get_ai_reply, prompt, phone, tenant)
     return JSONResponse({
         "prompt": prompt,
         "reply": reply,
         "engine": engine_used,
         "latency_ms": latency_ms,
-        "deepseek_configured": bool(deepseek_key and not deepseek_key.startswith("sk_your")),
-        "groq_configured": bool(groq_key and not groq_key.startswith("gsk_your"))
+        "deepseek_configured": bool(creds["deepseek_api_key"] and not creds["deepseek_api_key"].startswith("sk_your")),
+        "groq_configured": bool(creds["groq_api_key"] and not creds["groq_api_key"].startswith("gsk_your")),
     })
+
 
 @app.get("/api/dashboard/settings")
-async def get_settings():
-    deepseek_key = get_env_var("DEEPSEEK_API_KEY")
-    masked_deepseek = (deepseek_key[:4] + "..." + deepseek_key[-4:]) if len(deepseek_key) > 8 else ("Configured" if deepseek_key else "")
-    groq_key = get_env_var("GROQ_API_KEY")
-    masked_key = (groq_key[:4] + "..." + groq_key[-4:]) if len(groq_key) > 8 else ("Configured" if groq_key else "")
-    meta_token = get_env_var("WHATSAPP_TOKEN")
-    masked_token = (meta_token[:4] + "..." + meta_token[-4:]) if len(meta_token) > 8 else ("Configured" if meta_token else "")
+async def get_settings(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    is_admin = bool(tenant.get("is_admin"))
+
+    def _mask(k: str) -> str:
+        val = (k or "").strip()
+        if not val:
+            return ""
+        return (val[:4] + "..." + val[-4:]) if len(val) > 8 else "Configured"
+
+    own_ds = (tenant.get("deepseek_api_key") or "").strip()
+    own_groq = (tenant.get("groq_api_key") or "").strip()
+    own_wa = (tenant.get("whatsapp_token") or "").strip()
+    own_or = (tenant.get("openrouter_api_key") or "").strip()
+
+    if is_admin:
+        own_ds = own_ds or get_env_var("DEEPSEEK_API_KEY")
+        own_groq = own_groq or get_env_var("GROQ_API_KEY")
+        own_wa = own_wa or get_env_var("WHATSAPP_TOKEN")
+        own_or = own_or or get_env_var("OPENROUTER_API_KEY")
+
+    base_url = (get_env_var("APP_URL") or str(request.base_url)).rstrip("/")
+    webhook_url = f"{base_url}/api/webhook" if tid == "default" else f"{base_url}/api/webhook/{tid}"
 
     return JSONResponse({
-        "deepseek_api_key_set": bool(deepseek_key and not deepseek_key.startswith("sk_your")),
-        "deepseek_api_key_masked": masked_deepseek,
-        "deepseek_model": get_env_var("DEEPSEEK_MODEL", "deepseek-chat"),
-        "groq_api_key_set": bool(groq_key and not groq_key.startswith("gsk_your")),
-        "groq_api_key_masked": masked_key,
-        "groq_model": get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile"),
-        "whatsapp_token_set": bool(meta_token and not meta_token.startswith("your_meta")),
-        "whatsapp_token_masked": masked_token,
-        "whatsapp_phone_number_id": get_env_var("WHATSAPP_PHONE_NUMBER_ID"),
-        "whatsapp_verify_token": get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")
+        "tenant_id": tid,
+        "is_admin": is_admin,
+        "business_name": tenant.get("business_name") or "",
+        "custom_system_prompt": tenant.get("custom_system_prompt") or "",
+        "billing_mode": tenant.get("billing_mode") or "managed_meta",
+        "webhook_url": webhook_url,
+        "deepseek_api_key_set": bool(own_ds and not own_ds.startswith("sk_your")),
+        "deepseek_api_key_masked": _mask(own_ds),
+        "deepseek_model": tenant.get("deepseek_model") or get_env_var("DEEPSEEK_MODEL", "deepseek-chat"),
+        "groq_api_key_set": bool(own_groq and not own_groq.startswith("gsk_your")),
+        "groq_api_key_masked": _mask(own_groq),
+        "groq_model": tenant.get("groq_model") or get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        "whatsapp_token_set": bool(own_wa and not own_wa.startswith("your_meta")),
+        "whatsapp_token_masked": _mask(own_wa),
+        "whatsapp_phone_number_id": (tenant.get("whatsapp_phone_number_id") or (get_env_var("WHATSAPP_PHONE_NUMBER_ID") if is_admin else "")),
+        "whatsapp_verify_token": (tenant.get("whatsapp_verify_token") or get_env_var("WHATSAPP_VERIFY_TOKEN", "whatsapp_groq_bot_secret_123")),
+        "openrouter_guard_set": bool(own_or or get_env_var("OPENROUTER_API_KEY")),
+        "openrouter_guard_masked": _mask(own_or) if is_admin else ("Platform Shield Active" if get_env_var("OPENROUTER_API_KEY") else ""),
+        "openrouter_guard_model": tenant.get("openrouter_guard_model") or get_env_var("OPENROUTER_GUARD_MODEL", security_guard.DEFAULT_GUARD_MODEL),
     })
+
 
 @app.post("/api/dashboard/settings")
 async def save_settings(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    is_admin = bool(tenant.get("is_admin"))
     data = await request.json()
-    deepseek_key = data.get("deepseek_api_key", "").strip()
-    deepseek_model = data.get("deepseek_model", "deepseek-chat").strip()
-    groq_key = data.get("groq_api_key", "").strip()
-    groq_model = data.get("groq_model", "llama-3.3-70b-versatile").strip()
-    whatsapp_token = data.get("whatsapp_token", "").strip()
-    whatsapp_phone_id = data.get("whatsapp_phone_number_id", "").strip()
-    whatsapp_verify_token = data.get("whatsapp_verify_token", "whatsapp_groq_bot_secret_123").strip()
 
-    if deepseek_key and not deepseek_key.startswith("..."):
-        os.environ["DEEPSEEK_API_KEY"] = deepseek_key
-        try: set_key(ENV_PATH, "DEEPSEEK_API_KEY", deepseek_key)
-        except Exception: pass
+    updates = {}
+    for key in ("business_name", "custom_system_prompt", "deepseek_model", "groq_model", "whatsapp_phone_number_id", "whatsapp_verify_token", "billing_mode"):
+        if key in data and data.get(key) is not None:
+            updates[key] = str(data.get(key)).strip()
 
-    if deepseek_model:
-        os.environ["DEEPSEEK_MODEL"] = deepseek_model
-        try: set_key(ENV_PATH, "DEEPSEEK_MODEL", deepseek_model)
-        except Exception: pass
+    for secret_key, env_key in [
+        ("deepseek_api_key", "DEEPSEEK_API_KEY"),
+        ("groq_api_key", "GROQ_API_KEY"),
+        ("whatsapp_token", "WHATSAPP_TOKEN"),
+        ("openrouter_api_key", "OPENROUTER_API_KEY"),
+    ]:
+        val = (data.get(secret_key) or "").strip()
+        if val and "..." not in val:
+            if secret_key == "openrouter_api_key" and not is_admin:
+                continue
+            updates[secret_key] = val
+            if is_admin:
+                os.environ[env_key] = val
+                try:
+                    set_key(ENV_PATH, env_key, val)
+                except Exception:
+                    pass
 
-    if groq_key and not groq_key.startswith("..."):
-        os.environ["GROQ_API_KEY"] = groq_key
-        try: set_key(ENV_PATH, "GROQ_API_KEY", groq_key)
-        except Exception: pass
-    
-    if groq_model:
-        os.environ["GROQ_MODEL"] = groq_model
-        try: set_key(ENV_PATH, "GROQ_MODEL", groq_model)
-        except Exception: pass
+    if is_admin:
+        for norm_k, env_k in [
+            ("deepseek_model", "DEEPSEEK_MODEL"),
+            ("groq_model", "GROQ_MODEL"),
+            ("whatsapp_phone_number_id", "WHATSAPP_PHONE_NUMBER_ID"),
+            ("whatsapp_verify_token", "WHATSAPP_VERIFY_TOKEN"),
+            ("openrouter_guard_model", "OPENROUTER_GUARD_MODEL"),
+        ]:
+            val = (data.get(norm_k) or "").strip()
+            if val:
+                os.environ[env_k] = val
+                try:
+                    set_key(ENV_PATH, env_k, val)
+                except Exception:
+                    pass
 
-    if whatsapp_token and not whatsapp_token.startswith("..."):
-        os.environ["WHATSAPP_TOKEN"] = whatsapp_token
-        try: set_key(ENV_PATH, "WHATSAPP_TOKEN", whatsapp_token)
-        except Exception: pass
+    if data.get("openrouter_guard_model") and is_admin:
+        updates["openrouter_guard_model"] = str(data["openrouter_guard_model"]).strip()
 
-    if whatsapp_phone_id:
-        os.environ["WHATSAPP_PHONE_NUMBER_ID"] = whatsapp_phone_id
-        try: set_key(ENV_PATH, "WHATSAPP_PHONE_NUMBER_ID", whatsapp_phone_id)
-        except Exception: pass
+    # Auto-switch billing mode to byo_meta (half price) when a user connects their own Meta credentials
+    if not is_admin and updates.get("whatsapp_token") and (updates.get("whatsapp_phone_number_id") or tenant.get("whatsapp_phone_number_id")):
+        if "billing_mode" not in updates:
+            updates["billing_mode"] = "byo_meta"
 
-    if whatsapp_verify_token:
-        os.environ["WHATSAPP_VERIFY_TOKEN"] = whatsapp_verify_token
-        try: set_key(ENV_PATH, "WHATSAPP_VERIFY_TOKEN", whatsapp_verify_token)
-        except Exception: pass
+    db.update_tenant_settings(tid, **updates)
+    return JSONResponse({"success": True, "message": "Settings saved & synced to cloud!"})
 
-    return JSONResponse({"success": True, "message": "Settings updated successfully!"})
 
 @app.delete("/api/dashboard/messages")
 async def delete_messages_endpoint(request: Request):
-    """Delete one or multiple selected messages."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
     data = await request.json()
     ids = data.get("ids", [])
     if isinstance(ids, (int, str)):
         ids = [ids]
-    success = db.delete_messages(ids)
+    success = db.delete_messages(ids, tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success, "deleted_count": len(ids)})
 
+
 @app.delete("/api/dashboard/conversation")
-async def delete_conv(phone: str = Query(...)):
-    success = db.delete_contact(phone)
+async def delete_conv(request: Request, phone: str = Query(...)):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    success = db.delete_contact(phone, tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success, "phone": phone})
 
+
 @app.delete("/api/dashboard/clear")
-async def clear_all():
-    success = db.clear_data()
+async def clear_all(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    success = db.clear_data(tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success})
 
-@app.get("/api/dashboard/webhooks")
-async def get_webhooks():
-    return JSONResponse({"logs": db.get_webhook_logs(50)})
 
-# Backward compatibility direct chat
+@app.get("/api/dashboard/webhooks")
+async def get_webhooks(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    return JSONResponse({"logs": db.get_webhook_logs(50, tenant_id=tenant["tenant_id"])})
+
+
 @app.post("/api/chat")
 async def direct_chat(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
     data = await request.json()
     msg = data.get("message", "")
     phone = data.get("phone", "+18005550199")
     if not msg:
         return JSONResponse({"error": "Empty message"}, status_code=400)
-    
-    db.save_message(phone, "Customer", msg, "inbound", "simulator")
-    set_typing_state(phone, True)
+
+    db.save_message(phone, msg, "inbound", "Customer", "simulator", tenant_id=tid)
+    set_typing_state(phone, True, tenant_id=tid)
     try:
-        reply, latency, engine = await asyncio.to_thread(get_ai_reply, msg, phone)
+        reply, latency, engine = await asyncio.to_thread(get_ai_reply, msg, phone, tenant)
     finally:
-        set_typing_state(phone, False)
-    db.save_message(phone, "Support Agent (AI)", reply, "outbound", "simulator", "sent", None, engine, latency)
+        set_typing_state(phone, False, tenant_id=tid)
+    db.save_message(phone, reply, "outbound", "Support Agent (AI)", "simulator", "sent", None, engine, latency, tenant_id=tid)
     return JSONResponse({"reply": reply, "model": engine, "latency_ms": latency})
 
-# ====================================================================
-
 
 # ====================================================================
-# BULK BROADCAST & LEADS CRM ENDPOINTS
+# BULK BROADCAST & LEADS CRM ENDPOINTS (TENANT SCOPED + BILLED)
 # ====================================================================
 
 @app.post("/api/dashboard/broadcast")
 async def bulk_broadcast(request: Request):
-    """
-    Send WhatsApp messages to multiple leads/numbers with rate limiting and logging.
-    Supports both:
-    1. Static broadcast: { "phone_numbers": [...], "message": "...", "recipient_names": {phone: name} }
-    2. Hyper-personalized AI campaign: { "personalized_messages": [ { "phone": "...", "message": "...", "name": "...", "category": "...", "area": "...", "website": "..." } ] }
-    """
+    """Send bulk WhatsApp messages (per-tenant Meta or Demo) with 24h conversation billing."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+    access_token = tenant.get("access_token", "")
+
     data = await request.json()
     personalized_items = data.get("personalized_messages", [])
     numbers_raw = data.get("phone_numbers", [])
     default_message = (data.get("message") or "").strip()
-    send_via_meta = data.get("send_via_meta", True)
-    add_as_leads = data.get("add_as_leads", True)
+    send_via_meta = bool(data.get("send_via_meta", True))
+    add_as_leads = bool(data.get("add_as_leads", True))
     lead_source = (data.get("lead_source") or "Bulk Broadcast").strip()
     raw_recipient_names = data.get("recipient_names") or {}
     recipient_names = {}
@@ -982,45 +1442,59 @@ async def bulk_broadcast(request: Request):
             if nk and str(v or "").strip():
                 recipient_names[nk] = str(v).strip()
 
-    # -------------------------------------------------------------
-    # Case 1: Hyper-Personalized Broadcast (Each business has custom message)
-    # -------------------------------------------------------------
+    is_demo_channel = not (send_via_meta and creds["whatsapp_token"] and creds["whatsapp_phone_number_id"])
+
+    # Case 1: Personalized AI Campaign
     if personalized_items and isinstance(personalized_items, list):
         results = []
         sent_count = 0
         failed_count = 0
-        
+        total_coins_charged = 0.0
+
         for item in personalized_items:
             raw_phone = item.get("phone") or item.get("contact_number") or ""
-            digits = db.normalize_phone_key(raw_phone) or re.sub(r'[^0-9]', '', str(raw_phone))
-                
+            digits = db.normalize_phone_key(raw_phone) or re.sub(r"[^0-9]", "", str(raw_phone))
+
             lead_name = (item.get("name") or item.get("business_name") or "").strip()
             item_msg = (item.get("message") or item.get("personalized_message") or default_message).strip()
             item_category = (item.get("category") or item.get("business_category") or "").strip()
             item_area = (item.get("area") or item.get("area_or_locality") or "").strip()
             item_website = (item.get("website") or item.get("Website_or_Social_Link") or "").strip()
-            
+
             if not digits or len(digits) < 10:
                 failed_count += 1
                 results.append({
                     "phone": raw_phone or "N/A",
                     "name": lead_name or "Unknown",
                     "status": "failed",
-                    "error": "Missing or invalid phone number (requires 10+ digits with country code)"
+                    "error": "Missing or invalid phone number (requires 10+ digits)",
                 })
                 continue
-                
+
             if not item_msg:
                 failed_count += 1
                 results.append({
                     "phone": digits,
                     "name": lead_name or digits,
                     "status": "failed",
-                    "error": "Message content was empty for this lead"
+                    "error": "Message content was empty for this lead",
                 })
                 continue
 
-            # Persist structured CSV/campaign business info into customer_profiles first so AI remembers it
+            # Billing check / coin charge per 24h unique window
+            bill = await asyncio.to_thread(auth_billing.charge_and_open_window, tenant, digits, access_token, is_demo_channel)
+            if not bill.get("allowed"):
+                failed_count += 1
+                results.append({
+                    "phone": digits,
+                    "name": lead_name or digits,
+                    "status": "failed",
+                    "error": bill.get("message") or "Billing limit reached",
+                    "billing_code": bill.get("code"),
+                })
+                continue
+            total_coins_charged += float(bill.get("charged") or 0)
+
             profile_kwargs = {
                 "business_name": lead_name,
                 "business_category": item_category,
@@ -1038,23 +1512,31 @@ async def bulk_broadcast(request: Request):
                 else:
                     profile_kwargs["website_url"] = item_website
                     profile_kwargs["has_website"] = "yes"
-            stored_profile = db.upsert_customer_profile(digits, overwrite_existing=True, **profile_kwargs)
+            stored_profile = db.upsert_customer_profile(digits, overwrite_existing=True, tenant_id=tid, **profile_kwargs)
 
-            # Resolve any {{name}} / {{business}} / {{area}} variables before sending
-            resolved_msg = render_template_placeholders(
-                item_msg,
-                phone=digits,
-                explicit_name=lead_name,
-                profile=stored_profile
+            resolved_msg = security_guard.sanitize_outbound_reply(
+                render_template_placeholders(
+                    item_msg,
+                    phone=digits,
+                    explicit_name=lead_name,
+                    profile=stored_profile,
+                    tenant_id=tid,
+                )
             )
             display_name = lead_name or stored_profile.get("business_name") or stored_profile.get("contact_name") or "Growhaz Support"
 
             status = "sent"
             err_msg = None
             meta_res = {}
-            
+
             if send_via_meta:
-                success, meta_res = await asyncio.to_thread(send_meta_whatsapp_message, digits, resolved_msg)
+                success, meta_res = await asyncio.to_thread(
+                    send_meta_whatsapp_message,
+                    digits,
+                    resolved_msg,
+                    creds["whatsapp_phone_number_id"],
+                    creds["whatsapp_token"],
+                )
                 if success:
                     status = "sent"
                     sent_count += 1
@@ -1076,8 +1558,7 @@ async def bulk_broadcast(request: Request):
             else:
                 status = "simulated"
                 sent_count += 1
-                
-            # Record to message history under the contact's phone
+
             db.save_message(
                 phone_number=digits,
                 sender_name=display_name,
@@ -1085,10 +1566,10 @@ async def bulk_broadcast(request: Request):
                 direction="outbound",
                 channel="ai_campaign" if send_via_meta else "simulator",
                 status=status,
-                raw_payload={"campaign": True, "lead_name": display_name, "meta_response": meta_res}
+                raw_payload={"campaign": True, "lead_name": display_name, "meta_response": meta_res},
+                tenant_id=tid,
             )
-            
-            # Save or update in leads CRM
+
             if add_as_leads:
                 lead_notes = f"{item_category} • {item_area}".strip(" •")
                 db.add_or_update_lead(
@@ -1096,68 +1577,94 @@ async def bulk_broadcast(request: Request):
                     name=display_name if display_name != "Growhaz Support" else "Lead",
                     source=lead_source,
                     notes=lead_notes,
-                    status="Contacted" if status in ["sent", "simulated"] else "New"
+                    status="Contacted" if status in ["sent", "simulated"] else "New",
+                    tenant_id=tid,
                 )
-                db.record_lead_messaged(digits, status="Contacted" if status in ["sent", "simulated"] else "Failed")
-                
+                db.record_lead_messaged(digits, status="Contacted" if status in ["sent", "simulated"] else "Failed", tenant_id=tid)
+
             results.append({
                 "phone": digits,
                 "name": display_name,
                 "status": status,
                 "error": err_msg,
-                "resolved_message": resolved_msg
+                "resolved_message": resolved_msg,
+                "coins_charged": bill.get("charged", 0),
+                "charge_source": bill.get("source", ""),
             })
-            
+
             if send_via_meta and len(personalized_items) > 1:
                 await asyncio.sleep(0.2)
-                
+
+        billing_after = await asyncio.to_thread(auth_billing.get_billing_summary, db.get_tenant(tid) | {"is_admin": tenant.get("is_admin"), "supabase_user_id": tenant.get("supabase_user_id"), "access_token": access_token}, access_token)
         return JSONResponse({
             "success": True,
             "mode": "personalized",
             "total": len(personalized_items),
             "sent": sent_count,
             "failed": failed_count,
-            "results": results
+            "coins_charged": total_coins_charged,
+            "billing": billing_after,
+            "results": results,
         })
 
-    # -------------------------------------------------------------
-    # Case 2: Standard Single-Message Broadcast to Phone Numbers
-    # -------------------------------------------------------------
+    # Case 2: Standard Single-Message Broadcast
     if not default_message:
         return JSONResponse({"error": "Message content cannot be empty"}, status_code=400)
-    
+
     if isinstance(numbers_raw, str):
-        numbers_raw = [n.strip() for n in re.split(r'[\n,;]+', numbers_raw) if n.strip()]
-    
+        numbers_raw = [n.strip() for n in re.split(r"[\n,;]+", numbers_raw) if n.strip()]
+
     clean_numbers = []
     seen = set()
     for raw in numbers_raw:
-        digits = db.normalize_phone_key(raw) or re.sub(r'[^0-9]', '', str(raw))
+        digits = db.normalize_phone_key(raw) or re.sub(r"[^0-9]", "", str(raw))
         if len(digits) >= 10 and digits not in seen:
             clean_numbers.append(digits)
             seen.add(digits)
-            
+
     if not clean_numbers:
         return JSONResponse({"error": "No valid phone numbers found. Please enter 10+ digit numbers with country code."}, status_code=400)
-        
+
     results = []
     sent_count = 0
     failed_count = 0
-    
+    total_coins_charged = 0.0
+
     for phone in clean_numbers:
+        bill = await asyncio.to_thread(auth_billing.charge_and_open_window, tenant, phone, access_token, is_demo_channel)
+        if not bill.get("allowed"):
+            failed_count += 1
+            results.append({
+                "phone": phone,
+                "name": recipient_names.get(phone, "Lead"),
+                "status": "failed",
+                "error": bill.get("message") or "Billing limit reached",
+                "billing_code": bill.get("code"),
+            })
+            continue
+        total_coins_charged += float(bill.get("charged") or 0)
+
         explicit_n = recipient_names.get(phone, "")
-        profile = db.get_customer_profile(phone)
+        profile = db.get_customer_profile(phone, tenant_id=tid)
         if explicit_n and db._is_meaningful_profile_val(explicit_n, "contact_name"):
-            profile = db.upsert_customer_profile(phone, overwrite_existing=False, contact_name=explicit_n, data_source="broadcast")
-        final_msg = render_template_placeholders(default_message, phone=phone, explicit_name=explicit_n, profile=profile)
+            profile = db.upsert_customer_profile(phone, overwrite_existing=False, tenant_id=tid, contact_name=explicit_n, data_source="broadcast")
+        final_msg = security_guard.sanitize_outbound_reply(
+            render_template_placeholders(default_message, phone=phone, explicit_name=explicit_n, profile=profile, tenant_id=tid)
+        )
         display_name = _pick_real_recipient_name(explicit_n, profile, phone) or "Lead"
 
         status = "sent"
         err_msg = None
         meta_res = {}
-        
+
         if send_via_meta:
-            success, meta_res = await asyncio.to_thread(send_meta_whatsapp_message, phone, final_msg)
+            success, meta_res = await asyncio.to_thread(
+                send_meta_whatsapp_message,
+                phone,
+                final_msg,
+                creds["whatsapp_phone_number_id"],
+                creds["whatsapp_token"],
+            )
             if success:
                 status = "sent"
                 sent_count += 1
@@ -1179,72 +1686,73 @@ async def bulk_broadcast(request: Request):
         else:
             status = "simulated"
             sent_count += 1
-            
-        # Record resolved message to history so inbox reflects exactly what was sent
+
         db.save_message(
             phone_number=phone,
-            sender_name=display_name if display_name != "Lead" else "Growhaz Support",
+            sender_name=display_name if display_name != "Lead" else (tenant.get("business_name") or "Growhaz Support"),
             message=final_msg,
             direction="outbound",
             channel="bulk_broadcast" if send_via_meta else "simulator",
             status=status,
-            raw_payload={"broadcast": True, "meta_response": meta_res}
+            raw_payload={"broadcast": True, "meta_response": meta_res},
+            tenant_id=tid,
         )
-        
-        # Save or update in leads table
+
         if add_as_leads:
             db.add_or_update_lead(
                 phone_number=phone,
                 name=display_name,
                 source=lead_source,
-                status="Contacted" if status in ["sent", "simulated"] else "New"
+                status="Contacted" if status in ["sent", "simulated"] else "New",
+                tenant_id=tid,
             )
-            db.record_lead_messaged(phone, status="Contacted" if status in ["sent", "simulated"] else "Failed")
-            
+            db.record_lead_messaged(phone, status="Contacted" if status in ["sent", "simulated"] else "Failed", tenant_id=tid)
+
         results.append({
             "phone": phone,
             "name": display_name,
             "status": status,
             "error": err_msg,
-            "resolved_message": final_msg
+            "resolved_message": final_msg,
+            "coins_charged": bill.get("charged", 0),
+            "charge_source": bill.get("source", ""),
         })
-        
+
         if send_via_meta and len(clean_numbers) > 1:
             await asyncio.sleep(0.2)
-            
+
+    billing_after = await asyncio.to_thread(auth_billing.get_billing_summary, db.get_tenant(tid) | {"is_admin": tenant.get("is_admin"), "supabase_user_id": tenant.get("supabase_user_id"), "access_token": access_token}, access_token)
     return JSONResponse({
         "success": True,
         "mode": "standard",
         "total": len(clean_numbers),
         "sent": sent_count,
         "failed": failed_count,
-        "results": results
+        "coins_charged": total_coins_charged,
+        "billing": billing_after,
+        "results": results,
     })
 
 
 @app.post("/api/dashboard/ai-personalize-campaign")
 async def ai_personalize_campaign(request: Request):
-    """
-    Generate customized, ecosystem-focused AI outreach messages concurrently across a list of businesses.
-    Enriches missing context from customer_profiles DB when available, and never hallucinates fake names or areas.
-    """
+    """Generate customized, ecosystem-focused AI outreach messages concurrently across a list of businesses."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+
     try:
         from api.bot_engine import generate_personalized_campaign_pitch
-        
+
         data = await request.json()
         leads = data.get("leads", [])
         campaign_goal = (data.get("campaign_goal") or "Helping integrate practical technology (website, automation & WhatsApp workflows) into your existing business ecosystem").strip()
         tone = (data.get("tone") or "friendly_warm").strip()
         custom_notes = (data.get("custom_notes") or "").strip()
-        
+
         if not leads or not isinstance(leads, list):
             return JSONResponse({"error": "A list of leads/businesses is required."}, status_code=400)
-            
-        deepseek_key = get_env_var("DEEPSEEK_API_KEY")
-        deepseek_model = get_env_var("DEEPSEEK_MODEL", "deepseek-chat")
-        groq_key = get_env_var("GROQ_API_KEY")
-        groq_model = get_env_var("GROQ_MODEL", "llama-3.3-70b-versatile")
-        
+
         sem = asyncio.Semaphore(5)
 
         async def _gen_one(idx: int, lead: dict) -> dict:
@@ -1256,7 +1764,7 @@ async def ai_personalize_campaign(request: Request):
             b_eco = (lead.get("existing_ecosystem") or "").strip()
 
             if b_phone:
-                stored = db.get_customer_profile(b_phone)
+                stored = db.get_customer_profile(b_phone, tenant_id=tid)
                 if not db._is_meaningful_profile_val(b_name, "business_name") and stored.get("business_name"):
                     b_name = stored["business_name"]
                 if not db._is_meaningful_profile_val(b_cat, "business_category") and stored.get("business_category"):
@@ -1278,10 +1786,10 @@ async def ai_personalize_campaign(request: Request):
                         campaign_goal=campaign_goal,
                         tone=tone,
                         custom_notes=custom_notes,
-                        deepseek_api_key=deepseek_key,
-                        deepseek_model=deepseek_model,
-                        groq_api_key=groq_key,
-                        groq_model=groq_model,
+                        deepseek_api_key=creds["deepseek_api_key"],
+                        deepseek_model=creds["deepseek_model"],
+                        groq_api_key=creds["groq_api_key"],
+                        groq_model=creds["groq_model"],
                         website_url=b_web,
                         existing_ecosystem=b_eco,
                     )
@@ -1318,69 +1826,73 @@ async def ai_personalize_campaign(request: Request):
             "success": True,
             "total": len(personalized_leads),
             "engine_used": engine_used,
-            "leads": personalized_leads
+            "leads": personalized_leads,
         })
     except Exception as e:
         logger.error(f"[Campaign AI] Error in personalize campaign: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
 @app.get("/api/dashboard/leads")
-async def get_all_leads():
-    """Retrieve all leads in CRM."""
-    leads = db.get_leads()
+async def get_all_leads(request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    leads = db.get_leads(tenant_id=tenant["tenant_id"])
     return JSONResponse({"leads": leads, "total": len(leads)})
+
 
 @app.post("/api/dashboard/leads")
 async def add_leads_endpoint(request: Request):
-    """Add one or more leads without sending messages immediately."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
     data = await request.json()
     numbers_raw = data.get("phone_numbers", [])
     name = (data.get("name") or "Lead").strip()
     source = (data.get("source") or "Manual Import").strip()
     notes = (data.get("notes") or "").strip()
     status = (data.get("status") or "New").strip()
-    
+
     if isinstance(numbers_raw, str):
-        numbers_raw = [n.strip() for n in re.split(r'[\n,;]+', numbers_raw) if n.strip()]
-        
+        numbers_raw = [n.strip() for n in re.split(r"[\n,;]+", numbers_raw) if n.strip()]
+
     added = 0
     for raw in numbers_raw:
-        digits = re.sub(r'[^0-9]', '', str(raw))
-        if len(digits) == 10:
-            digits = "91" + digits
+        digits = db.normalize_phone_key(raw) or re.sub(r"[^0-9]", "", str(raw))
         if len(digits) >= 10:
-            db.add_or_update_lead(digits, name=name, source=source, status=status, notes=notes)
+            db.add_or_update_lead(digits, name=name, source=source, status=status, notes=notes, tenant_id=tid)
             added += 1
-            
+
     return JSONResponse({"success": True, "added_count": added})
 
+
 @app.delete("/api/dashboard/leads/{lead_id}")
-async def delete_lead_endpoint(lead_id: int):
-    """Delete a lead by ID."""
-    success = db.delete_lead(lead_id)
+async def delete_lead_endpoint(lead_id: int, request: Request):
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    success = db.delete_lead(lead_id, tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success, "lead_id": lead_id})
+
 
 @app.put("/api/dashboard/leads/{lead_id}/status")
 async def update_lead_status_endpoint(lead_id: int, request: Request):
-    """Update lead pipeline status."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
     data = await request.json()
     status = data.get("status", "Contacted")
-    success = db.update_lead_status(lead_id, status)
+    success = db.update_lead_status(lead_id, status, tenant_id=tenant["tenant_id"])
     return JSONResponse({"success": success, "lead_id": lead_id, "status": status})
 
+
 # ====================================================================
-# 3. DASHBOARD USER INTERFACE (MODULAR TEMPLATE & STATIC JS)
+# 3. DASHBOARD USER INTERFACE & POLICIES
 # ====================================================================
 
 @app.api_route("/dashboard", methods=["GET", "HEAD"], response_class=HTMLResponse)
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_dashboard():
-    """Serves the modular responsive Growhaz CRM dashboard HTML."""
     index_path = os.path.join(TEMPLATES_DIR, "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h1>Growhaz Support Hub</h1><p>Dashboard template not found.</p>")
+
 
 @app.api_route("/privacy", methods=["GET", "HEAD"], response_class=HTMLResponse)
 @app.api_route("/privacy-policy", methods=["GET", "HEAD"], response_class=HTMLResponse)
@@ -1409,6 +1921,7 @@ async def serve_privacy():
     </html>
     """)
 
+
 @app.api_route("/terms", methods=["GET", "HEAD"], response_class=HTMLResponse)
 @app.api_route("/terms-of-service", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_terms():
@@ -1434,6 +1947,7 @@ async def serve_terms():
     </body>
     </html>
     """)
+
 
 @app.api_route("/data-deletion", methods=["GET", "HEAD"], response_class=HTMLResponse)
 @app.api_route("/user-data-deletion", methods=["GET", "HEAD"], response_class=HTMLResponse)

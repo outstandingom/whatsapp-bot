@@ -17,5 +17,23 @@ services:
         sync: false
       - key: WHATSAPP_VERIFY_TOKEN
         value: whatsapp_groq_bot_secret_123
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_GUARD_MODEL
+        value: meta-llama/llama-guard-4-12b
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        sync: false
+      - key: OWNER_ADMIN_EMAIL
+        sync: false
+      - key: SUPABASE_URL
+        value: https://hkigsjwppfbtkuqhaxsp.supabase.co
+      - key: SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhraWdzandwcGZidGt1cWhheHNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkxODY2MjEsImV4cCI6MjA4NDc2MjYyMX0.wNueoaWZWlJY5TnQiZQKEfKwaSPhyt69X3M80ezO-Gc
       - key: APP_URL
-        value: https://whatapp-v59g.onrender.com
+        value: https://whatsapp-bot-qtm1.onrender.com

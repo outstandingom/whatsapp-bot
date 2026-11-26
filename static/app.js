@@ -1,4 +1,678 @@
 
+
+// ====================================================================
+// GROWHAZ SAAS AUTH, SSO, WALLET BILLING & NEO4J / GUARD UI
+// ====================================================================
+const AUTH_TOKEN_KEY = 'growhaz_bot_jwt';
+let currentUser = null;
+let currentBilling = null;
+let isAuthenticated = false;
+let _lastBillingErrorPrompt = 0;
+
+function escSaasHtml(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = async function (input, init = {}) {
+    const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+    const isApi = url.startsWith('/api/');
+    const isPublicAuth = url.startsWith('/api/auth/login') || url.startsWith('/api/auth/register') || url.startsWith('/api/auth/sso');
+
+    const nextInit = { ...init };
+    const headers = new Headers(init.headers || (typeof input !== 'string' && input && input.headers ? input.headers : undefined) || {});
+    if (isApi && !isPublicAuth) {
+        const tok = localStorage.getItem(AUTH_TOKEN_KEY);
+        if (tok && !headers.has('Authorization')) {
+            headers.set('Authorization', 'Bearer ' + tok);
+        }
+    }
+    nextInit.headers = headers;
+
+    const response = await _nativeFetch(input, nextInit);
+
+    if (isApi && !isPublicAuth && response.status === 401) {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        isAuthenticated = false;
+        showAuthScreen(false);
+    } else if (isApi && response.status === 402) {
+        try {
+            const payload = await response.clone().json();
+            const now = Date.now();
+            if (now - _lastBillingErrorPrompt > 3500) {
+                _lastBillingErrorPrompt = now;
+                const msg = payload.message || 'Insufficient Growhaz Wallet Coins or Free Demos used up.';
+                alert(msg);
+                openBillingModal();
+            }
+        } catch (_) {}
+    }
+    return response;
+};
+
+function showAuthError(msg) {
+    const errBox = document.getElementById('auth-error-box');
+    const okBox = document.getElementById('auth-success-box');
+    if (okBox) okBox.classList.add('hidden');
+    if (errBox) {
+        errBox.textContent = msg || 'Authentication failed.';
+        errBox.classList.remove('hidden');
+    }
+}
+
+function showAuthSuccess(msg) {
+    const errBox = document.getElementById('auth-error-box');
+    const okBox = document.getElementById('auth-success-box');
+    if (errBox) errBox.classList.add('hidden');
+    if (okBox) {
+        okBox.textContent = msg || 'Success!';
+        okBox.classList.remove('hidden');
+    }
+}
+
+function showAuthScreen(showLoading = false) {
+    const screen = document.getElementById('auth-screen');
+    const loadingBox = document.getElementById('auth-loading-state');
+    const mainBox = document.getElementById('auth-main-box');
+    if (screen) screen.classList.remove('hidden');
+    if (loadingBox) loadingBox.classList.toggle('hidden', !showLoading);
+    if (mainBox) mainBox.classList.toggle('hidden', showLoading);
+}
+
+function switchAuthTab(tab) {
+    const isReg = tab === 'register';
+    const tabLogin = document.getElementById('auth-tab-login');
+    const tabReg = document.getElementById('auth-tab-register');
+    const formLogin = document.getElementById('auth-login-form');
+    const formReg = document.getElementById('auth-register-form');
+    const errBox = document.getElementById('auth-error-box');
+    const okBox = document.getElementById('auth-success-box');
+    if (errBox) errBox.classList.add('hidden');
+    if (okBox) okBox.classList.add('hidden');
+
+    if (formLogin) formLogin.classList.toggle('hidden', isReg);
+    if (formReg) formReg.classList.toggle('hidden', !isReg);
+    if (tabLogin) {
+        tabLogin.className = isReg
+            ? 'py-2 rounded-lg text-slate-600 hover:text-slate-900 transition'
+            : 'py-2 rounded-lg bg-white text-emerald-700 shadow-sm transition';
+    }
+    if (tabReg) {
+        tabReg.className = isReg
+            ? 'py-2 rounded-lg bg-white text-emerald-700 shadow-sm transition'
+            : 'py-2 rounded-lg text-slate-600 hover:text-slate-900 transition';
+    }
+}
+
+function onAuthSuccess(user, billing) {
+    isAuthenticated = true;
+    currentUser = user || currentUser;
+    if (billing) currentBilling = billing;
+
+    const screen = document.getElementById('auth-screen');
+    if (screen) screen.classList.add('hidden');
+
+    const emailEl = document.getElementById('mnav-user-email');
+    if (emailEl && currentUser && currentUser.email) {
+        emailEl.textContent = currentUser.email.split('@')[0];
+    }
+    const brandTitle = document.getElementById('header-brand-title');
+    if (brandTitle) {
+        const bname = (currentUser && currentUser.business_name) || '';
+        brandTitle.textContent = bname ? `${bname} Desk` : 'Growhaz Support Desk';
+    }
+
+    refreshBillingUI(currentBilling);
+    fetchData(true);
+    refreshGraphAndSecurityPanels();
+}
+
+async function bootstrapAuthAndDashboard() {
+    const hash = window.location.hash || '';
+    const match = hash.match(/sso_token=([^&]+)/);
+    if (match && match[1]) {
+        const ssoToken = decodeURIComponent(match[1]);
+        try {
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        } catch (_) {}
+        showAuthScreen(true);
+        try {
+            const res = await _nativeFetch('/api/auth/sso', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: ssoToken })
+            });
+            const data = await res.json();
+            if (res.ok && data.access_token) {
+                localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
+                onAuthSuccess(data.user, data.billing);
+                return;
+            }
+            showAuthScreen(false);
+            showAuthError(data.detail || data.error || 'SSO session expired. Please sign in.');
+            return;
+        } catch (err) {
+            showAuthScreen(false);
+            showAuthError('Unable to verify Growhaz SSO token: ' + err.message);
+            return;
+        }
+    }
+
+    const saved = localStorage.getItem(AUTH_TOKEN_KEY);
+    if (saved) {
+        showAuthScreen(true);
+        try {
+            const res = await fetch('/api/auth/me');
+            if (res.ok) {
+                const data = await res.json();
+                onAuthSuccess(data.user, data.billing);
+                return;
+            }
+        } catch (_) {}
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+    isAuthenticated = false;
+    showAuthScreen(false);
+}
+
+async function handleGrowhazLogin(e) {
+    e.preventDefault();
+    const email = (document.getElementById('auth-login-email')?.value || '').trim();
+    const password = document.getElementById('auth-login-password')?.value || '';
+    const btn = document.getElementById('auth-login-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i> Signing In...';
+    }
+    try {
+        const res = await _nativeFetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.access_token) {
+            showAuthError(data.detail || data.error || 'Invalid email or password.');
+            return;
+        }
+        localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
+        onAuthSuccess(data.user, data.billing);
+    } catch (err) {
+        showAuthError('Login error: ' + err.message);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Sign In to Workspace';
+        }
+    }
+}
+
+async function handleGrowhazRegister(e) {
+    e.preventDefault();
+    const fullName = (document.getElementById('auth-reg-name')?.value || '').trim();
+    const email = (document.getElementById('auth-reg-email')?.value || '').trim();
+    const password = document.getElementById('auth-reg-password')?.value || '';
+    const btn = document.getElementById('auth-reg-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i> Creating Account...';
+    }
+    try {
+        const res = await _nativeFetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ full_name: fullName, email, password })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            showAuthError(data.detail || data.error || 'Registration failed.');
+            return;
+        }
+        if (data.needs_email_verification || !data.access_token) {
+            showAuthSuccess(data.message || 'Verification email sent! Confirm your email and sign in.');
+            switchAuthTab('login');
+            const loginEmail = document.getElementById('auth-login-email');
+            if (loginEmail) loginEmail.value = email;
+            return;
+        }
+        localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
+        onAuthSuccess(data.user, data.billing);
+    } catch (err) {
+        showAuthError('Registration error: ' + err.message);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Register & Claim 3 Free Demos';
+        }
+    }
+}
+
+function logoutGrowhazUser() {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    isAuthenticated = false;
+    currentUser = null;
+    currentBilling = null;
+    if (typeof closeMobileNav === 'function') closeMobileNav();
+    showAuthScreen(false);
+}
+
+async function refreshBillingUI(billingObj = null) {
+    let b = billingObj;
+    if (!b && isAuthenticated) {
+        try {
+            const res = await fetch('/api/billing/status');
+            if (res.ok) {
+                const data = await res.json();
+                b = data.billing;
+            }
+        } catch (_) {}
+    }
+    if (!b) return;
+    currentBilling = b;
+
+    const coins = Math.floor(Number((b.wallet && b.wallet.balance) || 0));
+    const hc = document.getElementById('header-wallet-coins');
+    const mc = document.getElementById('mnav-wallet-coins');
+    const pt = document.getElementById('header-plan-tag');
+    if (hc) hc.textContent = String(coins);
+    if (mc) mc.textContent = String(coins);
+    if (pt) {
+        pt.textContent = b.is_admin ? 'ADMIN' : (b.plan && b.plan.active ? String(b.plan.tier).toUpperCase() : 'PAYG');
+    }
+
+    const banner = document.getElementById('demo-onboarding-banner');
+    const demoCountEl = document.getElementById('demo-remaining-count');
+    if (demoCountEl) demoCountEl.textContent = String(b.demo_remaining ?? 0);
+    if (banner) {
+        if (b.needs_meta_setup && !b.is_admin) {
+            banner.classList.remove('hidden');
+        } else {
+            banner.classList.add('hidden');
+        }
+    }
+
+    const modal = document.getElementById('billing-modal');
+    if (modal && !modal.classList.contains('hidden')) {
+        renderBillingModal(b);
+    }
+}
+
+function renderBillingModal(b) {
+    if (!b) return;
+    const coins = Math.floor(Number((b.wallet && b.wallet.balance) || 0));
+    const balEl = document.getElementById('billing-modal-balance');
+    if (balEl) balEl.textContent = `${coins} Coins (₹${coins})`;
+
+    const titleEl = document.getElementById('billing-summary-title');
+    const subEl = document.getElementById('billing-summary-subtitle');
+    const mode = b.billing_mode === 'byo_meta' ? 'byo_meta' : 'managed_meta';
+
+    if (titleEl) {
+        if (b.is_admin) {
+            titleEl.textContent = 'Platform Owner Workspace (Admin)';
+        } else if (b.plan && b.plan.active) {
+            titleEl.textContent = `Active Plan: ${String(b.plan.tier).toUpperCase()} — ${b.plan.remaining}/${b.plan.quota} 24h convs left`;
+        } else {
+            titleEl.textContent = `Pay-As-You-Go (${mode === 'byo_meta' ? 'Own Meta ₹1/conv' : 'Managed Meta ₹2/conv'})`;
+        }
+    }
+    if (subEl) {
+        const metaNote = b.has_own_meta
+            ? 'Own Meta Credentials Connected (50% Half-Price Rates Unlocked)'
+            : `Free Demos left: ${b.demo_remaining ?? 0}/${b.demo_limit ?? 3} (No Meta setup needed to test)`;
+        subEl.textContent = metaNote;
+    }
+
+    const cardManaged = document.getElementById('mode-card-managed');
+    const cardByo = document.getElementById('mode-card-byo');
+    if (cardManaged) {
+        cardManaged.className = mode === 'managed_meta'
+            ? 'text-left p-3.5 rounded-2xl border-2 border-emerald-500 bg-emerald-50/70 transition space-y-1'
+            : 'text-left p-3.5 rounded-2xl border-2 border-slate-200 bg-white hover:border-emerald-300 transition space-y-1';
+    }
+    if (cardByo) {
+        cardByo.className = mode === 'byo_meta'
+            ? 'text-left p-3.5 rounded-2xl border-2 border-indigo-500 bg-indigo-50/70 transition space-y-1'
+            : 'text-left p-3.5 rounded-2xl border-2 border-slate-200 bg-white hover:border-indigo-300 transition space-y-1';
+    }
+
+    const grid = document.getElementById('billing-plans-grid');
+    if (grid) {
+        const catalog = b.plans_catalog || {
+            starter: { name: 'Starter', conversations: 600, managed_meta_price: 999, byo_meta_price: 499 },
+            growth: { name: 'Growth', conversations: 2000, managed_meta_price: 2499, byo_meta_price: 1199 },
+            pro: { name: 'Pro Scale', conversations: 5000, managed_meta_price: 4999, byo_meta_price: 2499 }
+        };
+        const activeTier = b.plan && b.plan.active ? b.plan.tier : '';
+        grid.innerHTML = ['starter', 'growth', 'pro'].map(pid => {
+            const p = catalog[pid];
+            const price = mode === 'byo_meta' ? p.byo_meta_price : p.managed_meta_price;
+            const strike = mode === 'byo_meta' ? `<span class="line-through text-slate-400 text-[11px] mr-1">₹${p.managed_meta_price}</span>` : '';
+            const isPopular = pid === 'growth';
+            const isCurrent = activeTier === pid;
+            return `
+                <div class="p-3.5 rounded-2xl border ${isPopular ? 'border-emerald-400 bg-emerald-50/40 shadow-sm' : 'border-slate-200 bg-slate-50/60'} flex flex-col justify-between space-y-3">
+                    <div>
+                        <div class="flex items-center justify-between gap-1">
+                            <span class="font-extrabold text-slate-900 text-sm">${escSaasHtml(p.name)}</span>
+                            ${isPopular ? '<span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-600 text-white">Popular</span>' : ''}
+                        </div>
+                        <div class="mt-1.5 flex items-baseline gap-1">
+                            ${strike}
+                            <span class="text-xl font-extrabold text-slate-900">₹${price}</span>
+                            <span class="text-[11px] text-slate-500">/ month</span>
+                        </div>
+                        <p class="text-[11px] text-slate-600 font-semibold mt-1">${Number(p.conversations).toLocaleString()} conversations (24h)</p>
+                    </div>
+                    <button type="button" onclick="subscribePlan('${pid}')"
+                            class="w-full py-2 rounded-xl font-bold text-xs transition ${isCurrent ? 'bg-slate-800 text-white' : (mode === 'byo_meta' ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white')}">
+                        ${isCurrent ? 'Current Plan (Renew)' : `Activate (${price} Coins)`}
+                    </button>
+                </div>
+            `;
+        }).join('');
+    }
+    calcBillingPreview();
+}
+
+async function openBillingModal() {
+    const modal = document.getElementById('billing-modal');
+    if (modal) modal.classList.remove('hidden');
+    if (currentBilling) renderBillingModal(currentBilling);
+    await refreshBillingUI();
+}
+
+function closeBillingModal() {
+    const modal = document.getElementById('billing-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function calcBillingPreview() {
+    const countEl = document.getElementById('billing-calc-count');
+    const resEl = document.getElementById('billing-calc-result');
+    const noteEl = document.getElementById('billing-calc-mode-note');
+    const count = Math.max(1, parseInt(countEl?.value || '200', 10) || 200);
+    const mode = currentBilling && currentBilling.billing_mode === 'byo_meta' ? 'byo_meta' : 'managed_meta';
+    const rate = mode === 'byo_meta' ? 1 : 2;
+    const total = count * rate;
+    if (resEl) resEl.textContent = `${total.toLocaleString()} Coins (₹${total.toLocaleString()})`;
+    if (noteEl) noteEl.textContent = mode === 'byo_meta' ? 'Own Meta @ ₹1/conv (Infra only)' : 'Managed Meta @ ₹2/conv';
+}
+
+async function setBillingMode(mode) {
+    try {
+        const res = await fetch('/api/billing/mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ billing_mode: mode })
+        });
+        const data = await res.json();
+        if (res.ok && data.billing) {
+            currentBilling = data.billing;
+            renderBillingModal(currentBilling);
+            refreshBillingUI(currentBilling);
+        }
+    } catch (err) {
+        alert('Unable to switch mode: ' + err.message);
+    }
+}
+
+async function subscribePlan(planId) {
+    const mode = (currentBilling && currentBilling.billing_mode) || 'managed_meta';
+    const catalog = (currentBilling && currentBilling.plans_catalog) || {};
+    const p = catalog[planId] || { name: planId, managed_meta_price: 999, byo_meta_price: 499 };
+    const price = mode === 'byo_meta' ? p.byo_meta_price : p.managed_meta_price;
+    if (!confirm(`Activate ${p.name} monthly plan for ${price} Growhaz Wallet Coins (₹${price})?`)) return;
+
+    try {
+        const res = await fetch('/api/billing/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plan_id: planId, billing_mode: mode })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            alert(data.message || 'Plan activated!');
+            currentBilling = data.billing;
+            renderBillingModal(currentBilling);
+            refreshBillingUI(currentBilling);
+        } else if (res.status !== 402) {
+            alert(data.detail || data.message || 'Plan activation failed.');
+        }
+    } catch (err) {
+        alert('Error activating plan: ' + err.message);
+    }
+}
+
+async function confirmWithBillingEstimate(phones, fallbackPrompt) {
+    try {
+        const res = await fetch('/api/billing/estimate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone_numbers: phones })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const est = data.estimate;
+            if (est) {
+                const lines = [
+                    fallbackPrompt,
+                    '',
+                    `• Free active 24h windows: ${est.already_active_24h}`,
+                    est.demo_covered > 0 ? `• Covered by Free Demo: ${est.demo_covered}` : null,
+                    est.plan_covered > 0 ? `• Covered by Monthly Plan: ${est.plan_covered}` : null,
+                    `• Wallet Cost: ${est.total_coins_required} Coins (₹${est.total_coins_required}) | Balance: ${Math.floor(est.wallet_balance || 0)} Coins`
+                ].filter(Boolean);
+                if (!est.can_afford) {
+                    if (confirm(lines.join('\n') + '\n\nInsufficient Coins. Open Growhaz Wallet & Plans now?')) {
+                        openBillingModal();
+                    }
+                    return false;
+                }
+                return confirm(lines.join('\n'));
+            }
+        }
+    } catch (_) {}
+    return confirm(fallbackPrompt);
+}
+
+async function refreshGraphAndSecurityPanels() {
+    if (!isAuthenticated) return;
+    try {
+        const [gRes, sRes] = await Promise.all([
+            fetch('/api/dashboard/graph/status'),
+            fetch('/api/dashboard/security-events')
+        ]);
+        if (gRes.ok) {
+            const gData = await gRes.json();
+            const neo = gData.neo4j || {};
+            const pill = document.getElementById('neo4j-status-pill');
+            if (pill) {
+                pill.textContent = neo.connected ? 'Neo4j Aura Live' : (neo.mode || 'Local Fallback');
+                pill.className = neo.connected
+                    ? 'px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold'
+                    : 'px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold';
+            }
+            const nc = document.getElementById('neo4j-node-count');
+            const ec = document.getElementById('neo4j-edge-count');
+            const mc = document.getElementById('neo4j-msg-count');
+            if (nc) nc.textContent = String(neo.node_count ?? 0);
+            if (ec) ec.textContent = String(neo.relationship_count ?? 0);
+            if (mc) mc.textContent = String(neo.message_nodes ?? 0);
+        }
+        if (sRes.ok) {
+            const sData = await sRes.json();
+            const modelLbl = document.getElementById('guard-model-label');
+            const cntEl = document.getElementById('stat-blocked-attacks');
+            const listEl = document.getElementById('guard-events-list');
+            const events = sData.events || [];
+            if (modelLbl && sData.guard_model) modelLbl.textContent = sData.guard_model;
+            if (cntEl) cntEl.textContent = String(events.length);
+            if (listEl) {
+                if (events.length === 0) {
+                    listEl.innerHTML = '<span class="text-slate-400 italic">No prompt-injection attempts recorded yet.</span>';
+                } else {
+                    listEl.innerHTML = events.slice(0, 10).map(ev => `
+                        <div class="p-2 rounded-lg bg-rose-50/60 border border-rose-100 flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="font-bold text-rose-800 truncate">${escSaasHtml(ev.reason || ev.detector || 'Blocked Prompt')}</div>
+                                <div class="text-[10px] text-slate-600 truncate">${escSaasHtml((ev.message_preview || '').slice(0, 120))}</div>
+                            </div>
+                            <span class="text-[9px] font-mono text-rose-600 flex-shrink-0">${escSaasHtml(ev.detector || 'Guard')}</span>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+    } catch (_) {}
+}
+
+async function queryNeo4jGraph() {
+    const q = (document.getElementById('neo4j-search-input')?.value || '').trim();
+    const box = document.getElementById('neo4j-query-results');
+    if (box) box.innerHTML = '<span class="text-purple-600"><i class="fas fa-spinner fa-spin mr-1"></i> Querying Neo4j AuraDB...</span>';
+    try {
+        const res = await fetch('/api/dashboard/graph/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q })
+        });
+        const data = await res.json();
+        const edges = (data.neo4j && data.neo4j.edges) || [];
+        const dna = data.dna_matches || [];
+        if (box) {
+            if (edges.length === 0 && dna.length === 0) {
+                box.innerHTML = '<span class="text-slate-400 italic">No matching Neo4j edges or DNA facts found.</span>';
+                return;
+            }
+            const edgeHtml = edges.map(e => `
+                <div class="flex items-center gap-1.5 text-[11px] py-0.5">
+                    <span class="font-bold text-slate-800">${escSaasHtml(e.source)}</span>
+                    <span class="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 font-mono text-[10px]">${escSaasHtml(e.relation)}</span>
+                    <span class="font-semibold text-indigo-700">${escSaasHtml(e.target)}</span>
+                </div>
+            `).join('');
+            const dnaHtml = dna.slice(0, 4).map(d => `
+                <div class="text-[10px] text-emerald-700 font-medium py-0.5">🧬 ${escSaasHtml(typeof d === 'string' ? d : (d.text || d.name || JSON.stringify(d)))}</div>
+            `).join('');
+            box.innerHTML = edgeHtml + dnaHtml;
+        }
+    } catch (err) {
+        if (box) box.innerHTML = `<span class="text-rose-600">Error querying graph: ${escSaasHtml(err.message)}</span>`;
+    }
+}
+
+async function testPromptGuardFromDashboard() {
+    const inputEl = document.getElementById('guard-test-input');
+    const btnEl = document.getElementById('guard-test-btn');
+    const resEl = document.getElementById('guard-test-result');
+    const text = (inputEl?.value || '').trim();
+    if (!text) return;
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = 'Scanning...';
+    }
+    try {
+        const res = await fetch('/api/dashboard/test-guard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        if (resEl) {
+            resEl.classList.remove('hidden');
+            if (data.blocked) {
+                resEl.className = 'p-2.5 rounded-xl text-[11px] font-bold bg-rose-100 border border-rose-200 text-rose-800';
+                resEl.textContent = `🛡️ BLOCKED (${data.detector}, ${Math.round(data.latency_ms || 0)}ms): ${data.reason || 'Unsafe prompt injection'}`;
+            } else {
+                resEl.className = 'p-2.5 rounded-xl text-[11px] font-bold bg-emerald-100 border border-emerald-200 text-emerald-800';
+                resEl.textContent = `✅ SAFE (${data.detector}, ${Math.round(data.latency_ms || 0)}ms): Allowed to reach AI engine.`;
+            }
+        }
+        refreshGraphAndSecurityPanels();
+    } catch (err) {
+        if (resEl) {
+            resEl.classList.remove('hidden');
+            resEl.className = 'p-2.5 rounded-xl text-[11px] font-bold bg-rose-100 text-rose-800';
+            resEl.textContent = 'Scan error: ' + err.message;
+        }
+    } finally {
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.textContent = 'Scan Input';
+        }
+    }
+}
+
+async function openCustomerGraphModal() {
+    if (typeof closeChatActionsMenu === 'function') closeChatActionsMenu();
+    if (!currentPhone) {
+        alert('Select a customer chat first to inspect their Neo4j Knowledge Graph.');
+        return;
+    }
+    const modal = document.getElementById('graph-modal');
+    if (modal) modal.classList.remove('hidden');
+    const profileBox = document.getElementById('graph-modal-profile');
+    const nodesBox = document.getElementById('graph-modal-nodes');
+    const edgesBox = document.getElementById('graph-modal-edges');
+    const epBox = document.getElementById('graph-modal-episodes');
+    const titleEl = document.getElementById('graph-modal-title');
+    if (titleEl) titleEl.textContent = `Knowledge Graph • ${currentPhone}`;
+    if (profileBox) profileBox.textContent = 'Fetching Neo4j AuraDB subgraph...';
+
+    try {
+        const res = await fetch(`/api/dashboard/graph/customer/${encodeURIComponent(currentPhone)}`);
+        const data = await res.json();
+        const prof = data.profile || {};
+        const graph = data.graph || {};
+        if (profileBox) {
+            const parts = [
+                prof.contact_name ? `Name: ${prof.contact_name}` : null,
+                prof.business_name ? `Business: ${prof.business_name}` : null,
+                prof.business_type ? `Category: ${prof.business_type}` : null,
+                prof.locality ? `Area: ${prof.locality}` : null,
+                prof.existing_ecosystem ? `Tools: ${prof.existing_ecosystem}` : null
+            ].filter(Boolean);
+            profileBox.textContent = parts.length > 0 ? parts.join('  •  ') : 'No structured profile extracted yet. Chat naturally with this customer to build their Knowledge Graph.';
+        }
+        const nodes = graph.nodes || [];
+        const edges = graph.edges || [];
+        const episodes = graph.episodes || [];
+        if (nodesBox) {
+            nodesBox.innerHTML = nodes.length === 0
+                ? '<span class="text-slate-400 italic">No graph entity nodes yet.</span>'
+                : nodes.map(n => `<div class="p-1.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-2"><span class="font-bold text-slate-800 truncate">${escSaasHtml(n.name || n.id)}</span><span class="px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 text-[10px] font-mono">${escSaasHtml(n.label || 'Entity')}</span></div>`).join('');
+        }
+        if (edgesBox) {
+            edgesBox.innerHTML = edges.length === 0
+                ? '<span class="text-slate-400 italic">No graph relationships yet.</span>'
+                : edges.map(e => `<div class="p-1.5 rounded-lg bg-white border border-slate-200 text-[11px]"><span class="font-bold">${escSaasHtml(e.source)}</span> <span class="text-indigo-600 font-mono text-[10px]">[${escSaasHtml(e.relation)}]</span> <span class="font-semibold">${escSaasHtml(e.target)}</span></div>`).join('');
+        }
+        if (epBox) {
+            epBox.innerHTML = episodes.length === 0
+                ? '<span class="text-slate-400 italic">No episodes logged yet.</span>'
+                : episodes.map(ep => {
+                    const txt = typeof ep === 'string'
+                        ? ep
+                        : `${ep.content || ''}${ep.timestamp ? ' (' + String(ep.timestamp).slice(0, 16).replace('T', ' ') + ')' : ''}`;
+                    return `<div class="p-1.5 rounded-lg bg-white border border-slate-200 text-[11px] text-slate-700">${escSaasHtml(txt)}</div>`;
+                }).join('');
+        }
+    } catch (err) {
+        if (profileBox) profileBox.textContent = 'Error loading Neo4j graph: ' + err.message;
+    }
+}
+
+function closeGraphModal() {
+    const modal = document.getElementById('graph-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
 // ====================================================================
 // MOBILE RESPONSIVENESS HELPERS
 // ====================================================================
@@ -149,6 +823,7 @@ function deleteChatFromMenu() {
                 }
             });
 
+            if (tab === 'analytics') refreshGraphAndSecurityPanels();
             if (tab === 'templates') fetchTemplates();
             if (tab === 'bookings') fetchBookings();
             if (tab === 'webhooks') fetchWebhooks();
@@ -162,7 +837,12 @@ function deleteChatFromMenu() {
 
         async function fetchData(manual = false) {
             const refreshIcon = document.getElementById('refresh-icon');
-            if (manual) refreshIcon.classList.add('fa-spin');
+            if (!isAuthenticated) {
+                if (refreshIcon) refreshIcon.classList.remove('fa-spin');
+                return;
+            }
+            if (manual && refreshIcon) refreshIcon.classList.add('fa-spin');
+            if (manual && typeof refreshBillingUI === 'function') refreshBillingUI();
 
             try {
                 // Fetch stats and conversations in PARALLEL for ultra-fast loading
@@ -1263,7 +1943,8 @@ function deleteChatFromMenu() {
             }
 
             const confirmMsg = `Send personalized template to ${recipients.length} contact(s)${sendMeta ? ' via official Meta WhatsApp' : ' (simulated)'}?`;
-            if (!confirm(confirmMsg)) return;
+            const okToProceed = await confirmWithBillingEstimate(recipients.map(r => r.phone), confirmMsg);
+            if (!okToProceed) return;
 
             const sendBtn = document.getElementById('tpl-bulk-send-btn');
             const progBox = document.getElementById('tpl-bulk-progress-box');
@@ -1584,12 +2265,30 @@ function deleteChatFromMenu() {
             }
         }
 
+        function copyTenantWebhookUrl() {
+            const el = document.getElementById('set-webhook-url-box');
+            if (!el) return;
+            navigator.clipboard.writeText(el.value).then(() => {
+                alert('Webhook callback URL copied: ' + el.value);
+            }).catch(() => {
+                el.select();
+                document.execCommand('copy');
+            });
+        }
+
         // Settings Modal
         async function openSettingsModal() {
             document.getElementById('settings-modal').classList.remove('hidden');
             const res = await fetch('/api/dashboard/settings');
             if (res.ok) {
                 const s = await res.json();
+                const bnEl = document.getElementById('set-business-name');
+                const cpEl = document.getElementById('set-custom-prompt');
+                const whEl = document.getElementById('set-webhook-url-box');
+                if (bnEl) bnEl.value = s.business_name || '';
+                if (cpEl) cpEl.value = s.custom_system_prompt || '';
+                if (whEl) whEl.value = s.webhook_url || `${window.location.origin}/api/webhook`;
+
                 if (s.deepseek_api_key_set && document.getElementById('set-deepseek-key')) {
                     document.getElementById('set-deepseek-key').placeholder = `Configured: ${s.deepseek_api_key_masked}`;
                 }
@@ -1601,7 +2300,23 @@ function deleteChatFromMenu() {
                 if (s.whatsapp_token_set) document.getElementById('set-meta-token').placeholder = `Configured: ${s.whatsapp_token_masked}`;
                 document.getElementById('set-meta-phone-id').value = s.whatsapp_phone_number_id || '';
                 document.getElementById('set-meta-verify-token').value = s.whatsapp_verify_token || 'whatsapp_groq_bot_secret_123';
-                document.getElementById('webhook-token-label').innerText = s.whatsapp_verify_token || 'whatsapp_groq_bot_secret_123';
+                const whTokLbl = document.getElementById('webhook-token-label');
+                if (whTokLbl) whTokLbl.innerText = s.whatsapp_verify_token || 'whatsapp_groq_bot_secret_123';
+
+                const orSec = document.getElementById('set-openrouter-section');
+                if (orSec) {
+                    if (s.is_admin) {
+                        orSec.classList.remove('hidden');
+                        const st = document.getElementById('set-openrouter-status');
+                        const kEl = document.getElementById('set-openrouter-key');
+                        const mEl = document.getElementById('set-openrouter-model');
+                        if (st) st.textContent = s.openrouter_guard_set ? 'Active Shield' : 'Key Required';
+                        if (kEl && s.openrouter_guard_masked) kEl.placeholder = `Configured: ${s.openrouter_guard_masked}`;
+                        if (mEl && s.openrouter_guard_model) mEl.value = s.openrouter_guard_model;
+                    } else {
+                        orSec.classList.add('hidden');
+                    }
+                }
             }
         }
 
@@ -1609,6 +2324,8 @@ function deleteChatFromMenu() {
 
         async function handleSettingsSubmit(e) {
             e.preventDefault();
+            const businessName = (document.getElementById('set-business-name')?.value || '').trim();
+            const customPrompt = (document.getElementById('set-custom-prompt')?.value || '').trim();
             const deepseekKeyEl = document.getElementById('set-deepseek-key');
             const deepseekModelEl = document.getElementById('set-deepseek-model');
             const deepseekKey = deepseekKeyEl ? deepseekKeyEl.value.trim() : '';
@@ -1619,28 +2336,43 @@ function deleteChatFromMenu() {
             const metaToken = document.getElementById('set-meta-token').value.trim();
             const phoneId = document.getElementById('set-meta-phone-id').value.trim();
             const verifyToken = document.getElementById('set-meta-verify-token').value.trim();
+            const orSec = document.getElementById('set-openrouter-section');
+            const orKey = (orSec && !orSec.classList.contains('hidden')) ? (document.getElementById('set-openrouter-key')?.value || '').trim() : '';
+            const orModel = (orSec && !orSec.classList.contains('hidden')) ? (document.getElementById('set-openrouter-model')?.value || '') : '';
             const btn = document.getElementById('save-settings-btn');
 
             btn.disabled = true;
             btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`;
 
+            const bodyPayload = {
+                business_name: businessName,
+                custom_system_prompt: customPrompt,
+                deepseek_api_key: deepseekKey,
+                deepseek_model: deepseekModel,
+                groq_api_key: groqKey,
+                groq_model: groqModel,
+                whatsapp_token: metaToken,
+                whatsapp_phone_number_id: phoneId,
+                whatsapp_verify_token: verifyToken
+            };
+            if (orKey) bodyPayload.openrouter_api_key = orKey;
+            if (orModel) bodyPayload.openrouter_guard_model = orModel;
+
             try {
                 const res = await fetch('/api/dashboard/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        deepseek_api_key: deepseekKey,
-                        deepseek_model: deepseekModel,
-                        groq_api_key: groqKey,
-                        groq_model: groqModel,
-                        whatsapp_token: metaToken,
-                        whatsapp_phone_number_id: phoneId,
-                        whatsapp_verify_token: verifyToken
-                    })
+                    body: JSON.stringify(bodyPayload)
                 });
                 if (res.ok) {
+                    if (currentUser && businessName) {
+                        currentUser.business_name = businessName;
+                        const brandTitle = document.getElementById('header-brand-title');
+                        if (brandTitle) brandTitle.textContent = `${businessName} Desk`;
+                    }
                     closeSettingsModal();
-                    alert("Settings saved successfully!");
+                    alert("Settings saved & synced to cloud!");
+                    refreshBillingUI();
                     fetchData(true);
                 }
             } catch (err) {
@@ -3072,7 +3804,8 @@ function deleteChatFromMenu() {
             const campaignTitle = presetSelect ? presetSelect.options[presetSelect.selectedIndex].text : 'AI Campaign';
 
             const confirmMsg = `Send tailored WhatsApp messages to ${valid.length} businesses via ${sendMeta ? 'official Meta WhatsApp Cloud API' : 'simulated WhatsApp'} in safe batches?`;
-            if (!confirm(confirmMsg)) return;
+            const okToProceed = await confirmWithBillingEstimate(valid.map(v => v.phone), confirmMsg);
+            if (!okToProceed) return;
 
             const sendBtn = document.getElementById('campaign-send-btn');
             const progBox = document.getElementById('campaign-progress-box');
@@ -3303,7 +4036,8 @@ function deleteChatFromMenu() {
             }
 
             const confirmMsg = `Are you sure you want to send this message to ${validNumbers.length} recipients${sendMeta ? ' via official Meta WhatsApp' : ' (simulated)'}?`;
-            if (!confirm(confirmMsg)) return;
+            const okToProceed = await confirmWithBillingEstimate(validNumbers, confirmMsg);
+            if (!okToProceed) return;
 
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Sending Broadcast...';
@@ -3533,6 +4267,8 @@ function deleteChatFromMenu() {
             }
         }, 1000);
 
-        // Initialize & Auto Poll every 3 seconds
-        fetchData();
-        setInterval(() => fetchData(false), 3000);
+        // Initialize & Auto Poll every 3 seconds when authenticated
+        bootstrapAuthAndDashboard();
+        setInterval(() => {
+            if (isAuthenticated) fetchData(false);
+        }, 3000);

@@ -2,7 +2,6 @@ import os
 import re
 import sqlite3
 import json
-import time
 from datetime import datetime, timedelta, timezone
 
 # Database path
@@ -14,6 +13,26 @@ else:
 
 _DB_INITIALIZED = False
 
+DEFAULT_TEMPLATES = [
+    ("👋 Welcome Greeting", "Greeting", "Hello {{name}}! 👋 Thank you for reaching out to Growhaz (https://www.growhaz.in/). How can we assist you with our cybersecurity, app development, or blockchain solutions today?", "/welcome"),
+    ("🛡️ Security Vulnerability Scan", "Security", "Hi {{name}}, you can run automated vulnerability scans (Alpha G1/G5) on your website in under 5 minutes. Start your audit here: https://www.growhaz.in/security-tools", "/security"),
+    ("📱 Appify & Web Development", "Development", "Hi {{name}}, we build high-speed static websites, dynamic web apps, and convert websites to native Android/iOS mobile apps. Check our portfolio: https://www.growhaz.in/development", "/development"),
+    ("🔗 Blockchain Verification", "Trust", "Hi {{name}}, you can instantly verify certificates and documents on our blockchain ledger here: https://www.growhaz.in/verify", "/verify"),
+    ("💰 Pricing & Packages", "Pricing", "Hi {{name}}, here is our transparent pricing guide:\n• AlphaG1 Scan: ₹1,999 | AlphaG5: ₹4,999\n• Static Website: ₹20,000 | Dynamic: ₹60,000+\n• Details: https://www.growhaz.in/pricing", "/pricing"),
+    ("📅 Consultation Booking", "Bookings", "Hi {{name}}, your consultation with Growhaz is registered for {{service}} on {{date_time}}! Need to reschedule? Visit https://www.growhaz.in/contact", "/confirm"),
+    ("👤 Human Handover", "Handover", "A specialist from the Growhaz engineering team has joined this chat. One moment please while I connect you.", "/agent"),
+    ("⭐ Feedback & CSAT Survey", "Feedback", "Hi {{name}}, how was your Growhaz experience today? Please rate us from 1 (Poor) to 5 (Excellent) ⭐. Visit us at https://www.growhaz.in/ . Thank you!", "/feedback"),
+]
+
+
+def _get_neo4j():
+    try:
+        from api.neo4j_store import neo4j_store
+        return neo4j_store
+    except Exception:
+        return None
+
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
@@ -24,110 +43,41 @@ def get_connection():
         pass
     return conn
 
-def init_db(force: bool = False):
-    """Initialize database tables for messages, bookings, templates, and contact settings."""
-    global _DB_INITIALIZED
-    if _DB_INITIALIZED and not force:
-        return
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        # Messages Table
+
+def _migrate_composite_tables(cursor):
+    """Safely upgrade legacy single-PK tables to composite (tenant_id, phone_number) uniqueness."""
+    # 1. contact_settings
+    info = cursor.execute("PRAGMA table_info(contact_settings)").fetchall()
+    cols = {r["name"] for r in info}
+    if "tenant_id" not in cols:
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS contact_settings_v2 (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
                 phone_number TEXT NOT NULL,
-                sender_name TEXT DEFAULT 'User',
-                message TEXT NOT NULL,
-                direction TEXT NOT NULL, -- 'inbound' or 'outbound'
-                channel TEXT NOT NULL DEFAULT 'meta_whatsapp', -- 'meta_whatsapp', 'twilio', 'simulator', 'manual_admin'
-                status TEXT DEFAULT 'received', -- 'received', 'sent', 'failed'
-                raw_payload TEXT,
-                ai_model TEXT,
-                latency_ms REAL DEFAULT 0,
-                media_type TEXT, -- 'image', 'document', 'audio', 'video'
-                media_url TEXT,
-                media_filename TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Safe schema migrations for media support
-        for col_def in ["media_type TEXT", "media_url TEXT", "media_filename TEXT"]:
-            try:
-                cursor.execute(f"ALTER TABLE messages ADD COLUMN {col_def}")
-            except Exception:
-                pass
-        
-        # Bookings & Support Requests Table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS bookings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                phone_number TEXT NOT NULL,
-                customer_name TEXT DEFAULT 'Customer',
-                service_requested TEXT DEFAULT 'Customer Support / Appointment',
-                booking_date_time TEXT DEFAULT 'Pending Schedule',
-                status TEXT DEFAULT 'pending', -- 'confirmed', 'pending', 'cancelled', 'completed'
-                notes TEXT DEFAULT '',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Message Templates Table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS templates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                category TEXT DEFAULT 'General',
-                content TEXT NOT NULL,
-                shortcut TEXT DEFAULT '',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Contact Settings (Bot enabled / disabled per user)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS contact_settings (
-                phone_number TEXT PRIMARY KEY,
                 bot_enabled INTEGER DEFAULT 1,
                 assigned_agent TEXT DEFAULT 'Support Team',
                 tags TEXT DEFAULT 'Customer',
-                notes TEXT DEFAULT ''
-            )
-        """)
-        
-        # Webhook Logs Table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS webhook_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                endpoint TEXT NOT NULL,
-                method TEXT NOT NULL,
-                payload TEXT,
-                status_code INTEGER DEFAULT 200,
-                ip_address TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Leads & CRM Prospects Table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS leads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                phone_number TEXT NOT NULL UNIQUE,
-                name TEXT DEFAULT 'Lead',
-                source TEXT DEFAULT 'Manual Import',
-                status TEXT DEFAULT 'New', -- 'New', 'Contacted', 'Interested', 'Converted', 'Closed'
                 notes TEXT DEFAULT '',
-                last_messaged_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                PRIMARY KEY (tenant_id, phone_number)
             )
         """)
-
-        # Persistent Customer & Business Ecosystem Profiles
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS customer_profiles (
-                phone_number TEXT PRIMARY KEY,
+            INSERT OR IGNORE INTO contact_settings_v2 (tenant_id, phone_number, bot_enabled, assigned_agent, tags, notes)
+            SELECT 'default', phone_number, COALESCE(bot_enabled, 1), COALESCE(assigned_agent, 'Support Team'),
+                   COALESCE(tags, 'Customer'), COALESCE(notes, '')
+            FROM contact_settings
+        """)
+        cursor.execute("DROP TABLE contact_settings")
+        cursor.execute("ALTER TABLE contact_settings_v2 RENAME TO contact_settings")
+
+    # 2. customer_profiles
+    pinfo = cursor.execute("PRAGMA table_info(customer_profiles)").fetchall()
+    pcols = {r["name"] for r in pinfo}
+    if "tenant_id" not in pcols:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customer_profiles_v2 (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
                 contact_name TEXT DEFAULT '',
                 business_name TEXT DEFAULT '',
                 business_category TEXT DEFAULT '',
@@ -139,141 +89,718 @@ def init_db(force: bool = False):
                 goals TEXT DEFAULT '',
                 data_source TEXT DEFAULT '',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (tenant_id, phone_number)
+            )
+        """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO customer_profiles_v2 (
+                tenant_id, phone_number, contact_name, business_name, business_category,
+                area, has_website, website_url, existing_ecosystem, pain_points, goals,
+                data_source, updated_at, created_at
+            )
+            SELECT 'default', phone_number, contact_name, business_name, business_category,
+                   area, has_website, website_url, existing_ecosystem, pain_points, goals,
+                   data_source, updated_at, created_at
+            FROM customer_profiles
+        """)
+        cursor.execute("DROP TABLE customer_profiles")
+        cursor.execute("ALTER TABLE customer_profiles_v2 RENAME TO customer_profiles")
+
+    # 3. leads
+    linfo = cursor.execute("PRAGMA table_info(leads)").fetchall()
+    lcols = {r["name"] for r in linfo}
+    if "tenant_id" not in lcols:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS leads_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                name TEXT DEFAULT 'Lead',
+                source TEXT DEFAULT 'Manual Import',
+                status TEXT DEFAULT 'New',
+                notes TEXT DEFAULT '',
+                last_messaged_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (tenant_id, phone_number)
+            )
+        """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO leads_v2 (id, tenant_id, phone_number, name, source, status, notes, last_messaged_at, created_at)
+            SELECT id, 'default', phone_number, name, source, status, notes, last_messaged_at, created_at
+            FROM leads
+        """)
+        cursor.execute("DROP TABLE leads")
+        cursor.execute("ALTER TABLE leads_v2 RENAME TO leads")
+
+
+def init_db(force: bool = False):
+    """Initialize database tables for multi-tenant SaaS, billing, security, messages, and profiles."""
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED and not force:
+        return
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Tenants Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tenants (
+                tenant_id TEXT PRIMARY KEY,
+                email TEXT DEFAULT '',
+                full_name TEXT DEFAULT '',
+                business_name TEXT DEFAULT '',
+                custom_system_prompt TEXT DEFAULT '',
+                billing_mode TEXT DEFAULT 'managed_meta',
+                plan_tier TEXT DEFAULT 'payg',
+                plan_quota INTEGER DEFAULT 0,
+                plan_used INTEGER DEFAULT 0,
+                plan_expires_at TEXT DEFAULT '',
+                demo_used INTEGER DEFAULT 0,
+                whatsapp_token TEXT DEFAULT '',
+                whatsapp_phone_number_id TEXT DEFAULT '',
+                whatsapp_verify_token TEXT DEFAULT '',
+                deepseek_api_key TEXT DEFAULT '',
+                deepseek_model TEXT DEFAULT 'deepseek-chat',
+                groq_api_key TEXT DEFAULT '',
+                groq_model TEXT DEFAULT 'llama-3.3-70b-versatile',
+                openrouter_api_key TEXT DEFAULT '',
+                openrouter_guard_model TEXT DEFAULT 'meta-llama/llama-guard-4-12b',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Messages Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                sender_name TEXT DEFAULT 'User',
+                message TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'meta_whatsapp',
+                status TEXT DEFAULT 'received',
+                raw_payload TEXT,
+                ai_model TEXT,
+                latency_ms REAL DEFAULT 0,
+                media_type TEXT,
+                media_url TEXT,
+                media_filename TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
-        # Seed default support templates if empty
-        cursor.execute("SELECT COUNT(*) as count FROM templates")
+        for col_def in [
+            "tenant_id TEXT NOT NULL DEFAULT 'default'",
+            "media_type TEXT",
+            "media_url TEXT",
+            "media_filename TEXT",
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE messages ADD COLUMN {col_def}")
+            except Exception:
+                pass
+
+        # Bookings & Support Requests Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bookings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                customer_name TEXT DEFAULT 'Customer',
+                service_requested TEXT DEFAULT 'Customer Support / Appointment',
+                booking_date_time TEXT DEFAULT 'Pending Schedule',
+                status TEXT DEFAULT 'pending',
+                notes TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        try:
+            cursor.execute("ALTER TABLE bookings ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+        except Exception:
+            pass
+
+        # Message Templates Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                title TEXT NOT NULL,
+                category TEXT DEFAULT 'General',
+                content TEXT NOT NULL,
+                shortcut TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        try:
+            cursor.execute("ALTER TABLE templates ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+        except Exception:
+            pass
+
+        # Contact Settings
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS contact_settings (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                bot_enabled INTEGER DEFAULT 1,
+                assigned_agent TEXT DEFAULT 'Support Team',
+                tags TEXT DEFAULT 'Customer',
+                notes TEXT DEFAULT '',
+                PRIMARY KEY (tenant_id, phone_number)
+            )
+        """)
+
+        # Webhook Logs Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS webhook_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                endpoint TEXT NOT NULL,
+                method TEXT NOT NULL,
+                payload TEXT,
+                status_code INTEGER DEFAULT 200,
+                ip_address TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        try:
+            cursor.execute("ALTER TABLE webhook_logs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+        except Exception:
+            pass
+
+        # Leads & CRM Prospects Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS leads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                name TEXT DEFAULT 'Lead',
+                source TEXT DEFAULT 'Manual Import',
+                status TEXT DEFAULT 'New',
+                notes TEXT DEFAULT '',
+                last_messaged_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (tenant_id, phone_number)
+            )
+        """)
+
+        # Persistent Customer & Business Ecosystem Profiles
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customer_profiles (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                contact_name TEXT DEFAULT '',
+                business_name TEXT DEFAULT '',
+                business_category TEXT DEFAULT '',
+                area TEXT DEFAULT '',
+                has_website TEXT DEFAULT '',
+                website_url TEXT DEFAULT '',
+                existing_ecosystem TEXT DEFAULT '',
+                pain_points TEXT DEFAULT '',
+                goals TEXT DEFAULT '',
+                data_source TEXT DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (tenant_id, phone_number)
+            )
+        """)
+
+        # 24h Billing Windows Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS billing_windows (
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT NOT NULL,
+                billing_mode TEXT DEFAULT 'managed_meta',
+                cost_coins REAL DEFAULT 0,
+                charge_source TEXT DEFAULT 'free_demo',
+                opened_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, phone_number)
+            )
+        """)
+
+        # Security / Prompt-Injection Events Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS security_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL DEFAULT 'default',
+                phone_number TEXT DEFAULT '',
+                input_text TEXT NOT NULL,
+                detector TEXT DEFAULT '',
+                reason TEXT DEFAULT '',
+                blocked INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        _migrate_composite_tables(cursor)
+
+        # Ensure default workspace tenant row exists
+        cursor.execute(
+            "INSERT OR IGNORE INTO tenants (tenant_id, business_name, billing_mode) VALUES ('default', 'Growhaz Support Desk', 'managed_meta')"
+        )
+
+        # Seed default support templates for default tenant if completely empty
+        cursor.execute("SELECT COUNT(*) as count FROM templates WHERE tenant_id = 'default'")
         if cursor.fetchone()["count"] == 0:
-            default_templates = [
-                ("👋 Welcome Greeting", "Greeting", "Hello {{name}}! 👋 Thank you for reaching out to Growhaz (https://www.growhaz.in/). How can we assist you with our cybersecurity, app development, or blockchain solutions today?", "/welcome"),
-                ("🛡️ Security Vulnerability Scan", "Security", "Hi {{name}}, you can run automated vulnerability scans (Alpha G1/G5) on your website in under 5 minutes. Start your audit here: https://www.growhaz.in/security-tools", "/security"),
-                ("📱 Appify & Web Development", "Development", "Hi {{name}}, we build high-speed static websites, dynamic web apps, and convert websites to native Android/iOS mobile apps. Check our portfolio: https://www.growhaz.in/development", "/development"),
-                ("🔗 Blockchain Verification", "Trust", "Hi {{name}}, you can instantly verify certificates and documents on our blockchain ledger here: https://www.growhaz.in/verify", "/verify"),
-                ("💰 Pricing & Packages", "Pricing", "Hi {{name}}, here is our transparent pricing guide:\n• AlphaG1 Scan: ₹1,999 | AlphaG5: ₹4,999\n• Static Website: ₹20,000 | Dynamic: ₹60,000+\n• Details: https://www.growhaz.in/pricing", "/pricing"),
-                ("📅 Consultation Booking", "Bookings", "Hi {{name}}, your consultation with Growhaz is registered for {{service}} on {{date_time}}! Need to reschedule? Visit https://www.growhaz.in/contact", "/confirm"),
-                ("👤 Human Handover", "Handover", "A specialist from the Growhaz engineering team has joined this chat. One moment please while I connect you.", "/agent"),
-                ("⭐ Feedback & CSAT Survey", "Feedback", "Hi {{name}}, how was your Growhaz experience today? Please rate us from 1 (Poor) to 5 (Excellent) ⭐. Visit us at https://www.growhaz.in/ . Thank you!", "/feedback")
-            ]
-            cursor.executemany("INSERT INTO templates (title, category, content, shortcut) VALUES (?, ?, ?, ?)", default_templates)
-        
-        # Ensure any stale messages containing old company branding are wiped
-        cursor.execute("DELETE FROM messages WHERE message LIKE '%printingtask%' OR sender_name LIKE '%printingtask%' OR phone_number IN ('918103976748', '917803872080')")
+            cursor.executemany(
+                "INSERT INTO templates (tenant_id, title, category, content, shortcut) VALUES ('default', ?, ?, ?, ?)",
+                DEFAULT_TEMPLATES,
+            )
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone ON messages(phone_number)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tenant_phone ON messages(tenant_id, phone_number)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON messages(created_at)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone_created ON messages(phone_number, created_at DESC)")
-        
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone_created ON messages(tenant_id, phone_number, created_at DESC)")
+
         conn.commit()
         conn.close()
         _DB_INITIALIZED = True
     except Exception as e:
         print(f"[DB] Error initializing database: {e}")
 
-def save_message(phone_number: str, message: str, direction: str = "inbound", 
-                 sender_name: str = "User", channel: str = "meta_whatsapp", 
-                 status: str = "received", raw_payload: dict = None, 
-                 ai_model: str = None, latency_ms: float = 0.0,
-                 media_type: str = None, media_url: str = None, media_filename: str = None):
-    """Save an incoming or outgoing message to the database and track booking intent."""
+
+def sync_with_neo4j_on_boot() -> dict:
+    """Hydrate local SQLite from persistent Neo4j AuraDB (keeping all historical chats across deploys)."""
+    init_db()
+    neo = _get_neo4j()
+    if not neo:
+        return {"connected": False}
     try:
-        init_db()
         conn = get_connection()
-        cursor = conn.cursor()
-        
-        payload_str = json.dumps(raw_payload) if isinstance(raw_payload, (dict, list)) else (raw_payload or "")
-        
-        cursor.execute("""
-            INSERT INTO messages (phone_number, sender_name, message, direction, channel, status, raw_payload, ai_model, latency_ms, media_type, media_url, media_filename)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (phone_number, sender_name, message, direction, channel, status, payload_str, ai_model, latency_ms, media_type, media_url, media_filename))
-        
-        msg_id = cursor.lastrowid
+        res = neo.hydrate_and_sync_sqlite(conn)
+        conn.close()
+        return {"connected": neo.get_status().get("connected", False), **res}
+    except Exception as e:
+        print(f"[DB] Neo4j boot sync warning: {e}")
+        return {"connected": False, "error": str(e)}
 
-        # Automatic Support / Booking Intent Detection for Inbound Messages
-        if direction == "inbound" and message:
-            detect_and_record_booking(cursor, phone_number, sender_name, message)
 
+# ==================== TENANT & BILLING HELPERS ====================
+
+def ensure_tenant(tenant_id: str, email: str = "", full_name: str = "") -> dict:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    conn = get_connection()
+    cur = conn.cursor()
+    row = cur.execute("SELECT * FROM tenants WHERE tenant_id = ?", (tid,)).fetchone()
+    if not row:
+        default_vtoken = f"growhaz_{tid[:8]}" if tid != "default" else "whatsapp_groq_bot_secret_123"
+        bname = f"{full_name}'s Business" if full_name else "My Business"
+        cur.execute(
+            """
+            INSERT INTO tenants (tenant_id, email, full_name, business_name, whatsapp_verify_token)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (tid, email or "", full_name or "", bname, default_vtoken),
+        )
+        # Seed starter templates for this new workspace
+        cur.executemany(
+            "INSERT INTO templates (tenant_id, title, category, content, shortcut) VALUES (?, ?, ?, ?, ?)",
+            [(tid, t[0], t[1], t[2], t[3]) for t in DEFAULT_TEMPLATES],
+        )
+        conn.commit()
+        row = cur.execute("SELECT * FROM tenants WHERE tenant_id = ?", (tid,)).fetchone()
+    elif email or full_name:
+        if (email and row["email"] != email) or (full_name and not row["full_name"]):
+            cur.execute(
+                """
+                UPDATE tenants
+                SET email = CASE WHEN ? != '' THEN ? ELSE email END,
+                    full_name = CASE WHEN ? != '' AND (full_name IS NULL OR full_name = '') THEN ? ELSE full_name END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE tenant_id = ?
+                """,
+                (email, email, full_name, full_name, tid),
+            )
+            conn.commit()
+            row = cur.execute("SELECT * FROM tenants WHERE tenant_id = ?", (tid,)).fetchone()
+
+    tenant = dict(row) if row else {"tenant_id": tid}
+    conn.close()
+    neo = _get_neo4j()
+    if neo:
+        neo.upsert_tenant(tenant)
+    return tenant
+
+
+def get_tenant(tenant_id: str) -> dict:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM tenants WHERE tenant_id = ?", (tid,)).fetchone()
+    conn.close()
+    return dict(row) if row else {"tenant_id": tid}
+
+
+def update_tenant_settings(tenant_id: str, **fields) -> dict:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    ensure_tenant(tid)
+    allowed = {
+        "business_name", "custom_system_prompt", "billing_mode",
+        "whatsapp_token", "whatsapp_phone_number_id", "whatsapp_verify_token",
+        "deepseek_api_key", "deepseek_model", "groq_api_key", "groq_model",
+        "openrouter_api_key", "openrouter_guard_model",
+    }
+    updates = {k: str(v).strip() for k, v in fields.items() if k in allowed and v is not None}
+    if updates:
+        conn = get_connection()
+        set_clause = ", ".join(f"{k} = ?" for k in updates.keys()) + ", updated_at = CURRENT_TIMESTAMP"
+        conn.execute(f"UPDATE tenants SET {set_clause} WHERE tenant_id = ?", (*updates.values(), tid))
         conn.commit()
         conn.close()
+    tenant = get_tenant(tid)
+    neo = _get_neo4j()
+    if neo:
+        neo.upsert_tenant(tenant)
+    return tenant
+
+
+def update_tenant_plan(tenant_id: str, billing_mode: str, plan_tier: str, plan_quota: int, plan_expires_at: str) -> dict:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    ensure_tenant(tid)
+    conn = get_connection()
+    conn.execute(
+        """
+        UPDATE tenants
+        SET billing_mode = ?, plan_tier = ?, plan_quota = ?, plan_used = 0,
+            plan_expires_at = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = ?
+        """,
+        (billing_mode, plan_tier, int(plan_quota), plan_expires_at, tid),
+    )
+    conn.commit()
+    conn.close()
+    tenant = get_tenant(tid)
+    neo = _get_neo4j()
+    if neo:
+        neo.upsert_tenant(tenant)
+    return tenant
+
+
+def increment_tenant_demo_used(tenant_id: str) -> int:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    conn = get_connection()
+    conn.execute("UPDATE tenants SET demo_used = COALESCE(demo_used, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?", (tid,))
+    conn.commit()
+    row = conn.execute("SELECT demo_used FROM tenants WHERE tenant_id = ?", (tid,)).fetchone()
+    conn.close()
+    val = int(row["demo_used"]) if row else 1
+    neo = _get_neo4j()
+    if neo:
+        neo.upsert_tenant(get_tenant(tid))
+    return val
+
+
+def increment_tenant_plan_used(tenant_id: str) -> int:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    conn = get_connection()
+    conn.execute("UPDATE tenants SET plan_used = COALESCE(plan_used, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE tenant_id = ?", (tid,))
+    conn.commit()
+    row = conn.execute("SELECT plan_used FROM tenants WHERE tenant_id = ?", (tid,)).fetchone()
+    conn.close()
+    val = int(row["plan_used"]) if row else 1
+    neo = _get_neo4j()
+    if neo:
+        neo.upsert_tenant(get_tenant(tid))
+    return val
+
+
+def find_tenant_for_webhook(tenant_id: str = "", phone_number_id: str = "", verify_token: str = "") -> dict:
+    init_db()
+    conn = get_connection()
+    if tenant_id:
+        r = conn.execute("SELECT * FROM tenants WHERE tenant_id = ? LIMIT 1", (tenant_id.strip(),)).fetchone()
+        if r:
+            conn.close()
+            return dict(r)
+    if phone_number_id:
+        r = conn.execute("SELECT * FROM tenants WHERE whatsapp_phone_number_id = ? LIMIT 1", (phone_number_id.strip(),)).fetchone()
+        if r:
+            conn.close()
+            return dict(r)
+    if verify_token:
+        r = conn.execute("SELECT * FROM tenants WHERE whatsapp_verify_token = ? LIMIT 1", (verify_token.strip(),)).fetchone()
+        if r:
+            conn.close()
+            return dict(r)
+    r = conn.execute("SELECT * FROM tenants WHERE tenant_id = 'default' LIMIT 1").fetchone()
+    conn.close()
+    return dict(r) if r else {"tenant_id": "default"}
+
+
+def is_billing_window_active(tenant_id: str, phone_number: str) -> bool:
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    norm = normalize_phone_key(phone_number) or str(phone_number or "").replace("+", "").strip()
+    if not norm:
+        return False
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT expires_at FROM billing_windows WHERE tenant_id = ? AND phone_number = ?",
+        (tid, norm),
+    ).fetchone()
+    conn.close()
+    if not row or not row["expires_at"]:
+        return False
+    try:
+        exp = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
+        return exp > datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
+def record_billing_window(
+    tenant_id: str,
+    phone_number: str,
+    billing_mode: str,
+    cost_coins: float,
+    charge_source: str,
+    opened_at: str,
+    expires_at: str,
+):
+    init_db()
+    tid = str(tenant_id or "default").strip() or "default"
+    norm = normalize_phone_key(phone_number) or str(phone_number or "").replace("+", "").strip()
+    if not norm:
+        return
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO billing_windows (tenant_id, phone_number, billing_mode, cost_coins, charge_source, opened_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tenant_id, phone_number) DO UPDATE SET
+            billing_mode = excluded.billing_mode,
+            cost_coins = excluded.cost_coins,
+            charge_source = excluded.charge_source,
+            opened_at = excluded.opened_at,
+            expires_at = excluded.expires_at
+        """,
+        (tid, norm, billing_mode, float(cost_coins or 0), charge_source, opened_at, expires_at),
+    )
+    conn.commit()
+    conn.close()
+    neo = _get_neo4j()
+    if neo:
+        neo.upsert_billing_window_node({
+            "tenant_id": tid,
+            "phone_number": norm,
+            "billing_mode": billing_mode,
+            "cost_coins": cost_coins,
+            "charge_source": charge_source,
+            "opened_at": opened_at,
+            "expires_at": expires_at,
+        })
+
+
+def save_security_event(tenant_id: str, phone_number: str, input_text: str, detector: str, reason: str, blocked: bool = True):
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO security_events (tenant_id, phone_number, input_text, detector, reason, blocked)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (tid, str(phone_number or ""), str(input_text or "")[:500], str(detector or ""), str(reason or ""), 1 if blocked else 0),
+        )
+        eid = cur.lastrowid
+        conn.commit()
+        row = cur.execute("SELECT * FROM security_events WHERE id = ?", (eid,)).fetchone()
+        conn.close()
+        if row:
+            neo = _get_neo4j()
+            if neo:
+                neo.save_security_event_node(dict(row))
+    except Exception as e:
+        print(f"[DB] Security event log warning: {e}")
+
+
+def get_security_events(tenant_id: str = "default", limit: int = 30) -> list:
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM security_events WHERE tenant_id = ? ORDER BY id DESC LIMIT ?",
+            (tid, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+# ==================== MESSAGES, CONVERSATIONS & BOOKINGS ====================
+
+def save_message(
+    phone_number: str,
+    message: str,
+    direction: str = "inbound",
+    sender_name: str = "User",
+    channel: str = "meta_whatsapp",
+    status: str = "received",
+    raw_payload: dict = None,
+    ai_model: str = None,
+    latency_ms: float = 0.0,
+    media_type: str = None,
+    media_url: str = None,
+    media_filename: str = None,
+    tenant_id: str = "default",
+):
+    """Save an incoming or outgoing message to SQLite + mirror persistently to Neo4j AuraDB."""
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        payload_str = json.dumps(raw_payload) if isinstance(raw_payload, (dict, list)) else (raw_payload or "")
+
+        cursor.execute(
+            """
+            INSERT INTO messages (
+                tenant_id, phone_number, sender_name, message, direction, channel,
+                status, raw_payload, ai_model, latency_ms, media_type, media_url, media_filename
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (tid, phone_number, sender_name, message, direction, channel, status, payload_str, ai_model, latency_ms, media_type, media_url, media_filename),
+        )
+
+        msg_id = cursor.lastrowid
+
+        if direction == "inbound" and message:
+            detect_and_record_booking(cursor, phone_number, sender_name, message, tenant_id=tid)
+
+        conn.commit()
+        row = cursor.execute("SELECT * FROM messages WHERE id = ?", (msg_id,)).fetchone()
+        conn.close()
+
+        if row:
+            neo = _get_neo4j()
+            if neo:
+                neo.save_message_node(dict(row))
         return msg_id
     except Exception as e:
         print(f"[DB] Error saving message: {e}")
         return None
 
-def detect_and_record_booking(cursor, phone_number: str, customer_name: str, message: str):
+
+def detect_and_record_booking(cursor, phone_number: str, customer_name: str, message: str, tenant_id: str = "default"):
     """Detect if incoming message has booking or order intent."""
+    tid = str(tenant_id or "default").strip() or "default"
     msg_lower = message.lower()
     booking_keywords = ["book", "booking", "appointment", "schedule", "reserve", "slot", "meeting", "consultation", "order", "scan", "security", "app", "appify", "verify"]
-    
+
     if any(k in msg_lower for k in booking_keywords):
         service = "Growhaz Service Consultation"
-        if "security" in msg_lower or "scan" in msg_lower: service = "Website Security Audit (Alpha G5)"
-        elif "app" in msg_lower or "appify" in msg_lower: service = "Appify Website to Mobile App"
-        elif "blockchain" in msg_lower or "verify" in msg_lower: service = "Blockchain Document Verification"
-        elif "web" in msg_lower or "develop" in msg_lower: service = "Secure Web Development"
-        elif "consult" in msg_lower: service = "Growhaz Technical Consultation"
-        elif "order" in msg_lower or "book" in msg_lower: service = "Growhaz Service Order"
+        if "security" in msg_lower or "scan" in msg_lower:
+            service = "Website Security Audit (Alpha G5)"
+        elif "app" in msg_lower or "appify" in msg_lower:
+            service = "Appify Website to Mobile App"
+        elif "blockchain" in msg_lower or "verify" in msg_lower:
+            service = "Blockchain Document Verification"
+        elif "web" in msg_lower or "develop" in msg_lower:
+            service = "Secure Web Development"
+        elif "consult" in msg_lower:
+            service = "Growhaz Technical Consultation"
+        elif "order" in msg_lower or "book" in msg_lower:
+            service = "Growhaz Service Order"
 
-        cursor.execute("""
-            SELECT id FROM bookings 
-            WHERE phone_number = ? AND created_at >= datetime('now', '-2 hours')
+        existing = cursor.execute(
+            """
+            SELECT id FROM bookings
+            WHERE tenant_id = ? AND phone_number = ? AND created_at >= datetime('now', '-2 hours')
             LIMIT 1
-        """, (phone_number,))
-        existing = cursor.fetchone()
-        
-        if not existing:
-            cursor.execute("""
-                INSERT INTO bookings (phone_number, customer_name, service_requested, booking_date_time, status, notes)
-                VALUES (?, ?, ?, ?, 'pending', ?)
-            """, (phone_number, customer_name or "WhatsApp Customer", service, "Requested via WhatsApp", message))
+            """,
+            (tid, phone_number),
+        ).fetchone()
 
-def is_bot_enabled_for_contact(phone_number: str) -> bool:
+        if not existing:
+            cursor.execute(
+                """
+                INSERT INTO bookings (tenant_id, phone_number, customer_name, service_requested, booking_date_time, status, notes)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (tid, phone_number, customer_name or "WhatsApp Customer", service, "Requested via WhatsApp", message),
+            )
+            bid = cursor.lastrowid
+            neo = _get_neo4j()
+            if neo and bid:
+                neo.save_booking_node({
+                    "id": bid,
+                    "tenant_id": tid,
+                    "phone_number": phone_number,
+                    "customer_name": customer_name or "WhatsApp Customer",
+                    "service_requested": service,
+                    "booking_date_time": "Requested via WhatsApp",
+                    "status": "pending",
+                    "notes": message,
+                })
+
+
+def is_bot_enabled_for_contact(phone_number: str, tenant_id: str = "default") -> bool:
     """Check if automated bot is enabled for this customer phone number."""
     if not phone_number:
         return True
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
         clean = str(phone_number).replace("+", "").strip()
-        cursor.execute("""
-            SELECT bot_enabled FROM contact_settings 
-            WHERE phone_number = ? 
-               OR phone_number = ? 
-               OR REPLACE(phone_number, '+', '') = ?
+        row = conn.execute(
+            """
+            SELECT bot_enabled FROM contact_settings
+            WHERE tenant_id = ?
+              AND (phone_number = ? OR phone_number = ? OR REPLACE(phone_number, '+', '') = ?)
             LIMIT 1
-        """, (phone_number, f"+{clean}", clean))
-        row = cursor.fetchone()
+            """,
+            (tid, phone_number, f"+{clean}", clean),
+        ).fetchone()
         conn.close()
         if row is not None:
             return bool(row["bot_enabled"])
-        return True # Default enabled
+        return True
     except Exception as e:
         print(f"[DB] Error checking bot enabled: {e}")
         return True
 
-def set_bot_enabled_for_contact(phone_number: str, enabled: bool):
+
+def set_bot_enabled_for_contact(phone_number: str, enabled: bool, tenant_id: str = "default"):
     """Toggle automated bot for this customer."""
     if not phone_number:
         return False
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
         clean = str(phone_number).replace("+", "").strip()
         val = 1 if enabled else 0
-        
-        # Save under raw, clean, and plus versions so lookup always hits
+
         keys = set([str(phone_number).strip(), clean, f"+{clean}"])
+        neo = _get_neo4j()
         for p in keys:
             if p:
-                cursor.execute("""
-                    INSERT INTO contact_settings (phone_number, bot_enabled)
-                    VALUES (?, ?)
-                    ON CONFLICT(phone_number) DO UPDATE SET bot_enabled = excluded.bot_enabled
-                """, (p, val))
+                cursor.execute(
+                    """
+                    INSERT INTO contact_settings (tenant_id, phone_number, bot_enabled)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(tenant_id, phone_number) DO UPDATE SET bot_enabled = excluded.bot_enabled
+                    """,
+                    (tid, p, val),
+                )
+                if neo:
+                    neo.upsert_contact_setting_node(tid, p, val)
         conn.commit()
         conn.close()
         return True
@@ -281,24 +808,26 @@ def set_bot_enabled_for_contact(phone_number: str, enabled: bool):
         print(f"[DB] Error setting bot enabled: {e}")
         return False
 
-def get_conversations():
-    """Get list of distinct contact conversations with their latest message and timestamp."""
+
+def get_conversations(tenant_id: str = "default"):
+    """Get list of distinct contact conversations for a tenant."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
-        
+
         query = """
-            SELECT 
+            SELECT
                 m1.phone_number,
                 COALESCE(
-                    (SELECT m_in.sender_name FROM messages m_in WHERE REPLACE(m_in.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m_in.direction = 'inbound' ORDER BY m_in.id DESC LIMIT 1),
+                    (SELECT m_in.sender_name FROM messages m_in WHERE m_in.tenant_id = ? AND REPLACE(m_in.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m_in.direction = 'inbound' ORDER BY m_in.id DESC LIMIT 1),
                     m1.sender_name,
                     'Customer'
                 ) as sender_name,
                 COALESCE(
                     NULLIF(m1.message, ''),
-                    CASE 
+                    CASE
                         WHEN m1.media_type = 'image' THEN '📷 Photo'
                         WHEN m1.media_type = 'document' THEN '📄 ' || COALESCE(m1.media_filename, 'Document')
                         ELSE 'Attachment'
@@ -308,22 +837,22 @@ def get_conversations():
                 m1.direction as last_direction,
                 m1.channel as last_channel,
                 m1.created_at as last_time,
-                (SELECT m_in.created_at FROM messages m_in WHERE REPLACE(m_in.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m_in.direction = 'inbound' ORDER BY m_in.id DESC LIMIT 1) as last_inbound_time,
-                (SELECT COUNT(*) FROM messages m2 WHERE REPLACE(m2.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '')) as total_messages,
-                (SELECT COUNT(*) FROM messages m3 WHERE REPLACE(m3.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m3.direction = 'inbound') as inbound_count,
-                COALESCE((SELECT cs.bot_enabled FROM contact_settings cs WHERE REPLACE(cs.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') LIMIT 1), 1) as bot_enabled
+                (SELECT m_in.created_at FROM messages m_in WHERE m_in.tenant_id = ? AND REPLACE(m_in.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m_in.direction = 'inbound' ORDER BY m_in.id DESC LIMIT 1) as last_inbound_time,
+                (SELECT COUNT(*) FROM messages m2 WHERE m2.tenant_id = ? AND REPLACE(m2.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '')) as total_messages,
+                (SELECT COUNT(*) FROM messages m3 WHERE m3.tenant_id = ? AND REPLACE(m3.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') AND m3.direction = 'inbound') as inbound_count,
+                COALESCE((SELECT cs.bot_enabled FROM contact_settings cs WHERE cs.tenant_id = ? AND REPLACE(cs.phone_number, '+', '') = REPLACE(m1.phone_number, '+', '') LIMIT 1), 1) as bot_enabled
             FROM messages m1
-            WHERE m1.id IN (
-                SELECT MAX(id) FROM messages GROUP BY REPLACE(phone_number, '+', '')
-            )
+            WHERE m1.tenant_id = ?
+              AND m1.id IN (
+                  SELECT MAX(id) FROM messages WHERE tenant_id = ? GROUP BY REPLACE(phone_number, '+', '')
+              )
             ORDER BY m1.created_at DESC
         """
-        cursor.execute(query)
+        cursor.execute(query, (tid, tid, tid, tid, tid, tid, tid))
         rows = cursor.fetchall()
         conn.close()
 
-        import datetime
-        utc_now = datetime.datetime.now(datetime.timezone.utc)
+        utc_now = datetime.now(timezone.utc)
         conversations = []
         for row in rows:
             d = dict(row)
@@ -332,8 +861,14 @@ def get_conversations():
             remaining_seconds = 0
             if last_inbound_str:
                 try:
-                    clean_ts = str(last_inbound_str).split(".")[0].strip()
-                    inbound_dt = datetime.datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+                    raw_s = str(last_inbound_str).strip()
+                    if "T" in raw_s:
+                        inbound_dt = datetime.fromisoformat(raw_s.replace("Z", "+00:00"))
+                        if inbound_dt.tzinfo is None:
+                            inbound_dt = inbound_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        clean_ts = raw_s.split(".")[0].strip()
+                        inbound_dt = datetime.strptime(clean_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
                     elapsed = (utc_now - inbound_dt).total_seconds()
                     if 0 <= elapsed < 86400:
                         free_window_active = True
@@ -349,32 +884,40 @@ def get_conversations():
         print(f"[DB] Error getting conversations: {e}")
         return []
 
-def get_messages(phone_number: str = None, limit: int = 500):
+
+def get_messages(phone_number: str = None, limit: int = 500, tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
-        
+
         if phone_number:
             clean = str(phone_number).replace("+", "").strip()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM (
-                    SELECT * FROM messages 
-                    WHERE phone_number = ? 
-                       OR phone_number = ? 
-                       OR REPLACE(phone_number, '+', '') = ?
-                    ORDER BY created_at DESC, id DESC 
+                    SELECT * FROM messages
+                    WHERE tenant_id = ?
+                      AND (phone_number = ? OR phone_number = ? OR REPLACE(phone_number, '+', '') = ?)
+                    ORDER BY created_at DESC, id DESC
                     LIMIT ?
                 )
                 ORDER BY created_at ASC, id ASC
-            """, (phone_number, f"+{clean}", clean, limit))
+                """,
+                (tid, phone_number, f"+{clean}", clean, limit),
+            )
         else:
-            cursor.execute("""
-                SELECT * FROM messages 
-                ORDER BY created_at DESC, id DESC 
+            cursor.execute(
+                """
+                SELECT * FROM messages
+                WHERE tenant_id = ?
+                ORDER BY created_at DESC, id DESC
                 LIMIT ?
-            """, (limit,))
-            
+                """,
+                (tid, limit),
+            )
+
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -382,127 +925,169 @@ def get_messages(phone_number: str = None, limit: int = 500):
         print(f"[DB] Error getting messages: {e}")
         return []
 
-def get_templates():
-    """Get all response templates."""
+
+def get_templates(tenant_id: str = "default"):
+    """Get all response templates for a tenant (seeding starter templates if none exist)."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM templates ORDER BY id ASC")
-        rows = cursor.fetchall()
+        rows = cursor.execute("SELECT * FROM templates WHERE tenant_id = ? ORDER BY id ASC", (tid,)).fetchall()
+        if not rows:
+            cursor.executemany(
+                "INSERT INTO templates (tenant_id, title, category, content, shortcut) VALUES (?, ?, ?, ?, ?)",
+                [(tid, t[0], t[1], t[2], t[3]) for t in DEFAULT_TEMPLATES],
+            )
+            conn.commit()
+            rows = cursor.execute("SELECT * FROM templates WHERE tenant_id = ? ORDER BY id ASC", (tid,)).fetchall()
+            neo = _get_neo4j()
+            if neo:
+                for r in rows:
+                    neo.save_template_node(dict(r))
         conn.close()
         return [dict(row) for row in rows]
     except Exception as e:
         print(f"[DB] Error getting templates: {e}")
         return []
 
-def save_template(title: str, category: str, content: str, shortcut: str = ""):
+
+def save_template(title: str, category: str, content: str, shortcut: str = "", tenant_id: str = "default"):
     """Save a new custom message template."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO templates (title, category, content, shortcut) VALUES (?, ?, ?, ?)", (title, category, content, shortcut))
+        cursor.execute(
+            "INSERT INTO templates (tenant_id, title, category, content, shortcut) VALUES (?, ?, ?, ?, ?)",
+            (tid, title, category, content, shortcut),
+        )
         t_id = cursor.lastrowid
         conn.commit()
+        row = cursor.execute("SELECT * FROM templates WHERE id = ?", (t_id,)).fetchone()
         conn.close()
+        if row:
+            neo = _get_neo4j()
+            if neo:
+                neo.save_template_node(dict(row))
         return t_id
     except Exception as e:
         print(f"[DB] Error saving template: {e}")
         return None
 
-def delete_template(template_id: int):
+
+def delete_template(template_id: int, tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM templates WHERE id = ?", (template_id,))
+        conn.execute("DELETE FROM templates WHERE id = ? AND tenant_id = ?", (template_id, tid))
         conn.commit()
         conn.close()
-        return True
-    except Exception as e:
-        return False
-
-def get_bookings():
-    try:
-        init_db()
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM bookings ORDER BY created_at DESC LIMIT 100")
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
-    except Exception as e:
-        return []
-
-def update_booking_status(booking_id: int, status: str):
-    try:
-        init_db()
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE bookings SET status = ? WHERE id = ?", (status, booking_id))
-        conn.commit()
-        conn.close()
+        neo = _get_neo4j()
+        if neo:
+            neo.delete_template_node(tid, template_id)
         return True
     except Exception:
         return False
 
-def add_manual_booking(phone_number: str, customer_name: str, service: str, date_time: str, status: str = "confirmed", notes: str = ""):
+
+def get_bookings(tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM bookings WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 100",
+            (tid,),
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    except Exception:
+        return []
+
+
+def update_booking_status(booking_id: int, status: str, tenant_id: str = "default"):
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
+        conn = get_connection()
+        conn.execute("UPDATE bookings SET status = ? WHERE id = ? AND tenant_id = ?", (status, booking_id, tid))
+        conn.commit()
+        conn.close()
+        neo = _get_neo4j()
+        if neo:
+            neo.update_booking_node(tid, booking_id, status)
+        return True
+    except Exception:
+        return False
+
+
+def add_manual_booking(phone_number: str, customer_name: str, service: str, date_time: str, status: str = "confirmed", notes: str = "", tenant_id: str = "default"):
+    try:
+        init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO bookings (phone_number, customer_name, service_requested, booking_date_time, status, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (phone_number, customer_name, service, date_time, status, notes))
+        cursor.execute(
+            """
+            INSERT INTO bookings (tenant_id, phone_number, customer_name, service_requested, booking_date_time, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (tid, phone_number, customer_name, service, date_time, status, notes),
+        )
         conn.commit()
         booking_id = cursor.lastrowid
+        row = cursor.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
         conn.close()
+        if row:
+            neo = _get_neo4j()
+            if neo:
+                neo.save_booking_node(dict(row))
         return booking_id
     except Exception:
         return None
 
-def get_stats():
+
+def get_stats(tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) as total FROM messages")
-        total_messages = cursor.fetchone()["total"]
-        
-        cursor.execute("SELECT COUNT(DISTINCT phone_number) as contacts FROM messages")
-        total_contacts = cursor.fetchone()["contacts"]
-        
-        cursor.execute("SELECT COUNT(*) as inbound FROM messages WHERE direction = 'inbound'")
-        inbound_messages = cursor.fetchone()["inbound"]
-        
-        cursor.execute("SELECT COUNT(*) as outbound FROM messages WHERE direction = 'outbound'")
-        outbound_messages = cursor.fetchone()["outbound"]
-        
-        cursor.execute("SELECT AVG(latency_ms) as avg_latency FROM messages WHERE latency_ms > 0")
-        avg_row = cursor.fetchone()
-        avg_latency = round(avg_row["avg_latency"] or 0, 2) if avg_row else 0
-        
-        cursor.execute("SELECT COUNT(*) as count FROM webhook_logs")
-        total_webhooks = cursor.fetchone()["count"]
 
-        cursor.execute("SELECT COUNT(*) as count FROM bookings")
-        total_bookings = cursor.fetchone()["count"]
-        
+        total_messages = cursor.execute("SELECT COUNT(*) as total FROM messages WHERE tenant_id = ?", (tid,)).fetchone()["total"]
+        total_contacts = cursor.execute("SELECT COUNT(DISTINCT phone_number) as contacts FROM messages WHERE tenant_id = ?", (tid,)).fetchone()["contacts"]
+        inbound_messages = cursor.execute("SELECT COUNT(*) as inbound FROM messages WHERE tenant_id = ? AND direction = 'inbound'", (tid,)).fetchone()["inbound"]
+        outbound_messages = cursor.execute("SELECT COUNT(*) as outbound FROM messages WHERE tenant_id = ? AND direction = 'outbound'", (tid,)).fetchone()["outbound"]
+
+        avg_row = cursor.execute("SELECT AVG(latency_ms) as avg_latency FROM messages WHERE tenant_id = ? AND latency_ms > 0", (tid,)).fetchone()
+        avg_latency = round(avg_row["avg_latency"] or 0, 2) if avg_row else 0
+
+        total_webhooks = cursor.execute("SELECT COUNT(*) as count FROM webhook_logs WHERE tenant_id = ?", (tid,)).fetchone()["count"]
+        total_bookings = cursor.execute("SELECT COUNT(*) as count FROM bookings WHERE tenant_id = ?", (tid,)).fetchone()["count"]
+
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
-        cursor.execute("SELECT COUNT(*) as today_total FROM messages WHERE created_at LIKE ?", (f"{today_str}%",))
-        today_messages = cursor.fetchone()["today_total"]
-        
-        # Count contacts with active 24h free promotional window
+        today_messages = cursor.execute(
+            "SELECT COUNT(*) as today_total FROM messages WHERE tenant_id = ? AND created_at LIKE ?",
+            (tid, f"{today_str}%"),
+        ).fetchone()["today_total"]
+
         cutoff_24h = (datetime.utcnow() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("""
+        active_free_windows = cursor.execute(
+            """
             SELECT COUNT(DISTINCT REPLACE(phone_number, '+', '')) as active_window_count
             FROM messages
-            WHERE direction = 'inbound' AND created_at >= ?
-        """, (cutoff_24h,))
-        active_free_windows = cursor.fetchone()["active_window_count"] or 0
+            WHERE tenant_id = ? AND direction = 'inbound' AND created_at >= ?
+            """,
+            (tid, cutoff_24h),
+        ).fetchone()["active_window_count"] or 0
+
+        blocked_attacks = cursor.execute(
+            "SELECT COUNT(*) as cnt FROM security_events WHERE tenant_id = ? AND blocked = 1",
+            (tid,),
+        ).fetchone()["cnt"]
 
         conn.close()
         return {
@@ -514,196 +1099,241 @@ def get_stats():
             "total_webhooks": total_webhooks,
             "total_bookings": total_bookings,
             "today_messages": today_messages,
-            "active_free_windows": active_free_windows
+            "active_free_windows": active_free_windows,
+            "blocked_attacks": blocked_attacks,
         }
-    except Exception as e:
+    except Exception:
         return {
             "total_messages": 0, "total_contacts": 0, "inbound_messages": 0, "outbound_messages": 0,
-            "avg_latency_ms": 0, "total_webhooks": 0, "total_bookings": 0, "today_messages": 0
+            "avg_latency_ms": 0, "total_webhooks": 0, "total_bookings": 0, "today_messages": 0,
+            "active_free_windows": 0, "blocked_attacks": 0,
         }
 
-def save_webhook_log(endpoint: str, method: str, payload: any = None, status_code: int = 200, ip_address: str = ""):
+
+def save_webhook_log(endpoint: str, method: str, payload: any = None, status_code: int = 200, ip_address: str = "", tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
         payload_str = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload or "")
-        cursor.execute("INSERT INTO webhook_logs (endpoint, method, payload, status_code, ip_address) VALUES (?, ?, ?, ?, ?)", 
-                       (endpoint, method, payload_str, status_code, ip_address))
+        conn.execute(
+            "INSERT INTO webhook_logs (tenant_id, endpoint, method, payload, status_code, ip_address) VALUES (?, ?, ?, ?, ?, ?)",
+            (tid, endpoint, method, payload_str, status_code, ip_address),
+        )
         conn.commit()
         conn.close()
     except Exception:
         pass
 
-def get_webhook_logs(limit: int = 50):
+
+def get_webhook_logs(limit: int = 50, tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM webhook_logs ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
-        rows = cursor.fetchall()
+        rows = conn.execute(
+            "SELECT * FROM webhook_logs WHERE tenant_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+            (tid, limit),
+        ).fetchall()
         conn.close()
         return [dict(row) for row in rows]
     except Exception:
         return []
 
-def clear_data():
+
+def clear_data(tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM messages")
-        cursor.execute("DELETE FROM bookings")
-        cursor.execute("DELETE FROM webhook_logs")
+        conn.execute("DELETE FROM messages WHERE tenant_id = ?", (tid,))
+        conn.execute("DELETE FROM bookings WHERE tenant_id = ?", (tid,))
+        conn.execute("DELETE FROM webhook_logs WHERE tenant_id = ?", (tid,))
         conn.commit()
         conn.close()
+        neo = _get_neo4j()
+        if neo:
+            neo.clear_tenant_messages(tid)
         return True
     except Exception:
         return False
 
-def delete_messages(message_ids: list):
-    """Delete one or multiple messages by their IDs."""
+
+def delete_messages(message_ids: list, tenant_id: str = "default"):
+    """Delete one or multiple messages by their IDs for this tenant."""
     if not message_ids:
         return False
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
         ids = [int(i) for i in message_ids if str(i).isdigit()]
         if not ids:
+            conn.close()
             return False
         placeholders = ",".join("?" for _ in ids)
-        cursor.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM messages WHERE tenant_id = ? AND id IN ({placeholders})", [tid, *ids])
         conn.commit()
         conn.close()
+        neo = _get_neo4j()
+        if neo:
+            neo.delete_message_nodes(tid, ids)
         return True
     except Exception as e:
         print(f"[DB] Error deleting messages: {e}")
         return False
 
-def delete_contact(phone_number: str):
+
+def delete_contact(phone_number: str, tenant_id: str = "default"):
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
         clean = str(phone_number).replace("+", "").strip()
-        cursor.execute("""
-            DELETE FROM messages 
-            WHERE phone_number = ? 
-               OR phone_number = ? 
-               OR REPLACE(phone_number, '+', '') = ?
-        """, (phone_number, f"+{clean}", clean))
-        cursor.execute("""
-            DELETE FROM bookings 
-            WHERE phone_number = ? 
-               OR phone_number = ? 
-               OR REPLACE(phone_number, '+', '') = ?
-        """, (phone_number, f"+{clean}", clean))
-        cursor.execute("""
-            DELETE FROM contact_settings 
-            WHERE phone_number = ? 
-               OR phone_number = ? 
-               OR REPLACE(phone_number, '+', '') = ?
-        """, (phone_number, f"+{clean}", clean))
+        conn.execute(
+            "DELETE FROM messages WHERE tenant_id = ? AND (phone_number = ? OR phone_number = ? OR REPLACE(phone_number, '+', '') = ?)",
+            (tid, phone_number, f"+{clean}", clean),
+        )
+        conn.execute(
+            "DELETE FROM bookings WHERE tenant_id = ? AND (phone_number = ? OR phone_number = ? OR REPLACE(phone_number, '+', '') = ?)",
+            (tid, phone_number, f"+{clean}", clean),
+        )
+        conn.execute(
+            "DELETE FROM contact_settings WHERE tenant_id = ? AND (phone_number = ? OR phone_number = ? OR REPLACE(phone_number, '+', '') = ?)",
+            (tid, phone_number, f"+{clean}", clean),
+        )
         norm_key = normalize_phone_key(phone_number)
-        cursor.execute("""
-            DELETE FROM customer_profiles
-            WHERE phone_number = ?
-               OR REPLACE(phone_number, '+', '') = ?
-               OR phone_number = ?
-        """, (phone_number, clean, norm_key))
+        conn.execute(
+            "DELETE FROM customer_profiles WHERE tenant_id = ? AND (phone_number = ? OR REPLACE(phone_number, '+', '') = ? OR phone_number = ?)",
+            (tid, phone_number, clean, norm_key),
+        )
         conn.commit()
         conn.close()
+        neo = _get_neo4j()
+        if neo:
+            neo.delete_conversation_nodes(tid, phone_number)
         return True
     except Exception as e:
         print(f"[DB] Error deleting contact: {e}")
         return False
 
+
 # ==================== LEADS MANAGEMENT ====================
 
-def add_or_update_lead(phone_number: str, name: str = "Lead", source: str = "Manual Import", status: str = "New", notes: str = "") -> int:
-    """Insert a new lead or update an existing lead by phone number."""
+def add_or_update_lead(phone_number: str, name: str = "Lead", source: str = "Manual Import", status: str = "New", notes: str = "", tenant_id: str = "default") -> int:
+    """Insert a new lead or update an existing lead by phone number within tenant."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
         cursor = conn.cursor()
         clean_phone = "".join(c for c in phone_number if c.isdigit())
         if not clean_phone:
             conn.close()
             return 0
-        
-        cursor.execute("""
-            INSERT INTO leads (phone_number, name, source, status, notes)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(phone_number) DO UPDATE SET
+
+        cursor.execute(
+            """
+            INSERT INTO leads (tenant_id, phone_number, name, source, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, phone_number) DO UPDATE SET
                 name = CASE WHEN excluded.name != 'Lead' AND excluded.name != '' THEN excluded.name ELSE leads.name END,
                 source = CASE WHEN excluded.source != '' THEN excluded.source ELSE leads.source END,
                 notes = CASE WHEN excluded.notes != '' THEN excluded.notes ELSE leads.notes END
-        """, (clean_phone, name or "Lead", source or "Manual Import", status or "New", notes or ""))
-        
+            """,
+            (tid, clean_phone, name or "Lead", source or "Manual Import", status or "New", notes or ""),
+        )
+
         lead_id = cursor.lastrowid
         conn.commit()
+        row = cursor.execute(
+            "SELECT * FROM leads WHERE tenant_id = ? AND phone_number = ?",
+            (tid, clean_phone),
+        ).fetchone()
         conn.close()
-        return lead_id or 1
+        if row:
+            neo = _get_neo4j()
+            if neo:
+                neo.save_lead_node(dict(row))
+        return (row["id"] if row else lead_id) or 1
     except Exception as e:
         print(f"[DB] Error adding lead: {e}")
         return 0
 
-def record_lead_messaged(phone_number: str, status: str = "Contacted"):
+
+def record_lead_messaged(phone_number: str, status: str = "Contacted", tenant_id: str = "default"):
     """Update last messaged timestamp and status for a lead."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
         clean_phone = "".join(c for c in phone_number if c.isdigit())
-        cursor.execute("""
-            UPDATE leads 
+        conn.execute(
+            """
+            UPDATE leads
             SET last_messaged_at = CURRENT_TIMESTAMP,
                 status = ?
-            WHERE phone_number = ?
-        """, (status, clean_phone))
+            WHERE tenant_id = ? AND phone_number = ?
+            """,
+            (status, tid, clean_phone),
+        )
         conn.commit()
+        row = conn.execute("SELECT * FROM leads WHERE tenant_id = ? AND phone_number = ?", (tid, clean_phone)).fetchone()
         conn.close()
+        if row:
+            neo = _get_neo4j()
+            if neo:
+                neo.save_lead_node(dict(row))
     except Exception as e:
         print(f"[DB] Error recording lead messaged: {e}")
 
-def get_leads() -> list:
-    """Retrieve all leads ordered by newest first."""
+
+def get_leads(tenant_id: str = "default") -> list:
+    """Retrieve all leads for a tenant ordered by newest first."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM leads ORDER BY id DESC")
-        rows = [dict(r) for r in cursor.fetchall()]
+        rows = [dict(r) for r in conn.execute("SELECT * FROM leads WHERE tenant_id = ? ORDER BY id DESC", (tid,)).fetchall()]
         conn.close()
         return rows
     except Exception as e:
         print(f"[DB] Error fetching leads: {e}")
         return []
 
-def delete_lead(lead_id: int) -> bool:
-    """Delete a lead by ID."""
+
+def delete_lead(lead_id: int, tenant_id: str = "default") -> bool:
+    """Delete a lead by ID within tenant."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM leads WHERE id = ?", (int(lead_id),))
+        conn.execute("DELETE FROM leads WHERE id = ? AND tenant_id = ?", (int(lead_id), tid))
         conn.commit()
         conn.close()
+        neo = _get_neo4j()
+        if neo:
+            neo.delete_lead_node(tid, lead_id)
         return True
     except Exception as e:
         print(f"[DB] Error deleting lead: {e}")
         return False
 
-def update_lead_status(lead_id: int, status: str) -> bool:
+
+def update_lead_status(lead_id: int, status: str, tenant_id: str = "default") -> bool:
     """Update the status of a lead."""
     try:
         init_db()
+        tid = str(tenant_id or "default").strip() or "default"
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE leads SET status = ? WHERE id = ?", (status, int(lead_id)))
+        conn.execute("UPDATE leads SET status = ? WHERE id = ? AND tenant_id = ?", (status, int(lead_id), tid))
         conn.commit()
+        row = conn.execute("SELECT * FROM leads WHERE id = ? AND tenant_id = ?", (int(lead_id), tid)).fetchone()
         conn.close()
+        if row:
+            neo = _get_neo4j()
+            if neo:
+                neo.save_lead_node(dict(row))
         return True
     except Exception as e:
         print(f"[DB] Error updating lead status: {e}")
@@ -761,11 +1391,13 @@ def _merge_tag_lists(existing_val: str, new_val: str) -> str:
     return ", ".join(seen.values())
 
 
-def get_customer_profile(phone_number: str) -> dict:
-    """Fetch stored customer & business ecosystem profile, enriched with CRM leads & chat metadata."""
+def get_customer_profile(phone_number: str, tenant_id: str = "default") -> dict:
+    """Fetch stored customer & business ecosystem profile for this tenant."""
+    tid = str(tenant_id or "default").strip() or "default"
     key = normalize_phone_key(phone_number)
     raw_clean = str(phone_number or "").replace("+", "").strip()
     profile = {
+        "tenant_id": tid,
         "phone_number": key or raw_clean,
         "contact_name": "",
         "business_name": "",
@@ -792,14 +1424,15 @@ def get_customer_profile(phone_number: str) -> dict:
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
+        row = cursor.execute(
+            """
             SELECT * FROM customer_profiles
-            WHERE phone_number = ?
-               OR REPLACE(phone_number, '+', '') = ?
-               OR REPLACE(phone_number, '+', '') = ?
+            WHERE tenant_id = ?
+              AND (phone_number = ? OR REPLACE(phone_number, '+', '') = ? OR REPLACE(phone_number, '+', '') = ?)
             LIMIT 1
-        """, (key, key, raw_clean))
-        row = cursor.fetchone()
+            """,
+            (tid, key, key, raw_clean),
+        ).fetchone()
         if row:
             for col in (
                 "contact_name", "business_name", "business_category", "area",
@@ -809,15 +1442,15 @@ def get_customer_profile(phone_number: str) -> dict:
                 if row[col]:
                     profile[col] = str(row[col]).strip()
 
-        # Enrich from leads table if profile is missing fields
-        cursor.execute("""
+        lead_row = cursor.execute(
+            """
             SELECT name, source, notes FROM leads
-            WHERE phone_number = ?
-               OR REPLACE(phone_number, '+', '') = ?
-               OR REPLACE(phone_number, '+', '') = ?
+            WHERE tenant_id = ?
+              AND (phone_number = ? OR REPLACE(phone_number, '+', '') = ? OR REPLACE(phone_number, '+', '') = ?)
             LIMIT 1
-        """, (key, key, raw_clean))
-        lead_row = cursor.fetchone()
+            """,
+            (tid, key, key, raw_clean),
+        ).fetchone()
         if lead_row:
             lead_name = str(lead_row["name"] or "").strip()
             lead_source = str(lead_row["source"] or "").lower()
@@ -834,15 +1467,17 @@ def get_customer_profile(phone_number: str) -> dict:
                 if len(parts) >= 2 and not profile["area"] and _is_meaningful_profile_val(parts[1], "area"):
                     profile["area"] = parts[1]
 
-        # Enrich contact_name from latest inbound message sender_name
         if not _is_meaningful_profile_val(profile["contact_name"], "contact_name"):
-            cursor.execute("""
+            msg_row = cursor.execute(
+                """
                 SELECT sender_name FROM messages
-                WHERE (REPLACE(phone_number, '+', '') = ? OR REPLACE(phone_number, '+', '') = ?)
+                WHERE tenant_id = ?
+                  AND (REPLACE(phone_number, '+', '') = ? OR REPLACE(phone_number, '+', '') = ?)
                   AND direction = 'inbound'
                 ORDER BY id DESC LIMIT 1
-            """, (key, raw_clean))
-            msg_row = cursor.fetchone()
+                """,
+                (tid, key, raw_clean),
+            ).fetchone()
             if msg_row and _is_meaningful_profile_val(msg_row["sender_name"], "contact_name"):
                 profile["contact_name"] = str(msg_row["sender_name"]).strip()
 
@@ -872,8 +1507,9 @@ def get_customer_profile(phone_number: str) -> dict:
     return profile
 
 
-def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, **fields) -> dict:
-    """Create or merge meaningful business & ecosystem facts for a phone number."""
+def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, tenant_id: str = "default", **fields) -> dict:
+    """Create or merge meaningful business & ecosystem facts for a phone number within a tenant."""
+    tid = str(tenant_id or "default").strip() or "default"
     key = normalize_phone_key(phone_number)
     if not key:
         return {}
@@ -890,8 +1526,10 @@ def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, 
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM customer_profiles WHERE phone_number = ?", (key,))
-        existing = cursor.fetchone()
+        existing = cursor.execute(
+            "SELECT * FROM customer_profiles WHERE tenant_id = ? AND phone_number = ?",
+            (tid, key),
+        ).fetchone()
         merged = {col: (str(existing[col] or "").strip() if existing and existing[col] else "") for col in allowed_cols}
 
         changed = existing is None
@@ -913,12 +1551,13 @@ def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, 
                         changed = True
 
         if changed:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO customer_profiles (
-                    phone_number, contact_name, business_name, business_category, area,
+                    tenant_id, phone_number, contact_name, business_name, business_category, area,
                     has_website, website_url, existing_ecosystem, pain_points, goals, data_source, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(phone_number) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(tenant_id, phone_number) DO UPDATE SET
                     contact_name = excluded.contact_name,
                     business_name = excluded.business_name,
                     business_category = excluded.business_category,
@@ -930,29 +1569,35 @@ def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, 
                     goals = excluded.goals,
                     data_source = CASE WHEN excluded.data_source != '' THEN excluded.data_source ELSE customer_profiles.data_source END,
                     updated_at = CURRENT_TIMESTAMP
-            """, (
-                key,
-                merged["contact_name"], merged["business_name"], merged["business_category"],
-                merged["area"], merged["has_website"], merged["website_url"],
-                merged["existing_ecosystem"], merged["pain_points"], merged["goals"],
-                merged["data_source"]
-            ))
+                """,
+                (
+                    tid, key,
+                    merged["contact_name"], merged["business_name"], merged["business_category"],
+                    merged["area"], merged["has_website"], merged["website_url"],
+                    merged["existing_ecosystem"], merged["pain_points"], merged["goals"],
+                    merged["data_source"],
+                ),
+            )
 
-            # Keep placeholder leads table row synced with real business/contact name
             best_name = merged["business_name"] or merged["contact_name"]
             if _is_meaningful_profile_val(best_name, "business_name"):
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE leads
                     SET name = ?
-                    WHERE REPLACE(phone_number, '+', '') = ?
+                    WHERE tenant_id = ? AND REPLACE(phone_number, '+', '') = ?
                       AND (name IS NULL OR TRIM(name) = '' OR LOWER(TRIM(name)) = 'lead')
-                """, (best_name, key))
+                    """,
+                    (best_name, tid, key),
+                )
 
             conn.commit()
         conn.close()
     except Exception as e:
         print(f"[DB] Error upserting customer profile: {e}")
 
-    return get_customer_profile(key)
-
-
+    full_prof = get_customer_profile(key, tenant_id=tid)
+    neo = _get_neo4j()
+    if neo:
+        neo.upsert_customer_profile_node(tid, full_prof)
+    return full_prof

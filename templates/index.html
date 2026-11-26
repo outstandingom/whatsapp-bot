@@ -179,8 +179,15 @@
                         <i class="fas fa-bullhorn text-indigo-500 w-4 text-center"></i><span>Bulk Broadcast & Leads</span>
                     </button>
                     <div class="border-t border-slate-100 my-1"></div>
+                    <button type="button" onclick="closeMobileNav(); openBillingModal();" class="w-full text-left px-3.5 py-2.5 flex items-center justify-between font-semibold text-amber-700 hover:bg-amber-50 transition">
+                        <span class="flex items-center space-x-2.5"><i class="fas fa-coins text-amber-500 w-4 text-center"></i><span>Wallet &amp; Plans</span></span>
+                        <span id="mnav-wallet-coins" class="text-[10px] font-extrabold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full">0</span>
+                    </button>
                     <button type="button" onclick="mobileNavSettings()" class="w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-slate-700 hover:bg-slate-50 transition">
                         <i class="fas fa-gear text-slate-500 w-4 text-center"></i><span>Settings &amp; API Keys</span>
+                    </button>
+                    <button type="button" onclick="logoutGrowhazUser()" class="w-full text-left px-3.5 py-2.5 flex items-center space-x-2.5 font-semibold text-rose-600 hover:bg-rose-50 transition">
+                        <i class="fas fa-right-from-bracket text-rose-500 w-4 text-center"></i><span>Sign Out (<span id="mnav-user-email" class="truncate">Account</span>)</span>
                     </button>
                 </div>
             </div>
@@ -190,7 +197,7 @@
             </div>
 
             <div class="min-w-0">
-                <h1 class="font-extrabold text-[13px] sm:text-base md:text-lg text-slate-900 tracking-tight truncate">Growhaz Support Desk</h1>
+                <h1 id="header-brand-title" class="font-extrabold text-[13px] sm:text-base md:text-lg text-slate-900 tracking-tight truncate">Growhaz Support Desk</h1>
             </div>
         </div>
 
@@ -219,16 +226,38 @@
             </button>
         </nav>
 
-        <!-- RIGHT: QUICK ACTIONS -->
-        <div class="flex items-center space-x-2 flex-shrink-0">
-            <button onclick="openSimulateModal()" title="New Customer Simulator" class="flex items-center space-x-2 px-2.5 sm:px-4 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition">
-                <i class="fas fa-plus"></i><span class="hidden sm:inline">New Customer Simulator</span>
+        <!-- RIGHT: WALLET, SIMULATOR & REFRESH -->
+        <div class="flex items-center space-x-1.5 sm:space-x-2 flex-shrink-0">
+            <button type="button" id="header-wallet-btn" onclick="openBillingModal()" title="Growhaz Wallet Coins & Monthly Plans"
+                    class="flex items-center space-x-1.5 px-2.5 sm:px-3 py-2 text-xs font-extrabold rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition">
+                <i class="fas fa-coins text-amber-500"></i>
+                <span id="header-wallet-coins">0</span>
+                <span class="hidden lg:inline text-[10px] text-amber-600 font-bold" id="header-plan-tag">PAYG</span>
+            </button>
+            <button onclick="openSimulateModal()" title="New Customer Simulator" class="flex items-center space-x-1.5 px-2.5 sm:px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition">
+                <i class="fas fa-plus"></i><span class="hidden lg:inline">Simulator</span>
             </button>
             <button onclick="fetchData(true)" title="Refresh" class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition">
                 <i class="fas fa-rotate-right text-xs" id="refresh-icon"></i>
             </button>
+            <button type="button" onclick="logoutGrowhazUser()" title="Sign out" class="hidden md:flex w-9 h-9 items-center justify-center rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 border border-slate-200 transition">
+                <i class="fas fa-right-from-bracket text-xs"></i>
+            </button>
         </div>
     </header>
+
+    <!-- FREE DEMO & META ONBOARDING BANNER (Shown when Meta is not yet connected for regular users) -->
+    <div id="demo-onboarding-banner" class="hidden bg-gradient-to-r from-indigo-600 via-emerald-600 to-teal-600 text-white px-3 sm:px-5 py-2 text-[11px] sm:text-xs flex flex-wrap items-center justify-between gap-2 flex-shrink-0 z-40">
+        <div class="flex flex-wrap items-center gap-2 min-w-0">
+            <span class="px-2 py-0.5 rounded-full bg-white/20 font-extrabold whitespace-nowrap">🎁 Free Demo: <span id="demo-remaining-count">3</span>/3 left</span>
+            <span class="font-medium truncate max-w-[260px] sm:max-w-none">Connect your own Meta account for 50% off (₹1/24h chat &amp; plans from ₹499/mo)</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-1.5 flex-shrink-0">
+            <button type="button" onclick="openSettingsModal()" class="px-2.5 py-1 rounded-lg bg-white text-emerald-800 hover:bg-emerald-50 font-extrabold text-[11px] transition">Setup Meta</button>
+            <button type="button" onclick="openBillingModal()" class="px-2.5 py-1 rounded-lg bg-slate-900/30 hover:bg-slate-900/50 text-white font-bold text-[11px] transition">Plans &amp; Coins</button>
+            <a href="https://www.growhaz.in/mentorship?topic=meta-whatsapp-setup" target="_blank" rel="noopener noreferrer" class="px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-900 font-extrabold text-[11px] transition">1-on-1 Mentor Setup</a>
+        </div>
+    </div>
 
     <!-- Main Container -->
     <main class="flex-1 min-h-0 max-w-7xl w-full mx-auto p-0 md:p-4 flex flex-col md:space-y-2.5 overflow-hidden">
@@ -379,6 +408,9 @@
                                 </button>
                                 <button type="button" onclick="openTemplateSelectorModal()" class="w-full text-left px-3.5 py-2.5 hover:bg-blue-50 text-slate-700 hover:text-blue-700 flex items-center space-x-2.5 transition font-semibold border-b border-slate-100">
                                     <i class="fas fa-layer-group text-blue-500 text-sm w-4 text-center"></i><span>Insert Template</span>
+                                </button>
+                                <button type="button" onclick="openCustomerGraphModal()" class="w-full text-left px-3.5 py-2.5 hover:bg-purple-50 text-purple-700 flex items-center space-x-2.5 transition font-semibold border-b border-slate-100">
+                                    <i class="fas fa-diagram-project text-purple-600 text-sm w-4 text-center"></i><span>View Neo4j Knowledge Graph</span>
                                 </button>
                                 <button type="button" onclick="triggerAiReplyFromMenu()" class="w-full text-left px-3.5 py-2.5 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 flex items-center space-x-2.5 transition font-semibold">
                                     <i class="fas fa-wand-magic-sparkles text-emerald-600 text-sm w-4 text-center"></i><span>Force AI Reply</span>
@@ -595,6 +627,64 @@
                         <button onclick="openSettingsModal()" class="text-slate-600 font-bold hover:underline flex items-center space-x-1">
                             <i class="fas fa-gear text-[10px]"></i><span>Configure Keys</span>
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NEO4J DNA KNOWLEDGE GRAPH & OPENROUTER PROMPT-INJECTION SHIELD -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-4 flex-shrink-0">
+                <!-- Neo4j Knowledge Graph Panel -->
+                <div class="p-4 sm:p-5 bg-purple-50/40 rounded-2xl border border-purple-200 flex flex-col justify-between space-y-3.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <h3 class="text-xs font-extrabold text-purple-950 uppercase tracking-wider flex items-center space-x-2">
+                                <i class="fas fa-diagram-project text-purple-600"></i><span>Neo4j AuraDB &amp; DNA Knowledge Graph</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-500 mt-0.5">Persistent chat history + live customer/business relationships</p>
+                        </div>
+                        <span id="neo4j-status-pill" class="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-extrabold">Checking...</span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                        <div class="bg-white p-2 rounded-xl border border-purple-100">
+                            <span class="block text-[10px] text-slate-400 font-bold">Total Nodes</span>
+                            <span id="neo4j-node-count" class="font-extrabold text-purple-900">0</span>
+                        </div>
+                        <div class="bg-white p-2 rounded-xl border border-purple-100">
+                            <span class="block text-[10px] text-slate-400 font-bold">Relationships</span>
+                            <span id="neo4j-edge-count" class="font-extrabold text-indigo-700">0</span>
+                        </div>
+                        <div class="bg-white p-2 rounded-xl border border-purple-100">
+                            <span class="block text-[10px] text-slate-400 font-bold">Saved Chats</span>
+                            <span id="neo4j-msg-count" class="font-extrabold text-emerald-700">0</span>
+                        </div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <input type="text" id="neo4j-search-input" placeholder="Search business, area, tool..." class="flex-1 min-w-0 text-xs px-3 py-2 rounded-xl border border-purple-200 bg-white focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                        <button type="button" onclick="queryNeo4jGraph()" class="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex-shrink-0">Query Graph</button>
+                    </div>
+                    <div id="neo4j-query-results" class="bg-white rounded-xl border border-purple-100 p-2.5 text-[11px] max-h-36 overflow-y-auto space-y-1 text-slate-600">
+                        <span class="text-slate-400 italic">Click Query Graph to inspect extracted relationships in Neo4j...</span>
+                    </div>
+                </div>
+
+                <!-- OpenRouter Prompt-Injection Firewall Panel -->
+                <div class="p-4 sm:p-5 bg-rose-50/40 rounded-2xl border border-rose-200 flex flex-col justify-between space-y-3.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <h3 class="text-xs font-extrabold text-rose-950 uppercase tracking-wider flex items-center space-x-2">
+                                <i class="fas fa-shield-halved text-rose-600"></i><span>OpenRouter Prompt-Injection Shield</span>
+                            </h3>
+                            <p class="text-[11px] text-slate-500 mt-0.5">Model: <code id="guard-model-label" class="font-mono text-rose-700 font-bold">meta-llama/llama-guard-4-12b</code></p>
+                        </div>
+                        <span id="guard-status-pill" class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">Blocked: <span id="stat-blocked-attacks">0</span></span>
+                    </div>
+                    <div class="flex space-x-2">
+                        <input type="text" id="guard-test-input" placeholder="Test prompt injection or user input..." class="flex-1 min-w-0 text-xs px-3 py-2 rounded-xl border border-rose-200 bg-white focus:outline-none focus:ring-2 focus:ring-rose-400" />
+                        <button type="button" id="guard-test-btn" onclick="testPromptGuardFromDashboard()" class="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex-shrink-0">Scan Input</button>
+                    </div>
+                    <div id="guard-test-result" class="hidden p-2.5 rounded-xl text-[11px] font-bold"></div>
+                    <div id="guard-events-list" class="bg-white rounded-xl border border-rose-100 p-2.5 text-[11px] max-h-36 overflow-y-auto space-y-1.5 text-slate-600">
+                        <span class="text-slate-400 italic">No prompt-injection attempts recorded yet.</span>
                     </div>
                 </div>
             </div>
@@ -1464,13 +1554,28 @@
                 <div class="flex items-center space-x-2.5 min-w-0">
                     <div class="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-base flex-shrink-0"><i class="fas fa-gear"></i></div>
                     <div class="min-w-0">
-                        <h3 class="font-extrabold text-slate-900 text-base truncate">Settings & API Configuration</h3>
-                        <p class="text-xs text-slate-500">Configure Groq AI Key and Meta WhatsApp Tokens</p>
+                        <h3 class="font-extrabold text-slate-900 text-base truncate">Settings &amp; API Configuration</h3>
+                        <p class="text-xs text-slate-500 truncate">Configure Business Persona, AI Keys &amp; Meta WhatsApp API</p>
                     </div>
                 </div>
                 <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-700 p-1 flex-shrink-0"><i class="fas fa-times"></i></button>
             </div>
             <form onsubmit="handleSettingsSubmit(event)" class="space-y-4 mt-4 text-xs">
+                <div class="p-3.5 sm:p-4 bg-emerald-50/70 rounded-2xl border border-emerald-200 space-y-2.5">
+                    <div class="flex flex-wrap items-center justify-between gap-1.5">
+                        <label class="block text-emerald-950 font-bold">Business Identity &amp; AI Instructions</label>
+                        <span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Multi-Tenant</span>
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 font-semibold mb-1">Your Business / Brand Name</label>
+                        <input type="text" id="set-business-name" placeholder="e.g. Apex Digital Solutions" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-emerald-200 focus:outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div>
+                        <label class="block text-slate-600 font-semibold mb-1">Custom AI Instructions (Services, Pricing, Tone)</label>
+                        <textarea id="set-custom-prompt" rows="3" placeholder="Tell the AI what your business sells, target city, booking flow, and tone..." class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-emerald-200 focus:outline-none focus:border-emerald-500 resize-y"></textarea>
+                    </div>
+                </div>
+
                 <div class="p-3.5 sm:p-4 bg-blue-50/70 rounded-2xl border border-blue-200 space-y-2.5">
                     <div class="flex flex-wrap items-center justify-between gap-1.5">
                         <label class="block text-blue-950 font-bold">DeepSeek API Key (Primary AI)</label>
@@ -1482,7 +1587,7 @@
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">DeepSeek Model</label>
                     <select id="set-deepseek-model" class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-blue-500 font-mono text-xs">
-                        <option value="deepseek-chat">deepseek-chat (DeepSeek-V3 - Fast & Smart)</option>
+                        <option value="deepseek-chat">deepseek-chat (DeepSeek-V3 - Fast &amp; Smart)</option>
                         <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1 - Deep Thinking)</option>
                     </select>
                 </div>
@@ -1494,14 +1599,24 @@
                 <div>
                     <label class="block text-slate-700 font-bold mb-1">Groq Model Selection</label>
                     <select id="set-groq-model" class="w-full bg-slate-50 text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono text-xs">
-                        <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (Fast & Recommended)</option>
+                        <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (Fast &amp; Recommended)</option>
                         <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (Ultra Fast)</option>
                         <option value="deepseek-r1-distill-llama-70b">deepseek-r1-distill-llama-70b (Deep Reasoning)</option>
                         <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
                     </select>
                 </div>
                 <div class="p-3.5 sm:p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                    <h4 class="text-slate-800 font-bold">Meta WhatsApp Cloud API (Optional)</h4>
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <h4 class="text-slate-800 font-bold">Meta WhatsApp Cloud API</h4>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">50% Off Plans When Connected</span>
+                    </div>
+                    <div class="p-2.5 bg-white border border-slate-200 rounded-xl space-y-1">
+                        <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Your Unique Tenant Webhook URL</label>
+                        <div class="flex items-center gap-1.5">
+                            <input type="text" id="set-webhook-url-box" readonly value="/api/webhook" class="flex-1 min-w-0 bg-slate-50 text-slate-700 px-2.5 py-1.5 rounded-lg border border-slate-200 font-mono text-[11px]"/>
+                            <button type="button" onclick="copyTenantWebhookUrl()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-bold text-[11px] flex-shrink-0"><i class="fas fa-copy mr-1"></i>Copy</button>
+                        </div>
+                    </div>
                     <div>
                         <label class="block text-slate-500 mb-1">WhatsApp Access Token</label>
                         <input type="password" id="set-meta-token" placeholder="Meta System User Token" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono"/>
@@ -1514,7 +1629,33 @@
                         <label class="block text-slate-500 mb-1">Webhook Verify Secret Token</label>
                         <input type="text" id="set-meta-verify-token" value="whatsapp_groq_bot_secret_123" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-500 font-mono"/>
                     </div>
+                    <div class="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        <div class="min-w-0">
+                            <p class="font-bold text-indigo-950 text-xs">New to Meta Cloud API setup?</p>
+                            <p class="text-[11px] text-indigo-700 leading-snug">Book a 1-on-1 Growhaz Mentor call to configure Meta Business, Webhook &amp; Numbers live with you.</p>
+                        </div>
+                        <a href="https://www.growhaz.in/mentorship?topic=meta-whatsapp-setup" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] flex-shrink-0">
+                            <i class="fas fa-user-tie"></i><span>1-on-1 Mentor Help</span>
+                        </a>
+                    </div>
                 </div>
+
+                <div id="set-openrouter-section" class="hidden p-3.5 sm:p-4 bg-rose-50/70 rounded-2xl border border-rose-200 space-y-2.5">
+                    <div class="flex flex-wrap items-center justify-between gap-1.5">
+                        <label class="block text-rose-950 font-bold">OpenRouter Prompt-Injection Shield (Admin)</label>
+                        <span id="set-openrouter-status" class="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded-full">Checking...</span>
+                    </div>
+                    <input type="password" id="set-openrouter-key" placeholder="OpenRouter API Key (sk-or-v1-...)" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-rose-200 focus:outline-none focus:border-rose-500 font-mono"/>
+                    <div>
+                        <label class="block text-slate-700 font-bold mb-1">Guard Classifier Model</label>
+                        <select id="set-openrouter-model" class="w-full bg-white text-slate-900 px-3.5 py-2.5 rounded-xl border border-rose-200 focus:outline-none focus:border-rose-500 font-mono text-xs">
+                            <option value="meta-llama/llama-guard-4-12b">meta-llama/llama-guard-4-12b (Recommended Safety Classifier)</option>
+                            <option value="meta-llama/llama-3.2-3b-instruct:free">meta-llama/llama-3.2-3b-instruct:free (Fast Fallback)</option>
+                            <option value="qwen/qwen-2.5-7b-instruct:free">qwen/qwen-2.5-7b-instruct:free</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 pt-3.5 border-t border-slate-100">
                     <button type="button" onclick="closeSettingsModal()" class="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Cancel</button>
                     <button type="submit" id="save-settings-btn" class="w-full sm:w-auto justify-center px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center space-x-2 shadow-sm">
@@ -1522,6 +1663,194 @@
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ================= MODAL: BILLING, PLANS & WALLET ================= -->
+    <div id="billing-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[110] hidden flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto">
+        <div class="bg-white border border-slate-200 rounded-2xl sm:rounded-3xl max-w-3xl w-full p-4 sm:p-6 shadow-2xl max-h-[92dvh] overflow-y-auto space-y-5">
+            <div class="flex items-start justify-between pb-3.5 border-b border-slate-100 gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-lg flex-shrink-0"><i class="fas fa-coins"></i></div>
+                    <div class="min-w-0">
+                        <h3 class="font-extrabold text-slate-900 text-base sm:text-lg">Growhaz Wallet &amp; Automation Plans</h3>
+                        <p class="text-xs text-slate-500">1 Coin = &#8377;1 • Pay-per-24h window or save with monthly plans</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    <span id="billing-modal-balance" class="px-3 py-1 rounded-full bg-amber-100 text-amber-900 font-extrabold text-xs">0 Coins</span>
+                    <button onclick="closeBillingModal()" class="text-slate-400 hover:text-slate-700 p-1"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+
+            <div id="billing-status-strip" class="p-3 sm:p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div class="space-y-0.5">
+                    <div class="font-bold text-slate-900" id="billing-summary-title">Loading plan details...</div>
+                    <div class="text-slate-600" id="billing-summary-subtitle">Checking Free Demos, Wallet balance &amp; active 24h windows</div>
+                </div>
+                <a href="https://www.growhaz.in/wallet" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold shadow-sm flex-shrink-0">
+                    <i class="fas fa-plus-circle"></i><span>Add Coins on Growhaz.in</span>
+                </a>
+            </div>
+
+            <!-- Billing Mode Switch -->
+            <div>
+                <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">1. Choose Infrastructure Mode</h4>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button type="button" id="mode-card-managed" onclick="setBillingMode('managed_meta')" class="text-left p-3.5 rounded-2xl border-2 border-emerald-500 bg-emerald-50/70 transition space-y-1">
+                        <div class="flex items-center justify-between">
+                            <span class="font-extrabold text-slate-900 text-sm">Managed Meta + Infra</span>
+                            <span class="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-600 text-white">2 Coins / 24h</span>
+                        </div>
+                        <p class="text-[11px] text-slate-600">&#8377;1 Growhaz Infra + &#8377;1 Meta messaging per 24h customer conversation. Zero Meta billing hassle.</p>
+                    </button>
+                    <button type="button" id="mode-card-byo" onclick="setBillingMode('byo_meta')" class="text-left p-3.5 rounded-2xl border-2 border-slate-200 bg-white hover:border-indigo-300 transition space-y-1">
+                        <div class="flex items-center justify-between">
+                            <span class="font-extrabold text-slate-900 text-sm">Own Meta Account (50% Off)</span>
+                            <span class="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-600 text-white">1 Coin / 24h</span>
+                        </div>
+                        <p class="text-[11px] text-slate-600">&#8377;1 Growhaz Infra only. Add Meta balance inside your own Meta Business Suite to pay Meta directly.</p>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Live 24h Cost Calculator -->
+            <div class="p-3.5 rounded-2xl bg-gradient-to-r from-slate-900 to-slate-800 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="space-y-1">
+                    <div class="text-xs font-extrabold text-emerald-300">Pay-As-You-Go 24h Conversation Estimator</div>
+                    <p class="text-[11px] text-slate-300">Example: 200 customers = <strong class="text-white">400 Coins</strong> (Managed Meta) or <strong class="text-white">200 Coins</strong> (Own Meta)</p>
+                </div>
+                <div class="flex items-center gap-2.5 flex-shrink-0">
+                    <input type="number" id="billing-calc-count" value="200" min="1" max="100000" oninput="calcBillingPreview()" class="w-24 bg-slate-950 text-white px-3 py-1.5 rounded-lg border border-slate-600 font-bold text-sm text-center"/>
+                    <div class="text-right">
+                        <div class="text-sm font-extrabold text-amber-300" id="billing-calc-result">400 Coins (&#8377;400)</div>
+                        <div class="text-[10px] text-slate-400" id="billing-calc-mode-note">Managed Meta @ &#8377;2/conv</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Monthly Plans -->
+            <div>
+                <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">2. Monthly Automation Plans (Instant Coin Activation)</h4>
+                <div id="billing-plans-grid" class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs"></div>
+            </div>
+
+            <!-- Mentor + Settings Footer -->
+            <div class="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div>
+                    <div class="font-extrabold text-indigo-950">Need a Mentor to connect Meta WhatsApp for half-price plans?</div>
+                    <p class="text-indigo-700 mt-0.5">Book a live 1-on-1 Growhaz Mentor call to set up your Meta Developer App, Phone Number ID &amp; Webhook.</p>
+                </div>
+                <div class="flex flex-wrap gap-2 flex-shrink-0">
+                    <button type="button" onclick="closeBillingModal(); openSettingsModal();" class="px-3 py-2 rounded-xl bg-white border border-indigo-200 text-indigo-800 font-bold hover:bg-indigo-100">Enter Meta Keys</button>
+                    <a href="https://www.growhaz.in/mentorship?topic=meta-whatsapp-setup" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold">
+                        <i class="fas fa-headset"></i><span>Connect With Mentor</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= MODAL: NEO4J KNOWLEDGE GRAPH INSPECTOR ================= -->
+    <div id="graph-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[110] hidden flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto">
+        <div class="bg-white border border-slate-200 rounded-2xl sm:rounded-3xl max-w-2xl w-full p-4 sm:p-6 shadow-2xl max-h-[92dvh] overflow-y-auto space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100 gap-2">
+                <div class="flex items-center gap-2.5 min-w-0">
+                    <div class="w-9 h-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center text-base flex-shrink-0"><i class="fas fa-project-diagram"></i></div>
+                    <div class="min-w-0">
+                        <h3 id="graph-modal-title" class="font-extrabold text-slate-900 text-base truncate">Customer Neo4j DNA Knowledge Graph</h3>
+                        <p id="graph-modal-subtitle" class="text-xs text-slate-500 truncate">Live relationships, business ecosystem &amp; episodic memory</p>
+                    </div>
+                </div>
+                <button onclick="closeGraphModal()" class="text-slate-400 hover:text-slate-700 p-1"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="graph-modal-profile" class="p-3 rounded-2xl bg-teal-50/70 border border-teal-200 text-xs text-teal-950">Loading customer graph...</div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div class="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                    <div class="font-bold text-slate-800 flex items-center gap-1.5"><i class="fas fa-circle-nodes text-teal-600"></i><span>Entity Nodes</span></div>
+                    <div id="graph-modal-nodes" class="space-y-1.5 max-h-52 overflow-y-auto"></div>
+                </div>
+                <div class="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                    <div class="font-bold text-slate-800 flex items-center gap-1.5"><i class="fas fa-share-nodes text-indigo-600"></i><span>Relationships</span></div>
+                    <div id="graph-modal-edges" class="space-y-1.5 max-h-52 overflow-y-auto"></div>
+                </div>
+            </div>
+            <div class="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+                <div class="font-bold text-slate-800 flex items-center gap-1.5"><i class="fas fa-brain text-purple-600"></i><span>Recent DNA Episodes</span></div>
+                <div id="graph-modal-episodes" class="space-y-1.5 max-h-40 overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= AUTH SCREEN OVERLAY (GROWHAZ SSO / LOGIN) ================= -->
+    <div id="auth-screen" class="fixed inset-0 bg-gradient-to-br from-slate-900 via-emerald-950 to-slate-900 z-[200] flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+        <div class="bg-white rounded-3xl max-w-md w-full p-5 sm:p-7 shadow-2xl border border-slate-200 space-y-5 my-auto">
+            <div class="text-center space-y-2">
+                <div class="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center text-2xl mx-auto shadow-lg shadow-emerald-600/30">
+                    <i class="fab fa-whatsapp"></i>
+                </div>
+                <h2 class="text-xl font-extrabold text-slate-900">Growhaz WhatsApp AI Desk</h2>
+                <p class="text-xs text-slate-500">Sign in with your <strong class="text-slate-700">growhaz.in</strong> account &amp; Wallet Coins</p>
+            </div>
+
+            <div id="auth-loading-state" class="hidden py-6 text-center space-y-2">
+                <i class="fas fa-spinner fa-spin text-2xl text-emerald-600"></i>
+                <p class="text-xs font-semibold text-slate-600">Verifying your Growhaz session &amp; loading Neo4j workspace...</p>
+            </div>
+
+            <div id="auth-main-box" class="space-y-4">
+                <div class="grid grid-cols-2 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                    <button type="button" id="auth-tab-login" onclick="switchAuthTab('login')" class="py-2 rounded-lg bg-white text-emerald-700 shadow-sm transition">Sign In</button>
+                    <button type="button" id="auth-tab-register" onclick="switchAuthTab('register')" class="py-2 rounded-lg text-slate-600 hover:text-slate-900 transition">Create Account</button>
+                </div>
+
+                <div id="auth-error-box" class="hidden p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold"></div>
+                <div id="auth-success-box" class="hidden p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold"></div>
+
+                <form id="auth-login-form" onsubmit="handleGrowhazLogin(event)" class="space-y-3 text-xs">
+                    <div>
+                        <label class="block text-slate-700 font-bold mb-1">Growhaz Email</label>
+                        <input type="email" id="auth-login-email" required placeholder="you@business.com" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div>
+                        <label class="block text-slate-700 font-bold mb-1">Password</label>
+                        <input type="password" id="auth-login-password" required placeholder="Enter your password" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:border-emerald-500"/>
+                    </div>
+                    <button type="submit" id="auth-login-btn" class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-sm transition">
+                        Sign In to Workspace
+                    </button>
+                </form>
+
+                <form id="auth-register-form" onsubmit="handleGrowhazRegister(event)" class="hidden space-y-3 text-xs">
+                    <div>
+                        <label class="block text-slate-700 font-bold mb-1">Your Name / Business Name</label>
+                        <input type="text" id="auth-reg-name" required placeholder="e.g. Sharma Enterprises" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div>
+                        <label class="block text-slate-700 font-bold mb-1">Email Address</label>
+                        <input type="email" id="auth-reg-email" required placeholder="you@business.com" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:border-emerald-500"/>
+                    </div>
+                    <div>
+                        <label class="block text-slate-700 font-bold mb-1">Password (min 6 chars)</label>
+                        <input type="password" id="auth-reg-password" required minlength="6" placeholder="Create a strong password" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:border-emerald-500"/>
+                    </div>
+                    <button type="submit" id="auth-reg-btn" class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-sm transition">
+                        Register &amp; Claim 3 Free Demos
+                    </button>
+                </form>
+
+                <div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-[11px] text-slate-600">
+                    <div class="flex items-center gap-2 font-bold text-slate-800">
+                        <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">3 Free Demos</span>
+                        <span>No Meta API required to test!</span>
+                    </div>
+                    <p>Uses your shared <strong>Growhaz Wallet Coins</strong> (1 Coin = &#8377;1): &#8377;2/conv Managed Meta or &#8377;1/conv with Own Meta.</p>
+                    <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <a href="https://www.growhaz.in/automation" target="_blank" rel="noopener" class="text-emerald-700 font-bold hover:underline">Explore Pricing &amp; Plans &rarr;</a>
+                        <a href="https://www.growhaz.in/mentorship?topic=meta-whatsapp-setup" target="_blank" rel="noopener" class="text-indigo-700 font-bold hover:underline">1-on-1 Mentor Setup &rarr;</a>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1569,7 +1898,7 @@
     </div>
 
     <!-- External Modular Application Script -->
-    <script src="/static/app.js?v=20261125-mobile1"></script>
+    <script src="/static/app.js?v=20261126-saas1"></script>
 
     <!-- ================================================================
          UI PATCH SCRIPT
