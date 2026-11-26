@@ -842,10 +842,33 @@ def generate_ai_reply(
             logger.debug(f"DNA processing error: {de}")
             return None, {}
 
+    from api import security_guard as _sg
+    l1_guard = _sg.check_regex_injection(user_prompt)
+    if l1_guard.get("blocked"):
+        from api import db
+        db.save_security_event(
+            tenant_id=tid,
+            phone_number=customer_id or "",
+            input_text=user_prompt,
+            detector=f"Regex Guard ({l1_guard.get('rule', '')})",
+            reason=l1_guard.get("reason", "Prompt injection attempt"),
+            blocked=True,
+        )
+        latency_val = round((time.time() - start) * 1000, 2)
+        return _sg.SAFE_BLOCK_REPLY, max(latency_val, 5.0), f"Security Shield (Regex {l1_guard.get('rule', '')})"
+
+    requires_sync_l2 = len(user_prompt or "") > 120 or _sg.is_sensitive_or_privileged_input(user_prompt)
+
     f_guard = _PRE_POOL.submit(_run_security_guard)
     f_subgraph = _PRE_POOL.submit(_run_subgraph_fetch)
     f_dna = _PRE_POOL.submit(_run_dna_fetch)
-    guard_res = f_guard.result()
+
+    guard_res = {"blocked": False}
+    if requires_sync_l2:
+        try:
+            guard_res = f_guard.result(timeout=2.5)
+        except Exception:
+            guard_res = {"blocked": True, "detector": "Fail-Safe Guard", "reason": "Security check timeout"}
 
     if guard_res.get("blocked"):
         from api import db, security_guard
@@ -1117,35 +1140,7 @@ def generate_ai_reply(
         latency_val = round((time.time() - start) * 1000, 2)
         return safe_reply or "How can I assist your business today?", latency_val, engine_label
 
-    # 3. Try DeepSeek AI
-    if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
-        try:
-            model_to_use = deepseek_model.strip() if deepseek_model and deepseek_model.strip() else "deepseek-chat"
-            headers = {
-                "Authorization": f"Bearer {deepseek_api_key.strip()}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": model_to_use,
-                "messages": llm_messages,
-                "temperature": 0.5,
-                "max_tokens": 512
-            }
-            client, should_close = _get_llm_client(10.0)
-            if should_close:
-                with client:
-                    res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10.0)
-            else:
-                res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10.0)
-            if res.status_code == 200:
-                data = res.json()
-                raw_ans = data["choices"][0]["message"]["content"] or ""
-                return _finalize_llm_reply(raw_ans, f"DeepSeek ({model_to_use})")
-            logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to Groq...")
-        except Exception as e:
-            logger.warning(f"DeepSeek call failed ({e}). Falling back to Groq...")
-
-    # 4. Try Groq AI Fallback
+    # 3. Try Groq AI First (ultra-fast ~0.4s)
     if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
         try:
             model_to_use = groq_model.strip() if groq_model and groq_model.strip() else "llama-3.3-70b-versatile"
@@ -1169,9 +1164,37 @@ def generate_ai_reply(
                 data = res.json()
                 raw_ans = data["choices"][0]["message"]["content"] or ""
                 return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
-            logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
+            logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to DeepSeek...")
         except Exception as e:
-            logger.warning(f"Groq API call failed ({e}). Falling back to smart agent...")
+            logger.warning(f"Groq API call failed ({e}). Falling back to DeepSeek...")
+
+    # 4. Try DeepSeek AI Fallback
+    if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
+        try:
+            model_to_use = deepseek_model.strip() if deepseek_model and deepseek_model.strip() else "deepseek-chat"
+            headers = {
+                "Authorization": f"Bearer {deepseek_api_key.strip()}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model_to_use,
+                "messages": llm_messages,
+                "temperature": 0.5,
+                "max_tokens": 512
+            }
+            client, should_close = _get_llm_client(10.0)
+            if should_close:
+                with client:
+                    res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10.0)
+            else:
+                res = client.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10.0)
+            if res.status_code == 200:
+                data = res.json()
+                raw_ans = data["choices"][0]["message"]["content"] or ""
+                return _finalize_llm_reply(raw_ans, f"DeepSeek ({model_to_use})")
+            logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to smart agent...")
+        except Exception as e:
+            logger.warning(f"DeepSeek call failed ({e}). Falling back to smart agent...")
 
     # 5. Consultative DB-Backed Fallback
     from api import security_guard

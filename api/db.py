@@ -1701,7 +1701,8 @@ def upsert_customer_profile(phone_number: str, overwrite_existing: bool = True, 
     full_prof = get_customer_profile(key, tenant_id=tid)
     neo = _get_neo4j()
     if neo:
-        neo.upsert_customer_profile_node(tid, full_prof)
+        import threading
+        threading.Thread(target=neo.upsert_customer_profile_node, args=(tid, full_prof), daemon=True).start()
     return full_prof
 
 
