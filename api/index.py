@@ -294,7 +294,7 @@ async def keep_alive_worker():
                 (f"https://{render_hostname}" if render_hostname else None)
                 or os.getenv("RENDER_EXTERNAL_URL")
                 or os.getenv("APP_URL")
-                or "https://whatsapp-bot-qtm1.onrender.com"
+                or "https://whatsapp-bot-tsof.onrender.com"
             ).rstrip("/")
             dna_url = (os.getenv("DNA_API_URL") or "https://dna-modal.onrender.com").strip().rstrip("/")
 
