@@ -296,7 +296,7 @@ async def keep_alive_worker():
                 or os.getenv("APP_URL")
                 or "https://whatsapp-bot-tsof.onrender.com"
             ).rstrip("/")
-            dna_url = (os.getenv("DNA_API_URL") or "https://dna-modal.onrender.com").strip().rstrip("/")
+            dna_url = (os.getenv("DNA_API_URL") or "https://dna-modal-p5j1.onrender.com").strip().rstrip("/")
 
             targets = []
             if "localhost" not in base_url and "127.0.0.1" not in base_url:

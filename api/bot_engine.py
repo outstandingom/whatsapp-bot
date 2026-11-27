@@ -916,7 +916,7 @@ def generate_ai_reply(
         cloud_store, neo_graph_context = None, ""
 
     try:
-        dynamic_dna_ref, dna_analysis = f_dna.result(timeout=1.5)
+        dynamic_dna_ref, dna_analysis = f_dna.result(timeout=0.6)
     except Exception:
         dynamic_dna_ref, dna_analysis = None, {}
     graph_context = dna_analysis.get("graph_context", "") if isinstance(dna_analysis, dict) else ""

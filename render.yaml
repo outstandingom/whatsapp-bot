@@ -42,4 +42,4 @@ services:
       - key: APP_URL
         value: https://whatsapp-bot-tsof.onrender.com
       - key: DNA_API_URL
-        value: https://dna-modal.onrender.com
+        value: https://dna-modal-p5j1.onrender.com

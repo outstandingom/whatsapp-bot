@@ -41,7 +41,7 @@ class DynamicDNAManager:
     No hardcoded domain data: everything is encoded dynamically via vector algebra.
     """
     def __init__(self, render_api_url: Optional[str] = None):
-        raw_url = render_api_url if render_api_url is not None else os.getenv("DNA_API_URL", "https://dna-modal.onrender.com")
+        raw_url = render_api_url if render_api_url is not None else os.getenv("DNA_API_URL", "https://dna-modal-p5j1.onrender.com")
         raw_url = (raw_url or "").strip().rstrip("/")
         self.render_api_url = "" if raw_url.lower() in {"off", "none", "disabled"} else raw_url
         self._api_client: Optional[httpx.Client] = httpx.Client(timeout=2.5) if self.render_api_url else None
