@@ -41,9 +41,9 @@ class DynamicDNAManager:
     No hardcoded domain data: everything is encoded dynamically via vector algebra.
     """
     def __init__(self, render_api_url: Optional[str] = None):
-        raw_url = render_api_url if render_api_url is not None else os.getenv("DNA_API_URL", "https://dna-modal-p5j1.onrender.com")
+        raw_url = render_api_url if render_api_url is not None else os.getenv("DNA_API_URL", "off")
         raw_url = (raw_url or "").strip().rstrip("/")
-        self.render_api_url = "" if raw_url.lower() in {"off", "none", "disabled"} else raw_url
+        self.render_api_url = "" if raw_url.lower() in {"", "off", "none", "disabled"} else raw_url
         self._api_client: Optional[httpx.Client] = httpx.Client(timeout=2.5) if self.render_api_url else None
         self.system: Optional[DNAMemorySystem] = None
 
@@ -527,8 +527,11 @@ class DynamicDNAManager:
         }
 
     def save(self):
-        """Saves current state to disk and mirrors compact JSON snapshot to Supabase (`wa_dna_snapshots`)."""
-        if self.system:
+        """Non-blocking background save to disk and Supabase (`wa_dna_snapshots`)."""
+        if not self.system:
+            return
+
+        def _bg_save():
             try:
                 self.system.save_to_disk(DNA_STATE_FILE)
             except Exception as e:
@@ -539,15 +542,14 @@ class DynamicDNAManager:
                 if store and hasattr(store, "save_dna_snapshot") and os.path.exists(DNA_STATE_FILE):
                     with open(DNA_STATE_FILE, "r", encoding="utf-8") as f:
                         snap = f.read()
-                    # Store compact structural summary so cloud DB persists across ephemeral deploys
-                    import json as _json
-                    parsed = _json.loads(snap)
-                    atoms_str = _json.dumps(parsed.get("atoms", {}))[:48000]
-                    rels_str = _json.dumps(parsed.get("relations", []))[:48000]
+                    parsed = json.loads(snap)
+                    atoms_str = json.dumps(parsed.get("atoms", {}))[:48000]
+                    rels_str = json.dumps(parsed.get("relations", []))[:48000]
                     store.save_dna_snapshot("default", atoms_str, rels_str)
             except Exception:
                 pass
-                logger.error(f"Error saving dynamic DNA state: {e}")
+
+        threading.Thread(target=_bg_save, daemon=True).start()
 
 # Global instance
 dynamic_dna = DynamicDNAManager()
