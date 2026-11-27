@@ -748,13 +748,43 @@ def run_smart_customer_support_fallback(
             return (
                 f"For *{b_name or 'your business'}*, since you don't have a website live yet, we can first build a security-hardened site or WhatsApp catalog and protect it right from launch! Would you like to see how that fits into your setup?"
             )
+        known_site = p_data.get("website_url") or ""
+        is_why_security = (
+            any(w in words for w in ["why", "need", "important", "benefit", "benefits", "risk", "kyu", "kyun"])
+            or any(phrase in p for phrase in ["what happens", "if we don", "if i don", "without scan", "kya hoga"])
+        )
+        if is_why_security:
+            site_ref = f" on *{known_site}*" if known_site else " on your website"
+            cta = (
+                f"Would you like us to run a quick 5-minute security audit on *{known_site}*?"
+                if known_site
+                else "Would you like to share your website URL so we can check if it's safe?"
+            )
+            return (
+                f"🛡️ *Why a Website Security Scan Matters*\n\n"
+                f"Without running a security scan, you won't know whether hidden vulnerabilities (like SQLi, XSS, IDOR, or exposed APIs) exist{site_ref}.\n\n"
+                "If a flaw is left open:\n"
+                "• *Hackers can misuse your site* or inject malicious links/code\n"
+                "• *Customer & business data loss* or unauthorized leaks can occur\n"
+                "• *Company reputation & customer trust* can be damaged\n\n"
+                f"A 5-minute AlphaG1 (₹1,999) or AlphaG5 (₹4,999) scan finds these gaps before attackers do. {cta}"
+            )
+        site_cta = (
+            f"Would you like us to run a 5-minute audit on *{known_site}*?"
+            if known_site
+            else "Could you share your website URL so we can check its setup?"
+        )
         reply = (
             "🛡️ *Growhaz Website Security Scans*\n\n"
             "We audit websites and APIs for SQLi, XSS, IDOR, and exposed data in under 5 minutes:\n"
             "• *AlphaG1:* ₹1,999 | *AlphaG5:* ₹4,999 | *AlphaG3:* ₹9,999\n\n"
-            "Could you share your website URL so we can check its setup?"
+            f"{site_cta}"
         )
-        return reply if reply != last_bot_reply else "🛡️ Please share your website URL, and let me know if you prefer AlphaG1 (₹1,999) or AlphaG5 (₹4,999)."
+        return reply if reply != last_bot_reply else (
+            f"🛡️ Let me know if you'd like to run AlphaG1 (₹1,999) or AlphaG5 (₹4,999) on *{known_site}*."
+            if known_site
+            else "🛡️ Please share your website URL, and let me know if you prefer AlphaG1 (₹1,999) or AlphaG5 (₹4,999)."
+        )
 
     # 10. Appify / Mobile App Conversion
     if any(w in words for w in ["app", "appify", "apk", "android", "ios"]) or any(phrase in p for phrase in ["convert to app", "mobile app"]):
