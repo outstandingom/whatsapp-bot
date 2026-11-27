@@ -1956,6 +1956,7 @@ async def ai_personalize_campaign(request: Request):
             b_web = (lead.get("website") or lead.get("website_url") or lead.get("Website_or_Social_Link") or "").strip()
             b_eco = (lead.get("existing_ecosystem") or "").strip()
 
+            dna_insight = ""
             if b_phone:
                 stored = db.get_customer_profile(b_phone, tenant_id=tid)
                 if not db._is_meaningful_profile_val(b_name, "business_name") and stored.get("business_name"):
@@ -1968,6 +1969,13 @@ async def ai_personalize_campaign(request: Request):
                     b_web = stored["website_url"]
                 if not b_eco and stored.get("existing_ecosystem"):
                     b_eco = stored["existing_ecosystem"]
+                try:
+                    scoped_id = f"{tid}:{b_phone}"
+                    pred = dynamic_dna.predict_customer_behavior(scoped_id)
+                    if pred and pred.get("predicted_event") not in (None, "", "unknown"):
+                        dna_insight = f"Predicted next action: {pred.get('predicted_event')} ({pred.get('predicted_target') or 'general'})"
+                except Exception:
+                    pass
 
             async with sem:
                 try:
@@ -1985,6 +1993,7 @@ async def ai_personalize_campaign(request: Request):
                         groq_model=creds["groq_model"],
                         website_url=b_web,
                         existing_ecosystem=b_eco,
+                        dna_insight=dna_insight,
                     )
                 except Exception as item_err:
                     logger.warning(f"[Campaign AI] Error generating pitch for {b_name or idx}: {item_err}")
@@ -2024,6 +2033,199 @@ async def ai_personalize_campaign(request: Request):
     except Exception as e:
         logger.error(f"[Campaign AI] Error in personalize campaign: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _analyze_tenant_behavior_segments(tid: str) -> dict:
+    """Aggregate customer profiles, message timestamps, bookings, and DNA predictions into actionable segments."""
+    from collections import Counter
+    from datetime import datetime as _dt
+
+    conn = db.get_connection()
+    cur = conn.cursor()
+    prof_rows = [dict(r) for r in cur.execute("SELECT * FROM customer_profiles WHERE tenant_id = ?", (tid,)).fetchall()]
+    lead_rows = [dict(r) for r in cur.execute("SELECT * FROM leads WHERE tenant_id = ?", (tid,)).fetchall()]
+    msg_rows = [dict(r) for r in cur.execute("SELECT phone_number, direction, created_at FROM messages WHERE tenant_id = ? ORDER BY id DESC LIMIT 5000", (tid,)).fetchall()]
+    booking_rows = [dict(r) for r in cur.execute("SELECT phone_number, service_requested, status, created_at FROM bookings WHERE tenant_id = ?", (tid,)).fetchall()]
+    conn.close()
+
+    by_phone: dict[str, dict] = {}
+    for p in prof_rows:
+        ph = db.normalize_phone_key(p.get("phone_number") or "")
+        if ph:
+            by_phone[ph] = {
+                "phone": ph,
+                "business_name": p.get("business_name") or "",
+                "contact_name": p.get("contact_name") or "",
+                "category": p.get("business_category") or "",
+                "area": p.get("area") or "",
+                "has_website": (p.get("has_website") or "").lower(),
+                "website_url": p.get("website_url") or "",
+                "existing_ecosystem": p.get("existing_ecosystem") or "",
+                "msg_count": 0,
+                "booking_count": 0,
+                "hours": [],
+            }
+    for l in lead_rows:
+        ph = db.normalize_phone_key(l.get("phone_number") or "")
+        if ph and ph not in by_phone:
+            by_phone[ph] = {
+                "phone": ph,
+                "business_name": l.get("name") or "",
+                "contact_name": "",
+                "category": "",
+                "area": "",
+                "has_website": "",
+                "website_url": "",
+                "existing_ecosystem": "",
+                "msg_count": 0,
+                "booking_count": 0,
+                "hours": [],
+            }
+
+    global_hours: Counter = Counter()
+    for m in msg_rows:
+        ph = db.normalize_phone_key(m.get("phone_number") or "")
+        if ph in by_phone and m.get("direction") == "inbound":
+            by_phone[ph]["msg_count"] += 1
+        ts = str(m.get("created_at") or "").strip()
+        if ts:
+            try:
+                hr = _dt.fromisoformat(ts.replace("Z", "+00:00")).hour
+                global_hours[hr] += 1
+                if ph in by_phone:
+                    by_phone[ph]["hours"].append(hr)
+            except Exception:
+                pass
+
+    for b in booking_rows:
+        ph = db.normalize_phone_key(b.get("phone_number") or "")
+        if ph in by_phone:
+            by_phone[ph]["booking_count"] += 1
+
+    customers = []
+    segments: dict[str, list[dict]] = {
+        "has_website_security_fit": [],
+        "no_website_starter_fit": [],
+        "repeat_high_intent": [],
+        "booked_buyers": [],
+    }
+    category_counts: Counter = Counter()
+
+    for ph, c in by_phone.items():
+        pred = {}
+        try:
+            pred = dynamic_dna.predict_customer_behavior(f"{tid}:{ph}") or {}
+        except Exception:
+            pred = {}
+        peak_hr = Counter(c["hours"]).most_common(1)[0][0] if c["hours"] else None
+        has_site = bool(c["website_url"] or c["has_website"] == "yes")
+        if has_site:
+            rec_service = "Security Audit (AlphaG5) / Appify Mobile App"
+        elif c["msg_count"] >= 3 or c["booking_count"] > 0:
+            rec_service = "WhatsApp AI Automation + Static Website"
+        else:
+            rec_service = "Starter Website & WhatsApp Workflow"
+
+        entry = {
+            **c,
+            "peak_hour": peak_hr,
+            "dna_prediction": pred.get("predicted_event") or "unknown",
+            "dna_target": pred.get("predicted_target") or "",
+            "recommended_service": rec_service,
+        }
+        entry.pop("hours", None)
+        customers.append(entry)
+        if c["category"]:
+            category_counts[c["category"]] += 1
+
+        if has_site:
+            segments["has_website_security_fit"].append(entry)
+        elif c["has_website"] == "no" or not has_site:
+            segments["no_website_starter_fit"].append(entry)
+        if c["msg_count"] >= 3 or entry["dna_prediction"] != "unknown":
+            segments["repeat_high_intent"].append(entry)
+        if c["booking_count"] > 0:
+            segments["booked_buyers"].append(entry)
+
+    peak_windows = [f"{hr:02d}:00-{hr:02d}:59 ({cnt} msgs)" for hr, cnt in global_hours.most_common(3)]
+    return {
+        "total_customers": len(customers),
+        "peak_activity_windows": peak_windows,
+        "top_categories": [{"category": k, "count": v} for k, v in category_counts.most_common(8)],
+        "segments": {
+            "has_website_security_fit": {"label": "Has Website (Security / Appify Fit)", "count": len(segments["has_website_security_fit"]), "customers": segments["has_website_security_fit"]},
+            "no_website_starter_fit": {"label": "No Website Yet (Website + WhatsApp Fit)", "count": len(segments["no_website_starter_fit"]), "customers": segments["no_website_starter_fit"]},
+            "repeat_high_intent": {"label": "Repeat / High-Intent (DNA Active)", "count": len(segments["repeat_high_intent"]), "customers": segments["repeat_high_intent"]},
+            "booked_buyers": {"label": "Past Buyers / Bookings", "count": len(segments["booked_buyers"]), "customers": segments["booked_buyers"]},
+        },
+    }
+
+
+@app.get("/api/dashboard/behavior-segments")
+async def get_behavior_segments(request: Request):
+    """Admin analytics: groups customers by buying/inquiry patterns, peak hours, and DNA-matched services."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    data = await asyncio.to_thread(_analyze_tenant_behavior_segments, tenant["tenant_id"])
+    return JSONResponse({"success": True, **data})
+
+
+@app.post("/api/dashboard/dna-segment-campaign")
+async def dna_segment_campaign(request: Request):
+    """Match a DNA behavior segment (up to N customers, e.g. 200) and generate a customized message for each user."""
+    tenant = await asyncio.to_thread(auth_billing.resolve_tenant_from_request, request, True)
+    tid = tenant["tenant_id"]
+    creds = _resolve_tenant_credentials(tenant)
+
+    body = await request.json()
+    segment_id = str(body.get("segment_id") or "repeat_high_intent").strip()
+    service_offer = str(body.get("service_offer") or "").strip()
+    tone = str(body.get("tone") or "friendly_warm").strip()
+    limit = max(1, min(int(body.get("limit") or 200), 500))
+
+    analysis = await asyncio.to_thread(_analyze_tenant_behavior_segments, tid)
+    seg = analysis["segments"].get(segment_id)
+    if not seg:
+        return JSONResponse({"error": f"Unknown segment_id '{segment_id}'"}, status_code=400)
+
+    targets = seg["customers"][:limit]
+    from api.bot_engine import generate_personalized_campaign_pitch
+
+    sem = asyncio.Semaphore(5)
+
+    async def _pitch(c: dict) -> dict:
+        goal = service_offer or c.get("recommended_service") or "Helping integrate practical automation into your business"
+        dna_note = (
+            f"Segment: {seg['label']}; Peak active hour: {c.get('peak_hour')}:00; "
+            f"Messages: {c.get('msg_count', 0)}; Bookings: {c.get('booking_count', 0)}; "
+            f"DNA prediction: {c.get('dna_prediction')} ({c.get('dna_target') or 'general'})"
+        )
+        async with sem:
+            msg, eng = await asyncio.to_thread(
+                generate_personalized_campaign_pitch,
+                business_name=c.get("business_name") or c.get("contact_name") or "",
+                category=c.get("category") or "",
+                area=c.get("area") or "",
+                campaign_goal=goal,
+                tone=tone,
+                deepseek_api_key=creds["deepseek_api_key"],
+                deepseek_model=creds["deepseek_model"],
+                groq_api_key=creds["groq_api_key"],
+                groq_model=creds["groq_model"],
+                website_url=c.get("website_url") or "",
+                existing_ecosystem=c.get("existing_ecosystem") or "",
+                dna_insight=dna_note,
+            )
+        return {**c, "personalized_message": msg, "engine_used": eng}
+
+    customized = list(await asyncio.gather(*[_pitch(c) for c in targets]))
+    return JSONResponse({
+        "success": True,
+        "segment_id": segment_id,
+        "segment_label": seg["label"],
+        "peak_activity_windows": analysis["peak_activity_windows"],
+        "matched_count": len(customized),
+        "leads": customized,
+    })
 
 
 @app.get("/api/dashboard/leads")

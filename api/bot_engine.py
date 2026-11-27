@@ -879,7 +879,11 @@ def generate_ai_reply(
 
     f_guard = _PRE_POOL.submit(_run_security_guard)
     f_subgraph = _PRE_POOL.submit(_run_subgraph_fetch)
-    f_dna = _PRE_POOL.submit(_run_dna_fetch)
+    # Record/update DNA memory in background for bulk behavior analytics & campaigns (0ms live chat delay)
+    _PRE_POOL.submit(_run_dna_fetch)
+    dynamic_dna_ref = None
+    dna_analysis: Dict[str, Any] = {}
+    graph_context = ""
 
     guard_res = {"blocked": False}
     if requires_sync_l2:
@@ -914,12 +918,6 @@ def generate_ai_reply(
         cloud_store, neo_graph_context = f_subgraph.result(timeout=1.2)
     except Exception:
         cloud_store, neo_graph_context = None, ""
-
-    try:
-        dynamic_dna_ref, dna_analysis = f_dna.result(timeout=0.6)
-    except Exception:
-        dynamic_dna_ref, dna_analysis = None, {}
-    graph_context = dna_analysis.get("graph_context", "") if isinstance(dna_analysis, dict) else ""
 
     # STEP 0.5: Centralised Guardrails, Action Confirmation & Allowlisted Tool Execution
     if customer_id:
@@ -1158,35 +1156,7 @@ def generate_ai_reply(
         latency_val = round((time.time() - start) * 1000, 2)
         return safe_reply or "How can I assist your business today?", latency_val, engine_label
 
-    # 3. Try Groq AI First (ultra-fast ~0.4s)
-    if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
-        try:
-            model_to_use = groq_model.strip() if groq_model and groq_model.strip() else "llama-3.3-70b-versatile"
-            headers = {
-                "Authorization": f"Bearer {groq_api_key.strip()}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": model_to_use,
-                "messages": llm_messages,
-                "temperature": 0.5,
-                "max_tokens": 512
-            }
-            client, should_close = _get_llm_client(8.0)
-            if should_close:
-                with client:
-                    res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
-            else:
-                res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
-            if res.status_code == 200:
-                data = res.json()
-                raw_ans = data["choices"][0]["message"]["content"] or ""
-                return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
-            logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to DeepSeek...")
-        except Exception as e:
-            logger.warning(f"Groq API call failed ({e}). Falling back to DeepSeek...")
-
-    # 4. Try DeepSeek AI Fallback
+    # 3. Try DeepSeek AI First (no 7k token/TPM cap)
     if deepseek_api_key and deepseek_api_key.strip() and not deepseek_api_key.startswith("sk_your"):
         try:
             model_to_use = deepseek_model.strip() if deepseek_model and deepseek_model.strip() else "deepseek-chat"
@@ -1210,9 +1180,37 @@ def generate_ai_reply(
                 data = res.json()
                 raw_ans = data["choices"][0]["message"]["content"] or ""
                 return _finalize_llm_reply(raw_ans, f"DeepSeek ({model_to_use})")
-            logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to smart agent...")
+            logger.warning(f"DeepSeek API error {res.status_code}: {res.text}. Falling back to Groq...")
         except Exception as e:
-            logger.warning(f"DeepSeek call failed ({e}). Falling back to smart agent...")
+            logger.warning(f"DeepSeek call failed ({e}). Falling back to Groq...")
+
+    # 4. Try Groq AI Fallback
+    if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
+        try:
+            model_to_use = groq_model.strip() if groq_model and groq_model.strip() else "llama-3.3-70b-versatile"
+            headers = {
+                "Authorization": f"Bearer {groq_api_key.strip()}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model_to_use,
+                "messages": llm_messages,
+                "temperature": 0.5,
+                "max_tokens": 512
+            }
+            client, should_close = _get_llm_client(8.0)
+            if should_close:
+                with client:
+                    res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
+            else:
+                res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
+            if res.status_code == 200:
+                data = res.json()
+                raw_ans = data["choices"][0]["message"]["content"] or ""
+                return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
+            logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
+        except Exception as e:
+            logger.warning(f"Groq API call failed ({e}). Falling back to smart agent...")
 
     # 5. Consultative DB-Backed Fallback
     from api import security_guard
@@ -1240,7 +1238,8 @@ def generate_personalized_campaign_pitch(
     groq_api_key: str = "",
     groq_model: str = "llama-3.3-70b-versatile",
     website_url: str = "",
-    existing_ecosystem: str = ""
+    existing_ecosystem: str = "",
+    dna_insight: str = "",
 ) -> tuple[str, str]:
     """
     Generate an authentic, consultative WhatsApp outreach message focused on helping business owners
@@ -1276,11 +1275,12 @@ def generate_personalized_campaign_pitch(
         location_line = f"- City / Locality: {raw_area}\n" if not is_area_missing else "- City / Locality: (Not specified — DO NOT invent a city name)\n"
         website_line = f"- Existing Website / Link: {clean_website}\n" if clean_website else ""
         eco_line = f"- Existing Ecosystem: {clean_eco}\n" if clean_eco else ""
+        dna_line = f"- Customer DNA & Behavior Pattern: {dna_insight.strip()}\n" if dna_insight and dna_insight.strip() else ""
         prompt = (
             "Write a concise, authentic, consultative WhatsApp outreach message from Growhaz for this business owner:\n"
             f"- Business Name: {raw_name if not is_name_missing else '(Not specified)'}\n"
             f"- Category / Industry: {raw_cat if not is_cat_missing else 'Local Business'}\n"
-            f"{location_line}{website_line}{eco_line}"
+            f"{location_line}{website_line}{eco_line}{dna_line}"
             f"- Core Value / Focus: {clean_goal}\n"
             f"- Tone: {tone}\n"
             f"- Custom Notes: {custom_notes}\n\n"
