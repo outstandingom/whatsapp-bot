@@ -267,7 +267,10 @@ def get_billing_summary(tenant: dict, access_token: str = "") -> Dict[str, Any]:
     wallet = supabase_get_coin_balance(tok, sb_uid) if tok else {"balance": 0.0, "total_earned": 0.0, "total_spent": 0.0, "synced": False}
     has_own_meta = bool((tenant.get("whatsapp_token") or "").strip() and (tenant.get("whatsapp_phone_number_id") or "").strip())
     has_env_meta = bool(os.getenv("WHATSAPP_TOKEN", "").strip() and os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip())
-    mode = (tenant.get("billing_mode") or ("byo_meta" if has_own_meta else "managed_meta")).strip()
+    default_mode = "byo_meta" if (has_own_meta or (is_admin and has_env_meta)) else "managed_meta"
+    mode = (tenant.get("billing_mode") or default_mode).strip()
+    if mode == "managed_meta" and is_admin and has_env_meta and not tenant.get("plan_tier"):
+        mode = "byo_meta"
     if mode not in ("managed_meta", "byo_meta"):
         mode = "managed_meta"
 
@@ -344,7 +347,7 @@ def estimate_send_billing(tenant: dict, phones: List[str], access_token: str = "
     plan_covered = min(after_demo, plan_rem)
     billable_new = max(0, after_demo - plan_covered)
 
-    unit_cost = 0 if summary["is_admin"] else summary["unit_cost_coins"]
+    unit_cost = summary["unit_cost_coins"]
     total_coins = billable_new * unit_cost
     wallet_bal = summary["wallet"]["balance"]
 
@@ -357,7 +360,7 @@ def estimate_send_billing(tenant: dict, phones: List[str], access_token: str = "
         "unit_cost_coins": summary["unit_cost_coins"],
         "total_coins_required": total_coins,
         "wallet_balance": wallet_bal,
-        "can_afford": True if summary["is_admin"] else (wallet_bal >= total_coins),
+        "can_afford": wallet_bal >= total_coins,
         "billing_mode": summary["billing_mode"],
         "meta_configured": summary["meta_configured"],
         "demo_remaining": summary["demo_remaining"],
@@ -392,19 +395,22 @@ def charge_and_open_window(
     if mode not in PAYG_RATES:
         mode = "managed_meta"
     has_own_meta = bool((tenant.get("whatsapp_token") or "").strip() and (tenant.get("whatsapp_phone_number_id") or "").strip())
+    has_env_meta = bool(os.getenv("WHATSAPP_TOKEN", "").strip() and os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip())
     is_admin = bool(tenant.get("is_admin"))
+    if mode == "managed_meta" and is_admin and has_env_meta and not tenant.get("plan_tier"):
+        mode = "byo_meta"
 
     now_dt = datetime.now(timezone.utc)
     exp_dt = now_dt + timedelta(hours=CONVERSATION_WINDOW_HOURS)
 
-    # 2. Owner/admin workspace (never blocks admin dashboard testing)
-    if is_admin:
-        db.record_billing_window(tid, norm_phone, mode, 0, "owner_workspace", now_dt.isoformat(), exp_dt.isoformat())
-        return {"allowed": True, "charged": 0, "source": "owner_workspace"}
+    # 2. Simulator / demo channel without Meta credentials (free preview only)
+    if is_demo_channel and is_admin:
+        db.record_billing_window(tid, norm_phone, mode, 0, "simulator_preview", now_dt.isoformat(), exp_dt.isoformat())
+        return {"allowed": True, "charged": 0, "source": "simulator_preview"}
 
     # 3. Free 3-Demo trial when user has not connected their own Meta account yet
     demo_used = int(tenant.get("demo_used") or 0)
-    if not has_own_meta and demo_used < FREE_DEMO_LIMIT:
+    if not (has_own_meta or (is_admin and has_env_meta)) and demo_used < FREE_DEMO_LIMIT:
         new_demo = db.increment_tenant_demo_used(tid)
         tenant["demo_used"] = new_demo
         db.record_billing_window(tid, norm_phone, mode, 0, "free_demo", now_dt.isoformat(), exp_dt.isoformat())
