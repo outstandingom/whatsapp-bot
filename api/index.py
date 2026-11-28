@@ -1639,6 +1639,31 @@ async def bulk_broadcast(request: Request):
 
     # Case 1: Personalized AI Campaign
     if personalized_items and isinstance(personalized_items, list):
+        pre_phones = [
+            db.normalize_phone_key(it.get("phone") or it.get("contact_number") or "")
+            or re.sub(r"[^0-9]", "", str(it.get("phone") or it.get("contact_number") or ""))
+            for it in personalized_items
+        ]
+        pre_phones = [p for p in pre_phones if len(p) >= 10]
+        if pre_phones:
+            est = await asyncio.to_thread(auth_billing.estimate_send_billing, tenant, pre_phones, access_token)
+            if not est.get("can_afford", True):
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "code": "INSUFFICIENT_COINS",
+                        "needed": est["total_coins_required"],
+                        "balance": est["wallet_balance"],
+                        "wallet_url": auth_billing.GROWHAZ_WALLET_URL,
+                        "error": (
+                            f"Insufficient Growhaz Coins: need {est['total_coins_required']} coins "
+                            f"({est['unit_cost_coins']} coins/customer) for {est['billable_new_windows']} recipients, "
+                            f"current balance: {est['wallet_balance']:.0f}. Please add coins on Growhaz Wallet first!"
+                        ),
+                    },
+                    status_code=402,
+                )
+
         results = []
         sent_count = 0
         failed_count = 0
@@ -1817,6 +1842,24 @@ async def bulk_broadcast(request: Request):
 
     if not clean_numbers:
         return JSONResponse({"error": "No valid phone numbers found. Please enter 10+ digit numbers with country code."}, status_code=400)
+
+    est = await asyncio.to_thread(auth_billing.estimate_send_billing, tenant, clean_numbers, access_token)
+    if not est.get("can_afford", True):
+        return JSONResponse(
+            {
+                "success": False,
+                "code": "INSUFFICIENT_COINS",
+                "needed": est["total_coins_required"],
+                "balance": est["wallet_balance"],
+                "wallet_url": auth_billing.GROWHAZ_WALLET_URL,
+                "error": (
+                    f"Insufficient Growhaz Coins: need {est['total_coins_required']} coins "
+                    f"({est['unit_cost_coins']} coins/customer) for {est['billable_new_windows']} recipients, "
+                    f"current balance: {est['wallet_balance']:.0f}. Please add coins on Growhaz Wallet first!"
+                ),
+            },
+            status_code=402,
+        )
 
     results = []
     sent_count = 0
