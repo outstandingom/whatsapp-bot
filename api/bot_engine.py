@@ -709,15 +709,18 @@ def run_smart_customer_support_fallback(
     if is_greeting:
         if b_name:
             first = f"{customer_name.split()[0]} ({b_name})" if customer_name else f"{b_name} team"
-            return f"Hey {first}! 👋 Good to hear from you. How can we help integrate technology smoothly into your business workflow today?"
+            return f"Hey {first}! 👋 Good to hear from you. How can we help you today?"
         if customer_name:
             first = customer_name.split()[0]
-            return f"Hey {first}! 👋 Welcome to Growhaz. Could you tell me a little about your business and whether you already have a website or WhatsApp workflow you want to improve?"
+            return (
+                f"Hey {first}! 👋 Welcome to Growhaz. How can we help you today?\n\n"
+                "Whether you're looking for WhatsApp automation, a website/app, or a security scan — just let me know!"
+            )
         if has_history:
-            return "Hey again! 👋 Happy to continue helping your business. What would you like to focus on next?"
+            return "Hey again! 👋 Happy to help. What would you like to work on next?"
         return (
-            "Hey there! 👋 Welcome to Growhaz.\n\n"
-            "Our goal is to help business owners integrate practical technology into their existing workflow. Tell me a bit about your business (and whether you already have a website), and I'll suggest what fits best!"
+            "Hey there! 👋 Welcome to Growhaz. How can we help you today?\n\n"
+            "Whether you're looking for WhatsApp automation, a website/app, or a security scan — just let me know!"
         )
 
     # 8. Confirmation / "Yes" / "Sure"
@@ -1214,31 +1217,38 @@ def generate_ai_reply(
         except Exception as e:
             logger.warning(f"DeepSeek call failed ({e}). Falling back to Groq...")
 
-    # 4. Try Groq AI Fallback
+    # 4. Try Groq AI Fallback (with automatic 404 model fallback to available models)
     if groq_api_key and groq_api_key.strip() and not groq_api_key.startswith("gsk_your"):
         try:
-            model_to_use = groq_model.strip() if groq_model and groq_model.strip() else "llama-3.3-70b-versatile"
+            primary_gmodel = groq_model.strip() if groq_model and groq_model.strip() else "openai/gpt-oss-120b"
+            candidate_models = [primary_gmodel]
+            for fallback_m in ("openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+                if fallback_m not in candidate_models:
+                    candidate_models.append(fallback_m)
             headers = {
                 "Authorization": f"Bearer {groq_api_key.strip()}",
                 "Content-Type": "application/json"
             }
-            payload = {
-                "model": model_to_use,
-                "messages": llm_messages,
-                "temperature": 0.5,
-                "max_tokens": 512
-            }
-            client, should_close = _get_llm_client(8.0)
-            if should_close:
-                with client:
+            for model_to_use in candidate_models:
+                payload = {
+                    "model": model_to_use,
+                    "messages": llm_messages,
+                    "temperature": 0.5,
+                    "max_tokens": 512
+                }
+                client, should_close = _get_llm_client(8.0)
+                if should_close:
+                    with client:
+                        res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
+                else:
                     res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
-            else:
-                res = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8.0)
-            if res.status_code == 200:
-                data = res.json()
-                raw_ans = data["choices"][0]["message"]["content"] or ""
-                return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
-            logger.warning(f"Groq API error {res.status_code}: {res.text}. Falling back to smart agent...")
+                if res.status_code == 200:
+                    data = res.json()
+                    raw_ans = data["choices"][0]["message"]["content"] or ""
+                    return _finalize_llm_reply(raw_ans, f"Groq ({model_to_use})")
+                logger.warning(f"Groq API error {res.status_code} ({model_to_use}): {res.text[:160]}")
+                if res.status_code != 404:
+                    break
         except Exception as e:
             logger.warning(f"Groq API call failed ({e}). Falling back to smart agent...")
 
